@@ -1,0 +1,13 @@
+[package]
+name = "slowshell-desktop"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iced.workspace = true
+iced_layershell.workspace = true
+
+anyhow.workspace = true
+serde_json.workspace = true
+slowshell-core = { path = "../core" }
+slowshell-config = { path = "../config" }

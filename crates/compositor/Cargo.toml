@@ -1,0 +1,19 @@
+[package]
+name = "slowshell-compositor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+slowshell-core = { path = "../core" }
+slowshell-config = { path = "../config" }
+
+nix.workspace = true
+serde_json.workspace = true
+
+anyhow.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+
+niri-ipc.workspace = true
+
+futures-channel.workspace = true

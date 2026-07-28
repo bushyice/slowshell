@@ -1,0 +1,91 @@
+theme "catppuccin"
+style "default"
+
+components {
+  component "core/clock" {
+    format "%H:%M"
+  }
+
+  // new component from existing ones
+  // with custom settings
+  override "@myown" {
+    inherit "core/clock"
+    format "%H:%M:%S"
+    update "1s"
+  }
+}
+
+layout "default" {
+  monitor "*" {
+    bar "Main" position="top" {
+      left {
+        component "core/workspaces"
+        component "core/active-window" \
+          icon=#true
+      }
+
+      center {
+        component "core/clock"
+      }
+
+      right {
+        component "core/wifi"
+        component "core/bluetooth"
+        component "core/battery"
+      }
+    }
+
+    bar "Secondary" position="left" {
+      center {
+        component "core/cpu"
+      }
+    }
+
+    dock "Main" \
+      position="bottom" \
+      autohide=#true {
+        prefix {
+          component "core/applications"
+        }
+        suffix {
+          component "core/trash"
+        }
+      }
+
+    spotlight "Main" {
+      provider "core/apps"
+      provider "core/files"
+      provider "core/calculator"
+      provider "core/websearch"
+    }
+  }
+
+  monitor "HDMI-A-1" {
+    // disable the inherited secondary bar.
+    bar "Secondary" \
+      enabled=#false
+
+    // override properties of the inherited Main bar.
+    bar "Main" {
+      position "top"
+
+      right {
+        component "core/network"
+        component "core/battery"
+      }
+    }
+
+    // override the dock.
+    dock "Main" \
+      autohide=#false
+  }
+
+  monitor "eDP-1" {
+    bar "Main" {
+      left {
+        component "niri/workspaces"
+        component "niri/active-window"
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+[package]
+name = "slowshell"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+slowshell-core = { path = "../core" }
+slowshell-config = { path = "../config" }
+slowshell-compositor = { path = "../compositor" }
+slowshell-desktop = { path = "../desktop" }
+slowshell-notifications = { path = "../notifications" }
+
+nix.workspace = true
+anyhow.workspace = true
+iced.workspace = true
+iced_layershell.workspace = true
+futures-channel.workspace = true
+futures-lite = "2"

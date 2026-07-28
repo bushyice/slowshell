@@ -1,0 +1,21 @@
+[workspace]
+members = ["crates/bars","crates/components","crates/compositor"
+, "crates/config", "crates/core", "crates/desktop", "crates/ipc", "crates/notifications", "crates/popups", "crates/slowshell", "crates/spotlight"]
+resolver = "2"
+
+[workspace.dependencies]
+iced = { version = "0.14.0", features = ["image", "tokio", "svg", "lazy", "wgpu"] }
+iced_layershell = "0.19.1"
+chrono = "0.4"
+image = "0.25"
+libc = "0.2"
+futures-channel = "0.3"
+ductor = { version = "0.1" }
+anyhow = "1"
+nix = { version = "0.31", features = ["socket", "poll", "user", "ioctl", "signal", "event", "time", "fs"] }
+strumbra = { version = "0.6", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", default-features = false, features = ["net"] }
+niri-ipc = { version = "26.4", features = ["json-schema"] }
+async-trait = "0.1.91"
+serde_json = "1"
