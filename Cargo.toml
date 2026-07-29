@@ -1,10 +1,10 @@
 [workspace]
 members = ["crates/bars","crates/components","crates/compositor"
-, "crates/config", "crates/core", "crates/desktop", "crates/ipc", "crates/notifications", "crates/popups", "crates/slowshell", "crates/spotlight"]
+, "crates/config", "crates/core", "crates/desktop", "crates/ipc", "crates/notifications", "crates/popups", "crates/slowshell", "crates/spotlight", "crates/widgets"]
 resolver = "2"
 
 [workspace.dependencies]
-iced = { version = "0.14.0", features = ["image", "tokio", "svg", "lazy", "wgpu"] }
+iced = { version = "0.14.0", features = ["image", "tokio", "svg", "lazy", "wgpu", "advanced"] }
 iced_layershell = "0.19.1"
 chrono = "0.4"
 image = "0.25"

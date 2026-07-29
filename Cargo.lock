@@ -1822,10 +1822,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ipc"
-version = "0.1.0"
-
-[[package]]
 name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3733,10 +3729,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "slowshel-spotlight"
-version = "0.1.0"
-
-[[package]]
 name = "slowshell"
 version = "0.1.0"
 dependencies = [
@@ -3750,7 +3742,9 @@ dependencies = [
  "slowshell-config",
  "slowshell-core",
  "slowshell-desktop",
+ "slowshell-ipc",
  "slowshell-notifications",
+ "slowshell-spotlight",
 ]
 
 [[package]]
@@ -3806,6 +3800,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "slowshell-ipc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-channel",
+ "slowshell-core",
+]
+
+[[package]]
 name = "slowshell-notifications"
 version = "0.1.0"
 dependencies = [
@@ -3820,6 +3823,29 @@ dependencies = [
 [[package]]
 name = "slowshell-popups"
 version = "0.1.0"
+
+[[package]]
+name = "slowshell-spotlight"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iced",
+ "iced_layershell",
+ "slowshell-config",
+ "slowshell-core",
+ "slowshell-desktop",
+ "slowshell-widgets",
+]
+
+[[package]]
+name = "slowshell-widgets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iced",
+ "iced_layershell",
+ "slowshell-core",
+]
 
 [[package]]
 name = "smallvec"

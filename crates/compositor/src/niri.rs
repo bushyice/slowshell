@@ -117,9 +117,14 @@ impl NiriCompositor {
                 (niri_ipc::Event::WorkspacesChanged { workspaces: _ }, Some(tx)) => {
                   tx.unbounded_send(Message::UpdateMonitors)?;
                 }
-                (_, Some(tx)) => tx.unbounded_send(Message::FdUpdate(ListenerAction::Named(
-                  "notification.new".into(),
-                )))?,
+                // (niri_ipc::Event::WindowClosed { .. }, Some(tx)) => {
+                //   tx.unbounded_send(Message::FdUpdate(ListenerAction::Named(
+                //     "spotlight.toggle".into(),
+                //   )))?;
+                // }
+                // (_, Some(tx)) => tx.unbounded_send(Message::FdUpdate(ListenerAction::Named(
+                //   "notification.new".into(),
+                // )))?,
                 _ => {}
               }
               self._state.apply(event);

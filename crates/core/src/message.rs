@@ -1,6 +1,6 @@
-use std::hash::Hash;
+use std::{collections::HashMap, hash::Hash};
 
-use crate::types::Ustr;
+use crate::{listeners::IpcCommand, types::Ustr};
 
 use super::listeners::ListenerAction;
 use iced_layershell::{
@@ -12,7 +12,11 @@ use iced_layershell::{
 pub enum EventFilter {
   UpdateCompositor,
   Named(Ustr),
-  Payload { name: Ustr, payload: isize },
+  Payload {
+    name: Ustr,
+    payload: Option<HashMap<Ustr, Ustr>>,
+  },
+  Ipc(IpcCommand),
   Tick,
   All,
 }
@@ -24,6 +28,7 @@ impl PartialEq for EventFilter {
       (Self::Named(a), Self::Named(b)) => a == b,
       (Self::Payload { name: a, .. }, Self::Payload { name: b, .. }) => a == b,
       (Self::Tick, Self::Tick) => true,
+      (Self::Ipc(cmd1), Self::Ipc(cmd2)) => cmd1.name == cmd2.name,
       (Self::All, Self::All) => true,
       _ => false,
     }
@@ -44,6 +49,9 @@ impl std::hash::Hash for EventFilter {
       EventFilter::Payload { name, .. } => {
         name.hash(state);
       }
+      EventFilter::Ipc(cmd) => {
+        cmd.name.hash(state);
+      }
       EventFilter::Tick => {}
       EventFilter::All => {}
     }
@@ -57,6 +65,9 @@ impl EventFilter {
       EventFilter::Named(name) => matches!(action, ListenerAction::Named(n) if n == name),
       EventFilter::Payload { name, .. } => {
         matches!(action, ListenerAction::Payload { name: n, ..} if n == name)
+      }
+      EventFilter::Ipc(cmd1) => {
+        matches!(action, ListenerAction::Ipc(cmd2) if cmd2.name == cmd1.name)
       }
       EventFilter::Tick => false,
       EventFilter::All => true,
@@ -72,6 +83,7 @@ impl From<EventFilter> for ListenerAction {
       EventFilter::Tick => ListenerAction::None,
       EventFilter::Named(n) => ListenerAction::Named(n),
       EventFilter::Payload { name, payload } => ListenerAction::Payload { name, payload },
+      EventFilter::Ipc(_) => ListenerAction::None,
     }
   }
 }
@@ -82,9 +94,10 @@ impl Into<EventFilter> for &ListenerAction {
       ListenerAction::Named(n) => EventFilter::Named(n.clone()),
       ListenerAction::UpdateCompositor => EventFilter::UpdateCompositor,
       ListenerAction::None => EventFilter::Tick,
+      ListenerAction::Ipc(cmd) => EventFilter::Ipc(cmd.clone()),
       ListenerAction::Payload { name, payload } => EventFilter::Payload {
         name: name.clone(),
-        payload: *payload,
+        payload: payload.clone(),
       },
     }
   }

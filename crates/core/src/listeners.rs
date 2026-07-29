@@ -9,11 +9,32 @@ use nix::sys::timerfd::TimerFd;
 
 use crate::types::Ustr;
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct IpcCommand {
+  pub name: Ustr,
+  pub command: Ustr,
+  pub args: Vec<Ustr>,
+}
+
+impl Default for IpcCommand {
+  fn default() -> Self {
+    Self {
+      name: "unknown".into(),
+      command: "".into(),
+      args: Default::default(),
+    }
+  }
+}
+
 #[derive(Debug, Clone)]
 pub enum ListenerAction {
   UpdateCompositor,
   Named(Ustr),
-  Payload { name: Ustr, payload: isize },
+  Payload {
+    name: Ustr,
+    payload: Option<HashMap<Ustr, Ustr>>,
+  },
+  Ipc(IpcCommand),
   None,
 }
 

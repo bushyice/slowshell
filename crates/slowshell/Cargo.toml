@@ -9,6 +9,8 @@ slowshell-config = { path = "../config" }
 slowshell-compositor = { path = "../compositor" }
 slowshell-desktop = { path = "../desktop" }
 slowshell-notifications = { path = "../notifications" }
+slowshell-spotlight = { path = "../spotlight" }
+slowshell-ipc = { path = "../ipc" }
 
 nix.workspace = true
 anyhow.workspace = true

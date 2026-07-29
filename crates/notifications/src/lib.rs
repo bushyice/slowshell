@@ -14,7 +14,7 @@ use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::{FdHandle, ListenerAction},
-  types::Ustr,
+  types::{ToUstr, Ustr},
 };
 use slowshell_desktop::{
   DesktopItem, EventFilter, ItemEffect, ItemMessage, MonitorScope, UpdateWhen, Visibility,
@@ -27,7 +27,6 @@ pub struct Notification {
   pub summary: String,
   pub body: String,
   pub created_at: Instant,
-  pub timeout: Option<Duration>,
 }
 
 pub struct NotificationManager {
@@ -90,11 +89,13 @@ impl DesktopItem for NotificationManager {
 
   fn init_events(&self) -> Vec<EventFilter> {
     vec![
-      EventFilter::Named("notification.new".into()),
-      EventFilter::Named("notification.dismiss".into()),
+      EventFilter::Payload {
+        name: "notification.new".into(),
+        payload: None,
+      },
       EventFilter::Payload {
         name: "notification.dismiss".into(),
-        payload: 0,
+        payload: None,
       },
       EventFilter::Tick,
     ]
@@ -102,14 +103,28 @@ impl DesktopItem for NotificationManager {
 
   fn update(&mut self, store: &Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
     Ok(match event {
-      ListenerAction::Named(name) if name.as_ref() == "notification.new" => {
+      ListenerAction::Payload { name, payload } if name.as_ref() == "notification.new" => {
+        println!("notif {payload:?}");
+
+        let Some(payload) = payload else {
+          return Err(anyhow::anyhow!("Squanch this, mofo"));
+        };
+
         let notif = Notification {
           id: self.next_id,
-          app_name: "Some title".into(),
-          summary: "A notif".into(),
-          body: "New notification.".into(),
+          app_name: payload
+            .get(&Ustr::from("app"))
+            .cloned()
+            .ok_or(anyhow::anyhow!("App name not provided for notification"))?,
+          summary: payload
+            .get(&Ustr::from("summary"))
+            .map(|x| x.to_string())
+            .ok_or(anyhow::anyhow!("Summary not provided for notification"))?,
+          body: payload
+            .get(&Ustr::from("body"))
+            .map(|x| x.to_string())
+            .ok_or(anyhow::anyhow!("Body not provided for notification"))?,
           created_at: Instant::now(),
-          timeout: Some(Duration::from_secs(5)),
         };
         self.next_id += 1;
         if let Some(handle) = store.borrow::<FdHandle>() {
@@ -117,7 +132,7 @@ impl DesktopItem for NotificationManager {
             Duration::from_secs(5),
             ListenerAction::Payload {
               name: "notification.dismiss".into(),
-              payload: notif.id as isize,
+              payload: Some([("id".to_ustr(), notif.id.to_string().to_ustr())].into()),
             },
           )?;
         }
@@ -130,8 +145,13 @@ impl DesktopItem for NotificationManager {
         }
       }
       ListenerAction::Payload { name, payload } if name.as_ref() == "notification.dismiss" => {
-        if !self.notifications.is_empty() {
-          self.notifications.remove(&(*payload as u32));
+        if !self.notifications.is_empty()
+          && let Some(id) = payload.as_ref().and_then(|x| {
+            x.get::<Ustr>(&"id".into())
+              .and_then(|x| x.parse::<u32>().ok())
+          })
+        {
+          self.notifications.remove(&id);
           if self.notifications.is_empty() {
             ItemEffect::Hide
           } else {

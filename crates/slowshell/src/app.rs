@@ -13,7 +13,9 @@ use slowshell_desktop::wallpaper::Wallpaper;
 
 use slowshell_core::Store;
 use slowshell_core::message::Message;
+use slowshell_ipc::IpcListener;
 use slowshell_notifications::NotificationManager;
+use slowshell_spotlight::Spotlight;
 
 static EPOLL_RX: OnceLock<Mutex<Option<UnboundedReceiver<Message>>>> = OnceLock::new();
 
@@ -55,12 +57,15 @@ impl App {
       &config,
       Box::new(Wallpaper::new("/home/makano/Pictures/bg/1387138.png")),
     ));
+    tasks.push(items.register(&config, Box::new(Spotlight::new())));
 
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
     let eloop_tx = tx.clone();
+    let ipc_tx = tx.clone();
     let (mut eloop, wake_write) = crate::eloop::EventLoop::new(listeners, eloop_tx, 3, cmd_rx)
       .expect("failed to create event loop");
     store.insert(FdHandle::new(cmd_tx, wake_write));
+    store.insert(IpcListener::new(ipc_tx));
     std::thread::spawn(move || {
       eloop.run();
     });
