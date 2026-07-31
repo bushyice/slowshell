@@ -1,6 +1,18 @@
 [workspace]
-members = ["crates/bars","crates/components","crates/compositor"
-, "crates/config", "crates/core", "crates/desktop", "crates/ipc", "crates/notifications", "crates/popups", "crates/slowshell", "crates/spotlight", "crates/widgets"]
+members = [
+  "crates/components",
+  "crates/compositor",
+  "crates/config",
+  "crates/core",
+  "crates/desktop",
+  "crates/ipc",
+  "crates/notifications",
+  "crates/panels",
+  "crates/popups",
+  "crates/slowshell",
+  "crates/spotlight",
+  "crates/widgets"
+]
 resolver = "2"
 
 [workspace.dependencies]

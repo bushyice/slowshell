@@ -81,3 +81,30 @@ pub trait DesktopItem: Send {
     ItemEffect::None
   }
 }
+
+pub enum DeployDesktopItemAction {
+  Deploy(Box<dyn DesktopItem>),
+  Destroy(Ustr),
+  Many(Vec<DeployDesktopItemAction>),
+}
+
+impl DeployDesktopItemAction {
+  pub fn as_many(self) -> Vec<DeployDesktopItemAction> {
+    match self {
+      DeployDesktopItemAction::Many(items) => items,
+      _ => vec![self],
+    }
+  }
+}
+
+pub trait DeployableDesktopItem: Send {
+  fn id(&self) -> &str;
+
+  fn deploys_on(&self) -> Vec<EventFilter>;
+
+  fn deploy(
+    &mut self,
+    store: &Store,
+    action: &ListenerAction,
+  ) -> anyhow::Result<Option<DeployDesktopItemAction>>;
+}

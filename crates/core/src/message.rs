@@ -110,6 +110,7 @@ pub enum ItemEffect {
   Show,
   Hide,
   Destroy,
+  ReallyDestroy,
   Subscribe(Vec<EventFilter>),
 }
 

@@ -3744,12 +3744,9 @@ dependencies = [
  "slowshell-desktop",
  "slowshell-ipc",
  "slowshell-notifications",
+ "slowshell-panels",
  "slowshell-spotlight",
 ]
-
-[[package]]
-name = "slowshell-bars"
-version = "0.1.0"
 
 [[package]]
 name = "slowshell-components"
@@ -3810,6 +3807,18 @@ dependencies = [
 
 [[package]]
 name = "slowshell-notifications"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iced",
+ "iced_layershell",
+ "slowshell-config",
+ "slowshell-core",
+ "slowshell-desktop",
+]
+
+[[package]]
+name = "slowshell-panels"
 version = "0.1.0"
 dependencies = [
  "anyhow",
