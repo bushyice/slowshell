@@ -3738,6 +3738,7 @@ dependencies = [
  "iced",
  "iced_layershell",
  "nix",
+ "slowshell-components",
  "slowshell-compositor",
  "slowshell-config",
  "slowshell-core",
@@ -3745,12 +3746,28 @@ dependencies = [
  "slowshell-ipc",
  "slowshell-notifications",
  "slowshell-panels",
+ "slowshell-popups",
  "slowshell-spotlight",
+ "slowshell-widgets",
+]
+
+[[package]]
+name = "slowshell-commons"
+version = "0.1.0"
+dependencies = [
+ "slowshell-core",
 ]
 
 [[package]]
 name = "slowshell-components"
 version = "0.1.0"
+dependencies = [
+ "iced",
+ "iced_layershell",
+ "slowshell-core",
+ "slowshell-popups",
+ "slowshell-widgets",
+]
 
 [[package]]
 name = "slowshell-compositor"
@@ -3824,6 +3841,7 @@ dependencies = [
  "anyhow",
  "iced",
  "iced_layershell",
+ "slowshell-commons",
  "slowshell-config",
  "slowshell-core",
  "slowshell-desktop",
@@ -3832,6 +3850,16 @@ dependencies = [
 [[package]]
 name = "slowshell-popups"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iced",
+ "iced_layershell",
+ "slowshell-commons",
+ "slowshell-config",
+ "slowshell-core",
+ "slowshell-desktop",
+ "slowshell-widgets",
+]
 
 [[package]]
 name = "slowshell-spotlight"
@@ -3853,6 +3881,7 @@ dependencies = [
  "anyhow",
  "iced",
  "iced_layershell",
+ "slowshell-commons",
  "slowshell-core",
 ]
 

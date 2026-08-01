@@ -64,6 +64,7 @@ impl Compositor for NiriCompositor {
     let reply: niri_ipc::Reply =
       serde_json::from_str(&line).context("Failed to parse handshake")?;
     if let Err(e) = reply {
+      eprintln!("niri is dumb: {e}");
       return Err(anyhow::anyhow!("Niri refused EventStream: {}", e));
     }
 
@@ -127,6 +128,8 @@ impl NiriCompositor {
                 // )))?,
                 _ => {}
               }
+              self._state.apply(event);
+            } else {
               self._state.apply(event);
             }
           }

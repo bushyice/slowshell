@@ -1,14 +1,7 @@
-pub fn add(left: u64, right: u64) -> u64 {
-  left + right
-}
+pub mod wifi;
 
-#[cfg(test)]
-mod tests {
-  use super::*;
+use slowshell_widgets::Renderables;
 
-  #[test]
-  fn it_works() {
-    let result = add(2, 2);
-    assert_eq!(result, 4);
-  }
+pub fn register_all(renderables: &mut Renderables) {
+  renderables.insert("wifi".into(), Box::new(wifi::WifiRenderable));
 }

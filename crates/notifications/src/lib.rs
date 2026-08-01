@@ -101,7 +101,7 @@ impl DesktopItem for NotificationManager {
     ]
   }
 
-  fn update(&mut self, store: &Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
+  fn update(&mut self, store: &mut Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
     Ok(match event {
       ListenerAction::Payload { name, payload } if name.as_ref() == "notification.new" => {
         println!("notif {payload:?}");

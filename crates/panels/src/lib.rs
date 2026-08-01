@@ -7,8 +7,13 @@ use iced::{
 use iced_layershell::reexport::{
   Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
+pub use slowshell_commons::panels::{PanelEdge, PanelPositions};
 use slowshell_config::Config;
-use slowshell_core::{Store, listeners::ListenerAction, types::Ustr};
+use slowshell_core::{
+  Store,
+  listeners::ListenerAction,
+  types::{ToUstr, Ustr},
+};
 use slowshell_desktop::{
   DeployableDesktopItem, DesktopItem, EventFilter, ItemEffect, ItemMessage, MonitorScope,
   UpdateWhen, Visibility,
@@ -30,10 +35,10 @@ impl DeployableDesktopItem for PanelDeloyer {
 
   fn deploy(
     &mut self,
-    _store: &Store,
+    store: &mut Store,
     action: &ListenerAction,
   ) -> anyhow::Result<Option<slowshell_desktop::DeployDesktopItemAction>> {
-    let try_deploy = || {
+    let mut try_deploy = || {
       let (_name, payload) = match action {
         ListenerAction::Payload { name, payload } if name.as_str() == "panel.create" => {
           println!("Deploying!!!0");
@@ -59,9 +64,21 @@ impl DeployableDesktopItem for PanelDeloyer {
         Some(name) => MonitorScope::Single(Some(name.into())),
       };
 
-      let panel = Panel::new(panel_name, position)
+      let panel = Panel::new(&panel_name, position)
         .with_height(height)
         .with_scope(scope);
+
+      if let Some(panels) = store.borrow_mut::<PanelPositions>() {
+        panels.set(
+          panel_name,
+          match position {
+            Position::Bottom => PanelEdge::Bottom { height },
+            Position::Top => PanelEdge::Top { height },
+            Position::Left => PanelEdge::Left { width: height },
+            Position::Right => PanelEdge::Right { width: height },
+          },
+        );
+      }
 
       Some(Box::new(panel))
     };
@@ -121,8 +138,8 @@ pub struct PanelSections {
 /// `panel.<name>.configure`: `height`, `position`, `enabled`
 /// `panel.<name>.destroy`
 pub struct Panel {
-  cached_id: String,
-  name: String,
+  cached_id: Ustr,
+  name: Ustr,
   position: Position,
   height: u32,
   sections: PanelSections,
@@ -131,9 +148,9 @@ pub struct Panel {
 }
 
 impl Panel {
-  pub fn new(name: impl Into<String>, position: Position) -> Self {
+  pub fn new(name: impl Into<Ustr>, position: Position) -> Self {
     let name = name.into();
-    let cached_id = format!("panel/{}", name.to_lowercase().replace(' ', "-"));
+    let cached_id = format!("panel/{}", name.to_lowercase().replace(' ', "-")).to_ustr();
     Self {
       cached_id,
       name,
@@ -325,7 +342,7 @@ impl DesktopItem for Panel {
     ]
   }
 
-  fn update(&mut self, _store: &Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
+  fn update(&mut self, store: &mut Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
     let prefix = self.event_prefix();
 
     Ok(match event {
@@ -348,6 +365,20 @@ impl DesktopItem for Panel {
       {
         if let Some(p) = payload {
           self.configure_from_payload(p);
+
+          if let Some(panels) = store.borrow_mut::<PanelPositions>() {
+            let height = self.height;
+            panels.remove(name.as_str());
+            panels.set(
+              name.clone(),
+              match self.position {
+                Position::Bottom => PanelEdge::Bottom { height },
+                Position::Top => PanelEdge::Top { height },
+                Position::Left => PanelEdge::Left { width: height },
+                Position::Right => PanelEdge::Right { width: height },
+              },
+            );
+          }
         }
         if !self.enabled {
           ItemEffect::Hide
@@ -356,6 +387,9 @@ impl DesktopItem for Panel {
         }
       }
       ListenerAction::Named(name) if name.as_str() == format!("{}.destroy", prefix) => {
+        if let Some(panels) = store.borrow_mut::<PanelPositions>() {
+          panels.remove(name.as_str());
+        }
         ItemEffect::ReallyDestroy
       }
       _ => ItemEffect::None,

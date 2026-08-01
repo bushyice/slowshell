@@ -88,7 +88,7 @@ impl DesktopItem for Spotlight {
     vec![EventFilter::Named("spotlight.toggle".into())]
   }
 
-  fn update(&mut self, _store: &Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
+  fn update(&mut self, _store: &mut Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
     match event {
       ListenerAction::Named(name) if name.as_ref() == "spotlight.toggle" => {
         let mut inner = self.inner.lock().unwrap();

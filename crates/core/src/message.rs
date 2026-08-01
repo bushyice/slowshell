@@ -117,6 +117,7 @@ pub enum ItemEffect {
 #[derive(Debug, Clone)]
 pub enum ItemMessage {
   Effect(IcedId, ItemEffect),
+  Action(ListenerAction),
   Noop,
 }
 

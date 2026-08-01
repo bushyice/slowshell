@@ -10,3 +10,6 @@ bars:
 
   echo 'exec panel.secondary.add_item section=center label=CPU component=core/cpu' \
     | socat - UNIX-CONNECT:/tmp/slowshell.sock
+
+popup:
+  echo -n "exec popup.open content=wifi x=panel,Main y=cursor,10.0" | socat - UNIX-CONNECT:/tmp/slowshell.sock

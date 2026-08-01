@@ -61,7 +61,7 @@ impl DesktopItem for Wallpaper {
     vec![]
   }
 
-  fn update(&mut self, _store: &Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
+  fn update(&mut self, _store: &mut Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
     match event {
       _ => Ok(ItemEffect::None),
     }

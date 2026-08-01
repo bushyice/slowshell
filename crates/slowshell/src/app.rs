@@ -15,8 +15,10 @@ use slowshell_core::Store;
 use slowshell_core::message::Message;
 use slowshell_ipc::IpcListener;
 use slowshell_notifications::NotificationManager;
-use slowshell_panels::{Panel, PanelDeloyer, Position};
+use slowshell_panels::{Panel, PanelDeloyer, PanelPositions, Position};
+use slowshell_popups::Popup;
 use slowshell_spotlight::Spotlight;
+use slowshell_widgets::Renderables;
 
 static EPOLL_RX: OnceLock<Mutex<Option<UnboundedReceiver<Message>>>> = OnceLock::new();
 
@@ -41,6 +43,10 @@ impl App {
 
     store.insert(cs);
     store.insert(Config);
+    store.insert(PanelPositions::default());
+    let mut renderables = Renderables::default();
+    slowshell_components::register_all(&mut renderables);
+    store.insert(renderables);
 
     let mut items = DesktopItems::new();
 
@@ -68,6 +74,8 @@ impl App {
       .with_item("center", "Clock", Some("core/clock".into()))
       .with_item("right", "Battery", Some("core/battery".into()));
     tasks.push(items.register(&config, Box::new(main_bar)));
+
+    tasks.push(items.register(&config, Box::new(Popup::default())));
 
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
     let eloop_tx = tx.clone();
@@ -112,8 +120,8 @@ impl App {
           _ => {}
         }
 
-        tasks.push(self.items.check_deployables(&self.store, &action));
-        tasks.push(self.items.update(&Config, &self.store, &action));
+        tasks.push(self.items.check_deployables(&mut self.store, &action));
+        tasks.push(self.items.update(&Config, &mut self.store, &action));
         Task::batch(tasks)
       }
       Message::Item(msg) => self.items.handle_message(&Config, &msg),

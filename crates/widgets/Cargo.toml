@@ -7,4 +7,5 @@ edition = "2024"
 iced.workspace = true
 iced_layershell.workspace = true
 slowshell-core = { path = "../core" }
+slowshell-commons = { path = "../commons" }
 anyhow.workspace = true

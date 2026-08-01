@@ -12,6 +12,9 @@ slowshell-notifications = { path = "../notifications" }
 slowshell-panels = { path = "../panels" }
 slowshell-spotlight = { path = "../spotlight" }
 slowshell-ipc = { path = "../ipc" }
+slowshell-widgets = { path = "../widgets" }
+slowshell-components = { path = "../components" }
+slowshell-popups = { path = "../popups" }
 
 nix.workspace = true
 anyhow.workspace = true

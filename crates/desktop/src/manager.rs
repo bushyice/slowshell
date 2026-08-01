@@ -216,7 +216,7 @@ impl DesktopItems {
     self.deployable.push(deployable);
   }
 
-  pub fn check_deployables(&mut self, store: &Store, event: &ListenerAction) -> Task<Message> {
+  pub fn check_deployables(&mut self, store: &mut Store, event: &ListenerAction) -> Task<Message> {
     let Some(matching) = self.deployable_subs.get(&event.into()).cloned() else {
       return Task::none();
     };
@@ -325,7 +325,7 @@ impl DesktopItems {
   pub fn update(
     &mut self,
     config: &Config,
-    store: &Store,
+    store: &mut Store,
     event: &ListenerAction,
   ) -> Task<Message> {
     let Some(matching) = self.subscriptions.get(&event.into()).cloned() else {

@@ -72,7 +72,7 @@ pub trait DesktopItem: Send {
 
   fn init_events(&self) -> Vec<EventFilter>;
 
-  fn update(&mut self, store: &Store, event: &ListenerAction) -> anyhow::Result<ItemEffect>;
+  fn update(&mut self, store: &mut Store, event: &ListenerAction) -> anyhow::Result<ItemEffect>;
 
   fn view(&self, store: &Store, id: IcedId) -> Element<'_, ItemMessage>;
 
@@ -104,7 +104,7 @@ pub trait DeployableDesktopItem: Send {
 
   fn deploy(
     &mut self,
-    store: &Store,
+    store: &mut Store,
     action: &ListenerAction,
   ) -> anyhow::Result<Option<DeployDesktopItemAction>>;
 }
