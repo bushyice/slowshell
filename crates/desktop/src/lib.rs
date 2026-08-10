@@ -4,7 +4,11 @@ pub mod wallpaper;
 use iced::Element;
 use iced_layershell::reexport::{IcedId, Layer, NewLayerShellSettings};
 use slowshell_config::Config;
-use slowshell_core::{Store, listeners::ListenerAction, types::Ustr};
+use slowshell_core::{
+  Store,
+  listeners::ListenerAction,
+  types::{Ustr, Void},
+};
 
 pub use manager::DesktopItems;
 pub use slowshell_core::message::{EventFilter, ItemEffect, ItemMessage};
@@ -71,6 +75,11 @@ pub trait DesktopItem: Send {
   // fn clone_box(&self) -> Box<dyn DesktopItem>;
 
   fn init_events(&self) -> Vec<EventFilter>;
+
+  fn initialize(&mut self, store: &mut Store) -> anyhow::Result<Void> {
+    let _ = store;
+    Ok(())
+  }
 
   fn update(&mut self, store: &mut Store, event: &ListenerAction) -> anyhow::Result<ItemEffect>;
 

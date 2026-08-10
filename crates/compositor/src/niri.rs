@@ -56,10 +56,10 @@ impl Compositor for NiriCompositor {
       .write_all({ serde_json::to_string(&niri_ipc::Request::EventStream)? + "\n" }.as_bytes())?;
     stream.flush()?;
 
-    let mut handshake = BufReader::new(&stream);
+    let mut reader = BufReader::new(stream);
 
     let mut line = String::new();
-    handshake.read_line(&mut line)?;
+    reader.read_line(&mut line)?;
 
     let reply: niri_ipc::Reply =
       serde_json::from_str(&line).context("Failed to parse handshake")?;
@@ -68,16 +68,38 @@ impl Compositor for NiriCompositor {
       return Err(anyhow::anyhow!("Niri refused EventStream: {}", e));
     }
 
-    drop(handshake);
+    self._state = niri_ipc::state::EventStreamState::default();
+    reader
+      .get_ref()
+      .set_read_timeout(Some(std::time::Duration::from_millis(500)))?;
+    loop {
+      let mut init_line = String::new();
+      match reader.read_line(&mut init_line) {
+        Ok(0) => break,
+        Ok(_) => {
+          if let Ok(event) = serde_json::from_str::<niri_ipc::Event>(&init_line) {
+            self._state.apply(event);
+          }
+        }
+        Err(e)
+          if e.kind() == std::io::ErrorKind::WouldBlock
+            || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
+          break;
+        }
+        Err(e) => return Err(e.into()),
+      }
+    }
+    reader.get_ref().set_read_timeout(None)?;
 
-    stream.set_nonblocking(true)?;
+    reader.get_ref().set_nonblocking(true)?;
 
-    let fd = stream.as_raw_fd();
+    let fd = reader.get_ref().as_raw_fd();
     listeners.flag(fd, EpollFlags::EPOLLIN | EpollFlags::EPOLLET);
     listeners.action(fd, ListenerAction::UpdateCompositor);
 
-    self._state = niri_ipc::state::EventStreamState::default();
-    self.reader = Some(BufReader::new(stream));
+    self.reader = Some(reader);
+    self.apply_compositor_state()?;
 
     Ok(Void)
   }
@@ -130,7 +152,7 @@ impl NiriCompositor {
               }
               self._state.apply(event);
             } else {
-              self._state.apply(event);
+              eprintln!("skipping niri event for unknown workspace (not yet in map): {event:?}");
             }
           }
         }

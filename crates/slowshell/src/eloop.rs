@@ -120,7 +120,12 @@ impl EventLoop {
             let _ = nix::unistd::read(self.wake_read.as_fd(), &mut buf);
             while let Ok(cmd) = self.rx.try_recv() {
               match cmd {
-                FdCommand::Register { fd, flags, action, oneshot } => {
+                FdCommand::Register {
+                  fd,
+                  flags,
+                  action,
+                  oneshot,
+                } => {
                   let raw = fd.as_raw_fd();
                   self.listeners.own(raw, fd);
                   self.listeners.flag(raw, flags);
@@ -144,6 +149,10 @@ impl EventLoop {
             let fd = (d - 100) as i32;
             if let Some(action) = self.listeners.get_action(fd).cloned() {
               let _ = self.tx.unbounded_send(Message::FdUpdate(action));
+            }
+            if self.listeners.is_timer(fd) {
+              let mut buf = [0u8; 8];
+              let _ = nix::unistd::read(unsafe { BorrowedFd::borrow_raw(fd) }, &mut buf);
             }
             if self.oneshot_fds.remove(&fd) {
               self.listeners.terminate(fd);

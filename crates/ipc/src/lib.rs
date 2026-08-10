@@ -39,7 +39,7 @@ impl IpcListener {
                   if let Ok(command) = Self::parse(&line) {
                     println!("{command:?}");
 
-                    match command.name.as_str() {
+                    match &*command.name {
                       "exec" => {
                         if command.args.is_empty() {
                           let _ = tx.unbounded_send(Message::FdUpdate(ListenerAction::Named(

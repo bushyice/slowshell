@@ -5,6 +5,7 @@ use std::task::{Context, Poll};
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use iced::{Element, Task};
 use iced_layershell::reexport::{Anchor, IcedId};
+use slowshell_components::Components;
 use slowshell_compositor::CompositorStore;
 use slowshell_config::Config;
 use slowshell_core::listeners::{FdHandle, Listeners};
@@ -41,12 +42,23 @@ impl App {
       Ok(_) => {}
     }
 
+    let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+    let eloop_tx = tx.clone();
+    let ipc_tx = tx.clone();
+    let (mut eloop, wake_write) = crate::eloop::EventLoop::new(listeners, eloop_tx, 3, cmd_rx)
+      .expect("failed to create event loop");
+    store.insert(FdHandle::new(cmd_tx, wake_write));
+    store.insert(IpcListener::new(ipc_tx));
+
     store.insert(cs);
     store.insert(Config);
     store.insert(PanelPositions::default());
     let mut renderables = Renderables::default();
-    slowshell_components::register_all(&mut renderables);
+    slowshell_menus::register_all(&mut renderables);
     store.insert(renderables);
+    let mut components = Components::default();
+    slowshell_components::register_all(&mut components);
+    store.insert(components);
 
     let mut items = DesktopItems::new();
 
@@ -70,20 +82,31 @@ impl App {
 
     let main_bar = Panel::new("Main", Position::Top)
       .with_height(32)
-      .with_item("left", "Workspaces", Some("core/workspaces".into()))
-      .with_item("center", "Clock", Some("core/clock".into()))
-      .with_item("right", "Battery", Some("core/battery".into()));
+      .with_item("left", "Workspaces", None)
+      .with_item(
+        "center",
+        "Clock",
+        Some(Box::new(slowshell_components::clock::Clock::new())),
+      )
+      .with_item(
+        "right",
+        "Wifi",
+        Some(Box::new(slowshell_components::wifi::Wifi::new())),
+      )
+      .with_item(
+        "right",
+        "Battery",
+        Some(Box::new(slowshell_components::battery::Battery::new())),
+      )
+      .with_item(
+        "right",
+        "CPU",
+        Some(Box::new(slowshell_components::cpu::CpuMem::new())),
+      );
     tasks.push(items.register(&config, Box::new(main_bar)));
 
     tasks.push(items.register(&config, Box::new(Popup::default())));
 
-    let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
-    let eloop_tx = tx.clone();
-    let ipc_tx = tx.clone();
-    let (mut eloop, wake_write) = crate::eloop::EventLoop::new(listeners, eloop_tx, 3, cmd_rx)
-      .expect("failed to create event loop");
-    store.insert(FdHandle::new(cmd_tx, wake_write));
-    store.insert(IpcListener::new(ipc_tx));
     std::thread::spawn(move || {
       eloop.run();
     });
@@ -100,7 +123,10 @@ impl App {
 
   pub fn update(&mut self, message: Message) -> Task<Message> {
     match message {
-      Message::Tick => Task::none(),
+      Message::Tick => {
+        self.items.intialize(&mut self.store);
+        Task::none()
+      }
       Message::FdUpdate(action) => {
         let mut tasks = Vec::new();
 
@@ -121,10 +147,21 @@ impl App {
         }
 
         tasks.push(self.items.check_deployables(&mut self.store, &action));
+        self.items.intialize(&mut self.store);
         tasks.push(self.items.update(&Config, &mut self.store, &action));
         Task::batch(tasks)
       }
-      Message::Item(msg) => self.items.handle_message(&Config, &msg),
+      Message::Item(msg) => match msg {
+        slowshell_core::message::ItemMessage::Action(action) => {
+          let mut tasks = vec![self.items.check_deployables(&mut self.store, &action)];
+
+          self.items.intialize(&mut self.store);
+          tasks.push(self.items.update(&Config, &mut self.store, &action));
+
+          Task::batch(tasks)
+        }
+        other => self.items.handle_message(&Config, &other),
+      },
       Message::UpdateMonitors => {
         let monitors = {
           let Some(compositor) = self.store.borrow::<CompositorStore>() else {
@@ -135,7 +172,9 @@ impl App {
             Err(_) => return Task::none(),
           }
         };
-        self.items.sync_monitors(&Config, monitors)
+        let task = self.items.sync_monitors(&Config, monitors);
+        self.items.intialize(&mut self.store);
+        task
       }
       Message::Noop => Task::none(),
       _ => Task::none(),

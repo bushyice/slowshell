@@ -8,11 +8,12 @@ use iced_layershell::reexport::{
   Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
 pub use slowshell_commons::panels::{PanelEdge, PanelPositions};
+use slowshell_components::{Component, ComponentContext, Components};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
-  types::{ToUstr, Ustr},
+  types::{ToUstr, Ustr, Void},
 };
 use slowshell_desktop::{
   DeployableDesktopItem, DesktopItem, EventFilter, ItemEffect, ItemMessage, MonitorScope,
@@ -40,7 +41,7 @@ impl DeployableDesktopItem for PanelDeloyer {
   ) -> anyhow::Result<Option<slowshell_desktop::DeployDesktopItemAction>> {
     let mut try_deploy = || {
       let (_name, payload) = match action {
-        ListenerAction::Payload { name, payload } if name.as_str() == "panel.create" => {
+        ListenerAction::Payload { name, payload } if &**name == "panel.create" => {
           println!("Deploying!!!0");
           (name, payload.as_ref()?)
         }
@@ -51,7 +52,7 @@ impl DeployableDesktopItem for PanelDeloyer {
 
       let position = payload
         .get::<str>("position")
-        .and_then(|s| Position::from_str(s.as_str()))
+        .and_then(|s| Position::from_str(&**s))
         .unwrap_or(Position::Top);
 
       let height = payload
@@ -59,7 +60,7 @@ impl DeployableDesktopItem for PanelDeloyer {
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(32);
 
-      let scope = match payload.get::<str>("monitor").map(|s| s.as_str()) {
+      let scope = match payload.get::<str>("monitor").map(|s| &**s) {
         Some("*") | None => MonitorScope::PerMonitor,
         Some(name) => MonitorScope::Single(Some(name.into())),
       };
@@ -120,13 +121,12 @@ impl Position {
   }
 }
 
-#[derive(Debug, Clone)]
 pub struct PanelItem {
   pub label: String,
-  pub component: Option<String>,
+  pub component: Option<Box<dyn Component>>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 pub struct PanelSections {
   pub left: Vec<PanelItem>,
   pub center: Vec<PanelItem>,
@@ -176,7 +176,7 @@ impl Panel {
     mut self,
     section: &str,
     label: impl Into<String>,
-    component: Option<String>,
+    component: Option<Box<dyn Component>>,
   ) -> Self {
     let item = PanelItem {
       label: label.into(),
@@ -203,18 +203,26 @@ impl Panel {
     }
   }
 
-  fn add_item_from_payload(&mut self, payload: &HashMap<Ustr, Ustr>) {
+  fn add_item_from_payload(&mut self, store: &mut Store, payload: &HashMap<Ustr, Ustr>) {
     let section = payload
       .get::<str>("section")
-      .map(|s| s.as_str())
+      .map(|s| &**s)
       .unwrap_or("center");
     let label = payload
       .get::<str>("label")
       .map(|s| s.to_string())
       .unwrap_or_default();
-    let component = payload.get::<str>("component").map(|s| s.to_string());
+    let component = payload.get::<str>("component").and_then(|name| {
+      store
+        .borrow::<Components>()
+        .and_then(|registry| registry.get(name))
+        .map(|factory| factory())
+    });
 
-    let item = PanelItem { label, component };
+    let mut item = PanelItem { label, component };
+    if let Some(comp) = &mut item.component {
+      comp.watch(store);
+    }
 
     match section {
       "left" => self.sections.left.push(item),
@@ -223,10 +231,10 @@ impl Panel {
     }
   }
 
-  fn remove_from_payload(&mut self, payload: &HashMap<Ustr, Ustr>) {
+  fn remove_from_payload(&mut self, store: &mut Store, payload: &HashMap<Ustr, Ustr>) {
     let section = payload
       .get::<str>("section")
-      .map(|s| s.as_str())
+      .map(|s| &**s)
       .unwrap_or("center");
     let label = payload
       .get::<str>("label")
@@ -239,7 +247,17 @@ impl Panel {
       _ => &mut self.sections.center,
     };
 
-    target.retain(|i| i.label != label);
+    let mut i = 0;
+    while i < target.len() {
+      if target[i].label != label {
+        i += 1;
+      } else {
+        let item = target.remove(i);
+        if let Some(mut comp) = item.component {
+          comp.stop(store);
+        }
+      }
+    }
   }
 
   fn configure_from_payload(&mut self, payload: &HashMap<Ustr, Ustr>) {
@@ -251,42 +269,108 @@ impl Panel {
     }
     if let Some(pos) = payload
       .get::<str>("position")
-      .and_then(|s| Position::from_str(s.as_str()))
+      .and_then(|s| Position::from_str(&**s))
     {
       self.position = pos;
     }
     if let Some(val) = payload.get::<str>("enabled") {
-      self.enabled = val.as_str() != "false";
+      self.enabled = &**val != "false";
     }
   }
 
-  fn render_item<'a>(item: &'a PanelItem) -> Element<'a, ItemMessage> {
-    let label_text = if let Some(ref comp) = item.component {
-      comp.as_str()
-    } else {
-      item.label.as_str()
-    };
-
-    container(text(label_text).size(13).color(Color::WHITE))
-      .padding([4, 8])
-      .style(|_t: &iced::Theme| container::Style {
-        background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.06).into()),
-        border: iced::Border {
-          radius: 4.0.into(),
-          ..Default::default()
-        },
-        ..container::Style::default()
-      })
-      .into()
+  fn edge(&self) -> PanelEdge {
+    match self.position {
+      Position::Bottom => PanelEdge::Bottom {
+        height: self.height,
+      },
+      Position::Top => PanelEdge::Top {
+        height: self.height,
+      },
+      Position::Left => PanelEdge::Left { width: self.height },
+      Position::Right => PanelEdge::Right { width: self.height },
+    }
   }
 
-  fn render_section<'a>(items: &'a [PanelItem]) -> Element<'a, ItemMessage> {
+  fn items(&self) -> impl Iterator<Item = &PanelItem> {
+    self
+      .sections
+      .left
+      .iter()
+      .chain(self.sections.center.iter())
+      .chain(self.sections.right.iter())
+  }
+
+  fn items_mut(&mut self) -> impl Iterator<Item = &mut PanelItem> {
+    self
+      .sections
+      .left
+      .iter_mut()
+      .chain(self.sections.center.iter_mut())
+      .chain(self.sections.right.iter_mut())
+  }
+
+  fn render_item<'a>(
+    store: &Store,
+    ctx: &ComponentContext,
+    item: &'a PanelItem,
+  ) -> Element<'a, ItemMessage> {
+    let style = |_t: &iced::Theme| container::Style {
+      background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.06).into()),
+      border: iced::Border {
+        radius: 4.0.into(),
+        ..Default::default()
+      },
+      ..container::Style::default()
+    };
+
+    match &item.component {
+      Some(comp) => container(comp.view(store, ctx)).style(style).into(),
+      None => container(text(&item.label).size(13).color(Color::WHITE))
+        .padding([4, 8])
+        .style(style)
+        .into(),
+    }
+  }
+
+  fn render_section<'a>(
+    store: &Store,
+    ctx: &ComponentContext,
+    items: &'a [PanelItem],
+  ) -> Element<'a, ItemMessage> {
     if items.is_empty() {
       return Space::new().into();
     }
 
-    let children: Vec<Element<'a, ItemMessage>> = items.iter().map(Self::render_item).collect();
+    let children: Vec<Element<'a, ItemMessage>> = items
+      .iter()
+      .map(|i| Self::render_item(store, ctx, i))
+      .collect();
     row(children).spacing(4).into()
+  }
+
+  fn all_events(&self) -> Vec<EventFilter> {
+    let prefix = self.event_prefix();
+    let mut events = vec![
+      EventFilter::Payload {
+        name: format!("{}.add", prefix).into(),
+        payload: None,
+      },
+      EventFilter::Payload {
+        name: format!("{}.remove", prefix).into(),
+        payload: None,
+      },
+      EventFilter::Payload {
+        name: format!("{}.configure", prefix).into(),
+        payload: None,
+      },
+      EventFilter::Named(format!("{}.destroy", prefix).into()),
+    ];
+    for item in self.items() {
+      if let Some(comp) = &item.component {
+        events.extend(comp.events());
+      }
+    }
+    events
   }
 }
 
@@ -323,52 +407,55 @@ impl DesktopItem for Panel {
   }
 
   fn init_events(&self) -> Vec<EventFilter> {
-    let prefix = self.event_prefix();
-    vec![
-      EventFilter::Payload {
-        name: format!("{}.add", prefix).into(),
-        payload: None,
-      },
-      EventFilter::Payload {
-        name: format!("{}.remove", prefix).into(),
-        payload: None,
-      },
-      EventFilter::Payload {
-        name: format!("{}.configure", prefix).into(),
-        payload: None,
-      },
-      EventFilter::Named(format!("{}.destroy", prefix).into()),
-      EventFilter::Tick,
-    ]
+    self.all_events()
+  }
+
+  fn initialize(&mut self, store: &mut Store) -> anyhow::Result<Void> {
+    for item in self.items_mut() {
+      if let Some(comp) = &mut item.component {
+        comp.watch(store);
+      }
+    }
+
+    if let Some(panels) = store.borrow_mut::<PanelPositions>() {
+      let height = self.height;
+      panels.set(
+        self.name.clone(),
+        match self.position {
+          Position::Bottom => PanelEdge::Bottom { height },
+          Position::Top => PanelEdge::Top { height },
+          Position::Left => PanelEdge::Left { width: height },
+          Position::Right => PanelEdge::Right { width: height },
+        },
+      );
+    }
+
+    Ok(Void)
   }
 
   fn update(&mut self, store: &mut Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
     let prefix = self.event_prefix();
 
-    Ok(match event {
-      ListenerAction::Payload { name, payload } if name.as_str() == format!("{}.add", prefix) => {
+    let mut effect = match event {
+      ListenerAction::Payload { name, payload } if &**name == format!("{}.add", prefix) => {
         if let Some(p) = payload {
-          self.add_item_from_payload(p);
+          self.add_item_from_payload(store, p);
         }
-        ItemEffect::Redraw
+        ItemEffect::Subscribe(self.all_events())
       }
-      ListenerAction::Payload { name, payload }
-        if name.as_str() == format!("{}.remove", prefix) =>
-      {
+      ListenerAction::Payload { name, payload } if &**name == format!("{}.remove", prefix) => {
         if let Some(p) = payload {
-          self.remove_from_payload(p);
+          self.remove_from_payload(store, p);
         }
-        ItemEffect::Redraw
+        ItemEffect::Subscribe(self.all_events())
       }
-      ListenerAction::Payload { name, payload }
-        if name.as_str() == format!("{}.configure", prefix) =>
-      {
+      ListenerAction::Payload { name, payload } if &**name == format!("{}.configure", prefix) => {
         if let Some(p) = payload {
           self.configure_from_payload(p);
 
           if let Some(panels) = store.borrow_mut::<PanelPositions>() {
             let height = self.height;
-            panels.remove(name.as_str());
+            panels.remove(&**name);
             panels.set(
               name.clone(),
               match self.position {
@@ -386,20 +473,43 @@ impl DesktopItem for Panel {
           ItemEffect::Redraw
         }
       }
-      ListenerAction::Named(name) if name.as_str() == format!("{}.destroy", prefix) => {
+      ListenerAction::Named(name) if &**name == format!("{}.destroy", prefix) => {
         if let Some(panels) = store.borrow_mut::<PanelPositions>() {
-          panels.remove(name.as_str());
+          panels.remove(&**name);
+        }
+        for item in self.items_mut() {
+          if let Some(comp) = &mut item.component {
+            comp.stop(store);
+          }
         }
         ItemEffect::ReallyDestroy
       }
       _ => ItemEffect::None,
-    })
+    };
+
+    for item in self.items_mut() {
+      if let Some(comp) = &mut item.component {
+        if comp.events().iter().any(|filter| filter.matches(event)) {
+          if let Ok(comp_effect) = comp.update(store, event) {
+            if comp_effect != ItemEffect::None {
+              effect = comp_effect;
+            }
+          }
+        }
+      }
+    }
+
+    Ok(effect)
   }
 
-  fn view(&self, _store: &Store, _id: IcedId) -> Element<'_, ItemMessage> {
-    let left = Self::render_section(&self.sections.left);
-    let center = Self::render_section(&self.sections.center);
-    let right = Self::render_section(&self.sections.right);
+  fn view(&self, store: &Store, _id: IcedId) -> Element<'_, ItemMessage> {
+    let ctx = ComponentContext {
+      panel_name: &*self.name,
+      position: self.edge(),
+    };
+    let left = Self::render_section(store, &ctx, &self.sections.left);
+    let center = Self::render_section(store, &ctx, &self.sections.center);
+    let right = Self::render_section(store, &ctx, &self.sections.right);
 
     let bar_content: Element<'_, ItemMessage> = if self.position.is_horizontal() {
       row![

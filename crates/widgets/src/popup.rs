@@ -48,6 +48,7 @@ pub struct SizedPopup<'a> {
   content: Element<'a, ItemMessage>,
   x: f32,
   y: f32,
+  size: (f32, f32),
   backdrop: Option<Backdrop>,
   on_close: Option<ItemMessage>,
   insets: Padding,
@@ -59,10 +60,21 @@ impl<'a> SizedPopup<'a> {
       content: content.into(),
       x: 0.0,
       y: 0.0,
+      size: (0.0, 0.0),
       backdrop: None,
       on_close: None,
       insets: Padding::ZERO,
     }
+  }
+
+  pub fn with_width(mut self, size: f32) -> Self {
+    self.size.0 = size;
+    self
+  }
+
+  pub fn with_height(mut self, size: f32) -> Self {
+    self.size.1 = size;
+    self
   }
 
   pub fn with_position(mut self, x: f32, y: f32) -> Self {
@@ -111,8 +123,8 @@ impl<'a> SizedPopup<'a> {
   }
 
   pub fn into_element(self) -> Element<'a, ItemMessage> {
-    let x = self.x + self.insets.left;
-    let y = self.y + self.insets.top;
+    let x = (self.x + self.insets.left) - self.size.0;
+    let y = (self.y + self.insets.top) - self.size.1;
 
     let content_box = container(self.content).padding(Padding {
       top: 0.0,

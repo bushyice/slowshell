@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 serde.workspace = true
-strumbra.workspace = true
+smol_str.workspace = true
 anyhow.workspace = true
 nix.workspace = true
 libc.workspace = true

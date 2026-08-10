@@ -19,6 +19,7 @@ pub enum EventFilter {
   Ipc(IpcCommand),
   Tick,
   All,
+  StartUp,
 }
 
 impl PartialEq for EventFilter {
@@ -54,6 +55,7 @@ impl std::hash::Hash for EventFilter {
       }
       EventFilter::Tick => {}
       EventFilter::All => {}
+      EventFilter::StartUp => {}
     }
   }
 }
@@ -71,6 +73,7 @@ impl EventFilter {
       }
       EventFilter::Tick => false,
       EventFilter::All => true,
+      EventFilter::StartUp => matches!(action, ListenerAction::StartUp),
     }
   }
 }
@@ -84,6 +87,7 @@ impl From<EventFilter> for ListenerAction {
       EventFilter::Named(n) => ListenerAction::Named(n),
       EventFilter::Payload { name, payload } => ListenerAction::Payload { name, payload },
       EventFilter::Ipc(_) => ListenerAction::None,
+      EventFilter::StartUp => ListenerAction::None,
     }
   }
 }
@@ -94,6 +98,7 @@ impl Into<EventFilter> for &ListenerAction {
       ListenerAction::Named(n) => EventFilter::Named(n.clone()),
       ListenerAction::UpdateCompositor => EventFilter::UpdateCompositor,
       ListenerAction::None => EventFilter::Tick,
+      ListenerAction::StartUp => EventFilter::StartUp,
       ListenerAction::Ipc(cmd) => EventFilter::Ipc(cmd.clone()),
       ListenerAction::Payload { name, payload } => EventFilter::Payload {
         name: name.clone(),

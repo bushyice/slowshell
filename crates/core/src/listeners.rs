@@ -35,6 +35,7 @@ pub enum ListenerAction {
     payload: Option<HashMap<Ustr, Ustr>>,
   },
   Ipc(IpcCommand),
+  StartUp,
   None,
 }
 
@@ -52,6 +53,15 @@ impl From<OwnedFd> for FdLoc {
 impl From<TimerFd> for FdLoc {
   fn from(value: TimerFd) -> Self {
     FdLoc::Timer(value)
+  }
+}
+
+impl AsRawFd for FdLoc {
+  fn as_raw_fd(&self) -> i32 {
+    match self {
+      FdLoc::Owned(fd) => fd.as_raw_fd(),
+      FdLoc::Timer(timer) => timer.as_fd().as_raw_fd(),
+    }
   }
 }
 
@@ -121,6 +131,10 @@ impl Listeners {
     self.fd.insert(res, fd.into());
   }
 
+  pub fn is_timer(&self, res: i32) -> bool {
+    matches!(self.fd.get(&res), Some(FdLoc::Timer(_)))
+  }
+
   pub fn terminate(&mut self, res: i32) {
     self.unwatched_fds.remove(&res);
     if self.watched_fds.remove(&res) {
@@ -146,7 +160,7 @@ impl Listeners {
 
 pub enum FdCommand {
   Register {
-    fd: OwnedFd,
+    fd: FdLoc,
     flags: EpollFlags,
     action: ListenerAction,
     oneshot: bool,
@@ -171,7 +185,7 @@ impl FdHandle {
 
   pub fn watch(&self, fd: impl Into<OwnedFd>, action: impl Into<ListenerAction>) {
     let _ = self.tx.send(FdCommand::Register {
-      fd: fd.into(),
+      fd: FdLoc::Owned(fd.into()),
       flags: EpollFlags::EPOLLIN,
       action: action.into(),
       oneshot: false,
@@ -186,7 +200,7 @@ impl FdHandle {
     action: impl Into<ListenerAction>,
   ) {
     let _ = self.tx.send(FdCommand::Register {
-      fd: fd.into(),
+      fd: FdLoc::Owned(fd.into()),
       flags,
       action: action.into(),
       oneshot: false,

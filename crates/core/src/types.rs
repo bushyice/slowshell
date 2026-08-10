@@ -1,15 +1,12 @@
-use serde::Deserialize;
-use serde::de::Deserializer;
+use smol_str::SmolStr;
 use std::borrow::Borrow;
 use std::fmt::Display;
 use std::ops::Deref;
 
-use strumbra::UniqueString;
-
 #[derive(
   Clone, serde::Serialize, serde::Deserialize, Hash, PartialEq, Eq, Debug, PartialOrd, Ord,
 )]
-pub struct Ustr(#[serde(serialize_with = "ser_name", deserialize_with = "de_name")] UniqueString);
+pub struct Ustr(SmolStr);
 
 pub trait ToUstr {
   fn to_ustr(&self) -> Ustr;
@@ -17,39 +14,39 @@ pub trait ToUstr {
 
 impl ToUstr for str {
   fn to_ustr(&self) -> Ustr {
-    Ustr::from(self)
+    Ustr(SmolStr::new(self))
   }
 }
 
 impl ToUstr for String {
   fn to_ustr(&self) -> Ustr {
-    Ustr::from(self.as_str())
+    Ustr(SmolStr::new(self))
   }
 }
 
 impl Deref for Ustr {
-  type Target = UniqueString;
+  type Target = str;
 
   fn deref(&self) -> &Self::Target {
-    &self.0
+    self.0.as_str()
   }
 }
 
 impl From<String> for Ustr {
   fn from(value: String) -> Self {
-    Ustr(UniqueString::try_from(value).unwrap())
+    Ustr(SmolStr::new(value))
   }
 }
 
 impl From<&str> for Ustr {
   fn from(value: &str) -> Self {
-    Ustr(UniqueString::try_from(value).unwrap())
+    Ustr(SmolStr::new(value))
   }
 }
 
 impl From<&String> for Ustr {
   fn from(value: &String) -> Self {
-    Ustr(UniqueString::try_from(value).unwrap())
+    Ustr(SmolStr::new(value))
   }
 }
 
@@ -73,17 +70,8 @@ impl AsRef<std::ffi::OsStr> for Ustr {
 
 impl Default for Ustr {
   fn default() -> Self {
-    Ustr(UniqueString::try_from("").unwrap())
+    Ustr(SmolStr::new(""))
   }
-}
-
-fn ser_name<S: serde::Serializer>(f: &UniqueString, serializer: S) -> Result<S::Ok, S::Error> {
-  serializer.collect_str(&f.to_string())
-}
-
-fn de_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<UniqueString, D::Error> {
-  let s: String = Deserialize::deserialize(deserializer)?;
-  Ok(UniqueString::try_from(s).unwrap())
 }
 
 #[allow(non_camel_case_types)]

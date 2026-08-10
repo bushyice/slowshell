@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use slowshell_core::types::Ustr;
 
 pub mod panels {
+  use std::fmt::Debug;
+
   use super::*;
 
   #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +46,10 @@ pub mod panels {
 
     pub fn get(&self, name: &str) -> Option<&PanelEdge> {
       self.entries.get(name)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &Ustr> + Debug {
+      self.entries.keys()
     }
 
     pub fn for_each(&self, mut f: impl FnMut(&Ustr, &PanelEdge)) {

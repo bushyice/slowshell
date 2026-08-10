@@ -25,6 +25,7 @@ pub struct DesktopItems {
   deployable: Vec<Box<dyn DeployableDesktopItem>>,
   deployable_index: HashMap<Ustr, usize>,
   deployable_subs: HashMap<EventFilter, HashSet<usize>>,
+  uninitialized: HashSet<usize>,
 }
 
 impl Default for DesktopItems {
@@ -41,6 +42,7 @@ impl Default for DesktopItems {
       deployable: Vec::new(),
       deployable_index: HashMap::new(),
       deployable_subs: HashMap::new(),
+      uninitialized: HashSet::new(),
     }
   }
 }
@@ -200,6 +202,7 @@ impl DesktopItems {
     }
 
     self.index.insert(item.id().to_ustr(), index);
+    self.uninitialized.insert(index);
     self.items.push(item);
 
     task
@@ -253,6 +256,12 @@ impl DesktopItems {
         *val -= 1;
       }
     }
+
+    self.uninitialized = self
+      .uninitialized
+      .iter()
+      .map(|&i| if i > removed_idx { i - 1 } else { i })
+      .collect();
 
     self.active = self
       .active
@@ -320,6 +329,21 @@ impl DesktopItems {
       .map(|m| self.launch(config, idx, m, None))
       .collect();
     Task::batch(tasks)
+  }
+
+  pub fn intialize(&mut self, store: &mut Store) {
+    if self.uninitialized.len() < 1 {
+      return;
+    }
+
+    for idx in self.uninitialized.clone() {
+      let item = &mut self.items[idx];
+      match item.initialize(store) {
+        _ => {}
+      }
+    }
+
+    self.uninitialized.clear();
   }
 
   pub fn update(
