@@ -230,6 +230,7 @@ impl DeployableDesktopItem for PanelDeloyer {
 
   fn deploy(
     &mut self,
+    config: &Config,
     store: &mut Store,
     action: &ListenerAction,
   ) -> anyhow::Result<Option<slowshell_desktop::DeployDesktopItemAction>> {
@@ -270,9 +271,6 @@ impl DeployableDesktopItem for PanelDeloyer {
       | ListenerAction::Timer { name: n, .. }
         if n.as_ref() == "config.reload" =>
       {
-        let Some(config) = store.borrow::<Config>() else {
-          return Ok(None);
-        };
         let Some(new_configs) = config.typed::<PanelConfigs>().cloned() else {
           return Ok(None);
         };

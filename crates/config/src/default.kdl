@@ -1,0 +1,92 @@
+// Default config for slowshell and stuff
+
+font "Lexend"
+tick-interval 60
+// uncomment this line if you want rendering to forcefully always use vulkan
+// wgpu-backend "vulkan"
+
+// set to "false" if you don't want notifications
+notifications {
+  enabled #true
+}
+
+wallpaper {
+  backend "swaybg"
+  // put a proper file here for a wallpaper
+  // file "/path/to/file"
+}
+
+style "item" {
+  spacing 8
+  "highlight.padding" 0.0
+  "highlight.radius" 6.0
+}
+
+panels {
+  panel "Main" position="top" transparent=#true {
+    components {
+      left {
+        component "core/workspaces" {
+          label "Workspaces"
+        }
+        component "core/window" {
+          label "Window"
+        }
+      }
+
+      center {
+        component "core/nowplaying" {
+          label "Now Playing"
+          "show-artist" #true
+          "controls" #true
+          "max-length" 40
+        }
+        component "core/clock" {
+          label "Clock"
+          format "%I:%M %p · %b %-d"
+        }
+      }
+
+      right {
+        component "core/tray" {
+          label "Tray"
+        }
+        group "Media" {
+          item "core/audio" {
+            label "Audio"
+            "show-percent" #true
+          }
+          item "core/separator" {
+            label "Sep"
+            opacity 0.05
+          }
+          item "core/network" {
+            label "Network"
+            icon #true
+            ssid #true
+          }
+          item "core/separator" {
+            label "Sep"
+            opacity 0.05
+          }
+          item "core/notifications" {
+            label "Notifs"
+          }
+        }
+        component "core/system" {
+          label "Sysmon"
+          interval 5
+          icons #true
+          progress #true
+          labels #true
+          progress-direction "vertical"
+          items "cpu" "mem" // load, net, temp
+        }
+        component "core/icon" {
+          label "Power"
+          menu "menus/actions"
+        }
+      }
+    }
+  }
+}

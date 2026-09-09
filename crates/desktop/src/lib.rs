@@ -123,6 +123,7 @@ pub trait DeployableDesktopItem: Send {
 
   fn deploy(
     &mut self,
+    config: &Config,
     store: &mut Store,
     action: &ListenerAction,
   ) -> anyhow::Result<Option<DeployDesktopItemAction>>;

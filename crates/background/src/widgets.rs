@@ -276,6 +276,7 @@ impl DeployableDesktopItem for DesktopWidgetDeployer {
 
   fn deploy(
     &mut self,
+    _config: &Config,
     _store: &mut Store,
     action: &ListenerAction,
   ) -> anyhow::Result<Option<DeployDesktopItemAction>> {

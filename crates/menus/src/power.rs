@@ -81,6 +81,7 @@ impl Renderable for PowerBrightnessRenderable {
           .into(),
       );
 
+      // TODO: Hide on desktop
       children.push(render_brightness_header(&data_snapshot, id, &style, theme));
       children.push(render_brightness_slider(
         data_snapshot.brightness_percent,

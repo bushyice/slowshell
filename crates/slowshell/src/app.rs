@@ -191,7 +191,11 @@ impl App {
           _ => {}
         }
 
-        tasks.push(self.items.check_deployables(&mut self.store, &action));
+        tasks.push(
+          self
+            .items
+            .check_deployables(&self.config, &mut self.store, &action),
+        );
         tasks.push(self.items.update(&self.config, &mut self.store, &action));
         Task::batch(tasks)
       }
@@ -253,7 +257,11 @@ impl App {
   }
 
   fn update_items(&mut self, action: &ListenerAction) -> Task<Message> {
-    let mut tasks = vec![self.items.check_deployables(&mut self.store, action)];
+    let mut tasks = vec![
+      self
+        .items
+        .check_deployables(&self.config, &mut self.store, action),
+    ];
     tasks.push(self.items.update(&self.config, &mut self.store, action));
 
     Task::batch(tasks)

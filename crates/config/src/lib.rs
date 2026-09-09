@@ -15,6 +15,8 @@ pub mod style;
 
 const DEFAULT_FONT: &str = "Lexend";
 
+pub const DEFAULT_CONFIG: &str = include_str!("default.kdl");
+
 pub struct Config {
   current_path: Option<PathBuf>,
   styles: HashMap<Ustr, Style>,
@@ -46,18 +48,26 @@ impl Config {
     config_parsers: Vec<ConfigParser>,
   ) -> Self {
     let current_path = path
-      .and_then(|p| p.as_ref().to_owned().canonicalize().ok())
+      .and_then(|p| p.as_ref().canonicalize().ok())
       .or_else(|| {
-        let home = std::env::var_os("HOME")?;
-
-        [
-          PathBuf::from(&home).join(".config/slowshell"),
-          PathBuf::from(&home).join(".local/share/slowshell"),
-          PathBuf::from("/usr/share/slowshell"),
-        ]
-        .into_iter()
-        .find(|p| p.join("config.kdl").exists())
-        .and_then(|p| p.join("config.kdl").canonicalize().ok())
+        std::env::var_os("HOME")
+          .map(PathBuf::from)
+          .and_then(|home| {
+            [
+              home.join(".config/slowshell/config.kdl"),
+              home.join(".local/share/slowshell/config.kdl"),
+              PathBuf::from("/usr/share/slowshell/config.kdl"),
+            ]
+            .into_iter()
+            .find(|p| p.exists())
+            .or_else(|| {
+              let p = home.join(".config/slowshell/config.kdl");
+              std::fs::create_dir_all(p.parent()?).ok()?;
+              std::fs::write(&p, DEFAULT_CONFIG).ok()?;
+              Some(p)
+            })
+            .and_then(|p| p.canonicalize().ok())
+          })
       });
 
     let mut config = Config {

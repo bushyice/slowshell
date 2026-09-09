@@ -283,6 +283,7 @@ impl Component for Power {
           return None;
         }
 
+        // TODO: Fix brightness scroll and slider
         match event {
           Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
             let y = match delta {

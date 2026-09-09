@@ -113,9 +113,20 @@ impl PowerAction {
           .spawn();
       }
       PowerAction::Logout => {
-        let _ = std::process::Command::new("loginctl")
-          .args(["terminate-user", ""])
-          .spawn();
+        let user = std::env::var("USER")
+          .ok()
+          .or_else(|| {
+            std::env::var("HOME")
+              .ok()
+              .map(|h| h.rsplit('/').next().unwrap_or_default().to_string())
+          })
+          .unwrap_or_default();
+        if !user.is_empty() {
+          let _ = std::process::Command::new("loginctl")
+            .arg("terminate-user")
+            .arg(user)
+            .spawn();
+        }
       }
     }
   }
@@ -140,22 +151,31 @@ impl PowerAction {
   }
 
   fn confirm(self, id: IcedId) -> ItemMessage {
-    ItemMessage::Effect(id, ItemEffect::Custom([40, 0, 0, 0]))
+    ActionsRenderable::confirm_message(id)
   }
 
   fn cancel(id: IcedId) -> ItemMessage {
-    ItemMessage::EffectAction(
-      id,
-      ItemEffect::Redraw,
-      ListenerAction::Payload {
-        name: "popup.redraw".to_ustr(),
-        payload: None,
-      },
-    )
+    ActionsRenderable::clear_message(id)
   }
 }
 
 impl ActionsRenderable {
+  const CLEAR: usize = 1;
+  const CONFIRM: usize = 0;
+  const DISMISS: usize = 2;
+
+  fn confirm_message(id: IcedId) -> ItemMessage {
+    ItemMessage::Effect(id, ItemEffect::Custom([40, Self::CONFIRM, 0, 0]))
+  }
+
+  fn clear_message(id: IcedId) -> ItemMessage {
+    ItemMessage::Effect(id, ItemEffect::Custom([40, Self::CLEAR, 0, 0]))
+  }
+
+  fn dismiss_message(id: IcedId) -> ItemMessage {
+    ItemMessage::Effect(id, ItemEffect::Custom([40, Self::DISMISS, 0, 0]))
+  }
+
   fn power_row<'a>(
     &self,
     icon_name: &'static str,
@@ -213,14 +233,25 @@ impl Renderable for ActionsRenderable {
   fn handle_message(&mut self, message: &ItemMessage) -> Option<ItemEffect> {
     match message {
       ItemMessage::Effect(_, effect) => match effect {
-        ItemEffect::Custom([40, _, _, _]) => match &self.action.lock().ok().and_then(|p| *p) {
-          Some(pending) => {
-            pending.execute();
+        ItemEffect::Custom([40, kind, 0, 0]) => match *kind {
+          Self::CONFIRM => match &self.action.lock().ok().and_then(|p| *p) {
+            Some(pending) => {
+              pending.execute();
 
+              self.action = Arc::new(Mutex::new(None));
+              Some(ItemEffect::Hide)
+            }
+            None => None,
+          },
+          Self::CLEAR => {
+            self.action = Arc::new(Mutex::new(None));
+            Some(ItemEffect::Redraw)
+          }
+          Self::DISMISS => {
             self.action = Arc::new(Mutex::new(None));
             Some(ItemEffect::Hide)
           }
-          None => None,
+          _ => None,
         },
         _ => None,
       },
@@ -321,12 +352,7 @@ impl Renderable for ActionsRenderable {
       popup_style.shadow.offset = iced::Vector::new(x, y);
     }
 
-    let on_close = {
-      if let Ok(mut pending) = self.action.lock() {
-        *pending = None;
-      }
-      ItemMessage::Effect(id, ItemEffect::Hide)
-    };
+    let on_close = Self::dismiss_message(id);
 
     SizedPopup::new(container(
       container(body)

@@ -208,18 +208,20 @@ impl PayloadBuilderRegistry {
     }
   }
 
-  pub fn build(&self, mut command: &str, args: &[Ustr]) -> Option<PayloadBox> {
+  pub fn build(&self, command: &str, args: &[Ustr]) -> Option<PayloadBox> {
     let args = PayloadBuilderArgs(args);
 
     if let Some(&index) = self.exact.get(command) {
       return (self.builders.get(index)?.build)(command, args);
     }
 
-    if let Some((name, _)) = command.split_once(".") {
-      command = &command[..name.len() + 1];
-    }
+    let match_key = if let Some((name, _)) = command.split_once(".") {
+      &command[..name.len() + 1]
+    } else {
+      &command
+    };
 
-    for &index in self.matches.get(command)? {
+    for &index in self.matches.get(match_key)? {
       return (self.builders.get(index)?.build)(command, args);
     }
 

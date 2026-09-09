@@ -287,6 +287,7 @@ impl Component for Audio {
           return None;
         }
 
+        // TODO: Fix audio scroll and slider
         match event {
           Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
             let y = match delta {

@@ -223,7 +223,12 @@ impl DesktopItems {
     self.deployable.push(deployable);
   }
 
-  pub fn check_deployables(&mut self, store: &mut Store, event: &ListenerAction) -> Task<Message> {
+  pub fn check_deployables(
+    &mut self,
+    config: &Config,
+    store: &mut Store,
+    event: &ListenerAction,
+  ) -> Task<Message> {
     let Some(matching) = self.deployable_subs.get(&event.into()) else {
       return Task::none();
     };
@@ -233,7 +238,7 @@ impl DesktopItems {
 
     for idx in matching {
       let item = &mut self.deployable[idx];
-      match item.deploy(store, event) {
+      match item.deploy(config, store, event) {
         Ok(Some(action)) => {
           for action in action.as_many() {
             match action {
@@ -241,7 +246,7 @@ impl DesktopItems {
                 tasks.push(self.destroy(id));
               }
               DeployDesktopItemAction::Deploy(item) => {
-                tasks.push(self.register(store.borrow::<Config>().unwrap(), item));
+                tasks.push(self.register(config, item));
               }
               _ => {}
             }

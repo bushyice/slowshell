@@ -484,9 +484,11 @@ async fn refresh_devices(
   for path in paths {
     let key = path.to_string();
     seen.insert(key.clone());
-    let info = fetch_device(conn, &key).await?;
+    let Ok(info) = fetch_device(conn, &key).await else {
+      continue;
+    };
     if info.dev_type == DEV_WIRELESS && !aps_alive_for(&key, aps) {
-      refresh_aps_for(conn, &key, aps).await?;
+      let _ = refresh_aps_for(conn, &key, aps).await;
     }
     devices.insert(key, info);
   }
@@ -554,16 +556,21 @@ async fn fetch_device(conn: &zbus::Connection, path: &str) -> anyhow::Result<Dev
     info.ip4 = fetch_ip4(conn, ip4_path.as_str()).await;
   }
   if dev_type == DEV_WIRELESS {
-    let wifi = zbus::Proxy::new_owned(conn.clone(), DEST, path.to_string(), WIFI_IFACE).await?;
-    info.active_ap = wifi
-      .get_property::<OwnedObjectPath>("ActiveAccessPoint")
-      .await
-      .unwrap_or_else(|_| obj_path("/"))
-      .to_string();
+    if let Ok(wifi) = zbus::Proxy::new_owned(conn.clone(), DEST, path.to_string(), WIFI_IFACE).await
+    {
+      info.active_ap = wifi
+        .get_property::<OwnedObjectPath>("ActiveAccessPoint")
+        .await
+        .unwrap_or_else(|_| obj_path("/"))
+        .to_string();
+    }
   } else if dev_type == DEV_ETHERNET {
-    let wired = zbus::Proxy::new_owned(conn.clone(), DEST, path.to_string(), WIRED_IFACE).await?;
-    info.carrier = wired.get_property::<bool>("Carrier").await.unwrap_or(false);
-    info.speed = wired.get_property::<u32>("Speed").await.unwrap_or(0);
+    if let Ok(wired) =
+      zbus::Proxy::new_owned(conn.clone(), DEST, path.to_string(), WIRED_IFACE).await
+    {
+      info.carrier = wired.get_property::<bool>("Carrier").await.unwrap_or(false);
+      info.speed = wired.get_property::<u32>("Speed").await.unwrap_or(0);
+    }
   }
   Ok(info)
 }
@@ -801,12 +808,22 @@ fn publish(
         wifi_connected = Some(ap.clone());
       }
     } else if info.dev_type == DEV_ETHERNET {
-      ethernet = Some(EthernetState {
+      let candidate = EthernetState {
         iface: info.iface.clone(),
         speed: info.speed,
         carrier: info.carrier,
         connected: info.state == NM_ACTIVATED,
-      });
+      };
+      let better = match &ethernet {
+        None => true,
+        Some(current) => {
+          let weight = |e: &EthernetState| (e.connected as u8, e.carrier as u8);
+          weight(&candidate) > weight(current)
+        }
+      };
+      if better {
+        ethernet = Some(candidate);
+      }
       if info.state == NM_ACTIVATED && connected.is_none() {
         connected = Some(ConnectionInfo {
           label: "Ethernet".to_string(),

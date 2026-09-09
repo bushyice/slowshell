@@ -29,6 +29,7 @@ pub fn daemon() {
   slowshell_menus::include(&mut reg);
   slowshell_notifications::include(&mut reg);
   slowshell_panels::include(&mut reg);
+  slowshell_popups::include(&mut reg);
   slowshell_spotlight::include(&mut reg);
   slowshell_background::wallpaper::include(&mut reg);
   slowshell_background::widgets::include(&mut reg);
