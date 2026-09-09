@@ -174,7 +174,7 @@ impl Component for NowPlaying {
       items.push(next_btn);
     }
 
-    if ctx.orientation == PanelOrientation::Vertical {
+    if ctx.orientation == PanelOrientation::Horizontal {
       items.push(menu_trigger(
         text(truncated).size(font_size).color(text_color).into(),
         MenuConfig {
