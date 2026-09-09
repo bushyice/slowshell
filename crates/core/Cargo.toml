@@ -12,3 +12,5 @@ libc.workspace = true
 
 iced_layershell.workspace = true
 futures-channel.workspace = true
+
+ron.workspace = true

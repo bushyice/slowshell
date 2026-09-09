@@ -11,4 +11,6 @@ slowshell-commons = { path = "../commons" }
 slowshell-config = { path = "../config" }
 slowshell-desktop = { path = "../desktop" }
 slowshell-components = { path = "../components" }
+slowshell-registry = { path = "../registry" }
 anyhow.workspace = true
+kdl.workspace = true

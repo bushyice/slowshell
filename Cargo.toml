@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/background",
   "crates/commons",
   "crates/components",
   "crates/compositor",
@@ -11,6 +12,8 @@ members = [
   "crates/notifications",
   "crates/panels",
   "crates/popups",
+  "crates/registry",
+  "crates/services",
   "crates/slowshell",
   "crates/spotlight",
   "crates/widgets"
@@ -29,7 +32,23 @@ anyhow = "1"
 nix = { version = "0.31", features = ["socket", "poll", "user", "ioctl", "signal", "event", "time", "fs"] }
 smol_str = { version = "0.3", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", default-features = false, features = ["net"] }
+tokio = { version = "1", default-features = false, features = ["net", "rt-multi-thread", "macros", "sync", "time"] }
 niri-ipc = { version = "26.4", features = ["json-schema"] }
 async-trait = "0.1.91"
 serde_json = "1"
+kdl = "6"
+freedesktop-icons = "0.4.0"
+system-tray = "0.8"
+freedesktop-desktop-entry = "0.8.2"
+zbus = "5"
+async-io = "2"
+futures-util = "0.3"
+ron = "0.12.2"
+clap = { version = "4.6.6", features = ["derive"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

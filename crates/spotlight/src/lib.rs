@@ -1,27 +1,277 @@
+pub mod apps;
+pub mod calc;
+pub mod clipboard;
+
+use std::{
+  any::TypeId,
+  cell::RefCell,
+  collections::{HashMap, HashSet},
+  path::PathBuf,
+  process::{Command, Stdio},
+  sync::{Arc, Mutex},
+};
+
 use iced::{
-  Color, Element, Event, Length, keyboard,
-  widget::{center, column, container, scrollable, text},
+  Alignment, Element, Event, Length, keyboard,
+  widget::{center, column, container, row, space, text},
 };
 use iced_layershell::reexport::{
   Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings,
 };
-use slowshell_config::Config;
-use slowshell_core::{Store, listeners::ListenerAction};
+use slowshell_commons::desktop::DesktopEntries;
+use slowshell_config::{Config, ConfigParser};
+use slowshell_core::{
+  Store,
+  listeners::ListenerAction,
+  types::{OptionalPayloadBox, PayloadBox, PayloadBuilder, Ustr},
+};
 use slowshell_desktop::{
   DesktopItem, EventFilter, ItemEffect, ItemMessage, MonitorScope, UpdateWhen, Visibility,
 };
-use slowshell_widgets::EventWrapper;
-use std::sync::{Arc, Mutex};
+use slowshell_widgets::{EventWrapper, Icon, clickable};
+
+const ROW_HEIGHT: f32 = 52.0;
+const LIST_HEIGHT: f32 = 440.0;
+const WINDOW_LEN: usize = (LIST_HEIGHT / ROW_HEIGHT) as usize;
+
+#[derive(Clone)]
+pub enum SpotlightAction {
+  Exec(String),
+  Copy(String),
+  Clip(String),
+  Custom(Arc<dyn Fn() + Send + Sync>),
+}
+
+#[derive(Clone)]
+pub struct SpotlightActionDef {
+  pub title: Option<String>,
+  pub action: SpotlightAction,
+}
+
+pub struct SpotlightItem {
+  pub image_path: Option<PathBuf>,
+  pub image_bytes: Option<Vec<u8>>,
+  pub image_icon: Option<String>,
+  pub title: String,
+  pub subtitle: Option<String>,
+  pub subtext: Option<String>,
+  pub tags: Option<Vec<String>>,
+  pub actions: Vec<SpotlightActionDef>,
+}
+
+impl SpotlightActionDef {
+  pub fn label(&self, index: usize) -> String {
+    self
+      .title
+      .clone()
+      .unwrap_or_else(|| format!("Action {}", index + 1))
+  }
+}
+
+pub enum SpotlightMode {
+  Generate(Box<dyn Fn(&str, &Store) -> Vec<SpotlightItem> + Send + Sync>),
+  SingleResult(Box<dyn Fn(&str, &Store) -> Option<SpotlightItem> + Send + Sync>),
+}
+
+pub struct Trigger {
+  pub target_mode: Ustr,
+  pub check: Box<dyn Fn(&str) -> bool + Send + Sync>,
+}
+
+pub struct SpotlightModes {
+  pub modes: HashMap<Ustr, SpotlightMode>,
+  pub allow_triggers: HashSet<Ustr>,
+  pub triggers: Vec<Trigger>,
+  cache_enabled: bool,
+  results: RefCell<HashMap<Ustr, (u64, Arc<Vec<SpotlightItem>>)>>,
+  versions: HashMap<Ustr, Box<dyn Fn() -> u64 + Send + Sync>>,
+}
+
+impl SpotlightModes {
+  fn new() -> Self {
+    Self {
+      modes: HashMap::new(),
+      allow_triggers: HashSet::new(),
+      triggers: Vec::new(),
+      cache_enabled: false,
+      results: RefCell::new(HashMap::new()),
+      versions: HashMap::new(),
+    }
+  }
+}
+
+impl Default for SpotlightModes {
+  fn default() -> Self {
+    let mut modes = Self::new();
+
+    modes.register_mode(
+      "applications",
+      SpotlightMode::Generate(Box::new(apps::search_applications)),
+      false,
+    );
+    modes.register_version(
+      "applications",
+      slowshell_commons::desktop::DesktopEntries::global_version,
+    );
+
+    modes.register_mode(
+      "clipboard",
+      SpotlightMode::Generate(Box::new(clipboard::search_clipboard)),
+      false,
+    );
+    modes.register_version("clipboard", clipboard::version);
+
+    let calc_mode: Ustr = "calculator".into();
+    modes.register_mode(
+      calc_mode.clone(),
+      SpotlightMode::SingleResult(Box::new(|q, _| {
+        if let Ok(val) = calc::eval(q) {
+          let formatted = calc::format_result(val);
+          Some(SpotlightItem {
+            image_path: None,
+            image_bytes: None,
+            image_icon: Some("accessories-calculator-symbolic".into()),
+            title: format!("= {formatted}"),
+            subtitle: Some(q.trim().to_string()),
+            subtext: None,
+            tags: Some(vec!["Calculator".into()]),
+            actions: vec![SpotlightActionDef {
+              title: Some("Copy".into()),
+              action: SpotlightAction::Copy(formatted),
+            }],
+          })
+        } else {
+          None
+        }
+      })),
+      true,
+    );
+
+    modes.triggers.push(Trigger {
+      target_mode: calc_mode,
+      check: Box::new(|q| calc::is_math_expression(q)),
+    });
+
+    modes
+  }
+}
+
+impl SpotlightModes {
+  pub fn configure(&mut self, config: &Config) {
+    self.cache_enabled = config
+      .typed::<SpotlightConfig>()
+      .map(|c| {
+        if c.cliphist {
+          let _ = Command::new("wl-paste")
+            .args(["--watch", "cliphist", "store"])
+            .spawn();
+        }
+        c.cache
+      })
+      .unwrap_or(false);
+  }
+
+  pub fn precache(&self, store: &Store) {
+    if !self.cache_enabled {
+      return;
+    }
+    for name in self
+      .modes
+      .keys()
+      .filter(|name| matches!(self.modes.get(*name), Some(SpotlightMode::Generate(_))))
+      .cloned()
+      .collect::<Vec<Ustr>>()
+    {
+      let _ = self.generate(&name, "", store);
+    }
+  }
+
+  pub fn generate(&self, name: &Ustr, query: &str, store: &Store) -> Arc<Vec<SpotlightItem>> {
+    if !self.cache_enabled || !query.is_empty() {
+      return Arc::new(self.generate_inner(name, query, store));
+    }
+
+    let version = self.versions.get(name).map(|f| f()).unwrap_or(0);
+    if let Some((cached_version, items)) = self.results.borrow().get(name)
+      && *cached_version == version
+      && !items.is_empty()
+    {
+      return Arc::clone(items);
+    }
+
+    let items = Arc::new(self.generate_inner(name, query, store));
+    if !items.is_empty() || version > 0 {
+      self
+        .results
+        .borrow_mut()
+        .insert(name.clone(), (version, Arc::clone(&items)));
+    }
+    items
+  }
+
+  fn generate_inner(&self, name: &Ustr, query: &str, store: &Store) -> Vec<SpotlightItem> {
+    match self.modes.get(name) {
+      Some(SpotlightMode::Generate(generator)) => generator(query, store),
+      Some(SpotlightMode::SingleResult(evaluator)) => evaluator(query, store).into_iter().collect(),
+      None => Vec::new(),
+    }
+  }
+
+  pub fn register_mode(&mut self, name: impl Into<Ustr>, mode: SpotlightMode, allow_trigger: bool) {
+    let name = name.into();
+    if allow_trigger {
+      self.allow_triggers.insert(name.clone());
+    }
+    self.modes.insert(name, mode);
+  }
+
+  pub fn register_version(
+    &mut self,
+    name: impl Into<Ustr>,
+    version: impl Fn() -> u64 + Send + Sync + 'static,
+  ) {
+    let name = name.into();
+    self.versions.insert(name, Box::new(version));
+  }
+
+  pub fn register_trigger(
+    &mut self,
+    target_mode: impl Into<Ustr>,
+    check: impl Fn(&str) -> bool + Send + Sync + 'static,
+  ) {
+    self.triggers.push(Trigger {
+      target_mode: target_mode.into(),
+      check: Box::new(check),
+    });
+  }
+}
 
 struct SpotlightInner {
   search: String,
   selected_index: usize,
+  action_index: usize,
   should_close: bool,
+  current_mode: Ustr,
+  base_mode: Ustr,
+  pending_action: Option<SpotlightAction>,
+  visible_start_idx: usize,
+  visible_end_idx: usize,
 }
 
 pub struct Spotlight {
   inner: Arc<Mutex<SpotlightInner>>,
-  results: Vec<String>,
+  shown: bool,
+}
+
+fn scroll_target(selected: usize, start: usize, end: usize) -> Option<(usize, f32)> {
+  let ns = if selected < start {
+    selected
+  } else if selected >= end {
+    selected + 1 - WINDOW_LEN
+  } else {
+    return None;
+  };
+  Some((ns, ns as f32 * ROW_HEIGHT))
 }
 
 impl Spotlight {
@@ -30,27 +280,89 @@ impl Spotlight {
       inner: Arc::new(Mutex::new(SpotlightInner {
         search: String::new(),
         selected_index: 0,
+        action_index: 0,
         should_close: false,
+        current_mode: "applications".into(),
+        base_mode: "applications".into(),
+        pending_action: None,
+        visible_start_idx: 0,
+        visible_end_idx: WINDOW_LEN,
       })),
-      results: vec![
-        "Something".to_string(),
-        "Something else".to_string(),
-        "Another thing".to_string(),
-        "Thingie".to_string(),
-      ],
+      shown: false,
     }
   }
 
-  fn filtered_results(&self, search: &str) -> Vec<(usize, &str)> {
-    let query = search.to_lowercase();
-    self
-      .results
-      .iter()
-      .enumerate()
-      .filter(|(_, r)| query.is_empty() || r.to_lowercase().contains(&query))
-      .map(|(i, r)| (i, r.as_str()))
-      .collect()
+  fn execute_action(action: SpotlightAction) {
+    match action {
+      SpotlightAction::Exec(cmd) => {
+        apps::spawn_app(&cmd);
+      }
+      SpotlightAction::Copy(text) => {
+        copy_to_clipboard(&text);
+      }
+      SpotlightAction::Clip(line) => {
+        clipboard::copy(&line);
+      }
+      SpotlightAction::Custom(f) => {
+        f();
+      }
+    }
   }
+
+  fn toggle(&mut self, payload: Option<&Ustr>) -> anyhow::Result<ItemEffect> {
+    if self.shown {
+      self.close();
+      self.shown = false;
+      Ok(ItemEffect::Hide)
+    } else {
+      self.open(payload);
+      self.shown = true;
+      Ok(ItemEffect::Show)
+    }
+  }
+
+  fn open(&self, payload: Option<&Ustr>) {
+    let mut inner = self.inner.lock().unwrap();
+    inner.search.clear();
+    inner.selected_index = 0;
+    inner.action_index = 0;
+    inner.visible_start_idx = 0;
+    inner.visible_end_idx = WINDOW_LEN;
+    inner.should_close = false;
+    let mode = payload.cloned().unwrap_or_else(|| "applications".into());
+    inner.current_mode = mode.clone();
+    inner.base_mode = mode;
+    inner.pending_action = None;
+  }
+
+  fn close(&self) {
+    let mut inner = self.inner.lock().unwrap();
+    inner.current_mode = "applications".into();
+    inner.base_mode = "applications".into();
+    inner.search.clear();
+    inner.selected_index = 0;
+    inner.action_index = 0;
+  }
+}
+
+fn copy_to_clipboard(text: &str) {
+  if let Ok(mut child) = Command::new("wl-copy")
+    .stdin(Stdio::piped())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+  {
+    if let Some(mut stdin) = child.stdin.take() {
+      use std::io::Write;
+      let _ = stdin.write_all(text.as_bytes());
+    }
+    let _ = child.wait();
+  }
+}
+
+enum ModeResult {
+  List(Arc<Vec<SpotlightItem>>),
+  Single(Option<SpotlightItem>),
 }
 
 impl DesktopItem for Spotlight {
@@ -85,120 +397,382 @@ impl DesktopItem for Spotlight {
   }
 
   fn init_events(&self) -> Vec<EventFilter> {
-    vec![EventFilter::Named("spotlight.toggle".into())]
+    vec![
+      EventFilter::Named("spotlight.toggle".into()),
+      EventFilter::Named("spotlight.close".into()),
+      EventFilter::Payload("spotlight.open".into()),
+      EventFilter::Payload("spotlight.toggle".into()),
+      EventFilter::Named("config.reload".into()),
+    ]
   }
 
-  fn update(&mut self, _store: &mut Store, event: &ListenerAction) -> anyhow::Result<ItemEffect> {
+  fn update(
+    &mut self,
+    config: &Config,
+    store: &mut Store,
+    event: &ListenerAction,
+  ) -> anyhow::Result<ItemEffect> {
     match event {
-      ListenerAction::Named(name) if name.as_ref() == "spotlight.toggle" => {
-        let mut inner = self.inner.lock().unwrap();
-        inner.search.clear();
-        inner.selected_index = 0;
-        inner.should_close = false;
+      ListenerAction::Named(name)
+      | ListenerAction::Signal { name, .. }
+      | ListenerAction::Timer { name, .. }
+        if name.as_ref() == "config.reload" =>
+      {
+        if let Some(modes) = store.borrow_mut::<SpotlightModes>() {
+          modes.configure(config);
+        }
+        Ok(ItemEffect::Redraw)
+      }
+      ListenerAction::Payload { name, payload } if name.as_ref() == "spotlight.toggle" => {
+        self.toggle(payload.transform::<Ustr>())
+      }
+      ListenerAction::Named(name) if name.as_ref() == "spotlight.toggle" => self.toggle(None),
+      ListenerAction::Named(name) if name.as_ref() == "spotlight.close" => {
+        self.close();
+        self.shown = false;
+        Ok(ItemEffect::Hide)
+      }
+      ListenerAction::Payload { name, payload } if name.as_ref() == "spotlight.open" => {
+        self.open(payload.transform::<Ustr>());
+        self.shown = true;
         Ok(ItemEffect::Show)
       }
       _ => Ok(ItemEffect::None),
     }
   }
 
-  fn handle_message(&mut self, message: &ItemMessage) -> ItemEffect {
-    if let ItemMessage::Effect(_, ItemEffect::Redraw) = message {
-      let inner = self.inner.lock().unwrap();
-      if inner.should_close {
-        return ItemEffect::Hide;
+  fn handle_message(&mut self, _store: Option<&mut Store>, message: &ItemMessage) -> ItemEffect {
+    match message {
+      ItemMessage::Effect(_, ItemEffect::Redraw) => {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.should_close {
+          if let Some(action) = inner.pending_action.take() {
+            Self::execute_action(action);
+          }
+          drop(inner);
+          self.close();
+          self.shown = false;
+          return ItemEffect::Hide;
+        }
+        return ItemEffect::Redraw;
       }
-      return ItemEffect::Redraw;
+      ItemMessage::Effect(_, ItemEffect::Custom([0, start, end, _])) => {
+        let mut inner = self.inner.lock().unwrap();
+        inner.visible_start_idx = *start;
+        inner.visible_end_idx = *end;
+        return ItemEffect::Redraw;
+      }
+      ItemMessage::Effect(_, ItemEffect::Custom([2, index, _, _])) => {
+        let mut inner = self.inner.lock().unwrap();
+        inner.selected_index = *index;
+        return ItemEffect::Redraw;
+      }
+      _ => {}
     }
     ItemEffect::None
   }
 
-  fn view(&self, _store: &Store, id: IcedId) -> Element<'_, ItemMessage> {
-    let inner = self.inner.lock().unwrap();
+  fn view(
+    &self,
+    config: &Config,
+    store: &Store,
+    id: IcedId,
+    _monitor: &str,
+  ) -> Element<'static, ItemMessage> {
+    let Some(modes) = store.borrow::<SpotlightModes>() else {
+      return space().into();
+    };
 
-    let search_display = if inner.search.is_empty() {
+    let style = config.style("spotlight");
+    let theme = &config.theme;
+
+    let inner = self.inner.lock().unwrap();
+    let current_mode = inner.current_mode.clone();
+    let search = inner.search.clone();
+    let selected = inner.selected_index;
+    let action_index = inner.action_index;
+    let win_start = inner.visible_start_idx;
+    drop(inner);
+
+    let mode_result = match modes.modes.get(&current_mode) {
+      Some(SpotlightMode::Generate(_)) => {
+        ModeResult::List(modes.generate(&current_mode, &search, store))
+      }
+      Some(SpotlightMode::SingleResult(evaluator)) => ModeResult::Single(evaluator(&search, store)),
+      None => ModeResult::List(Arc::new(Vec::new())),
+    };
+
+    let search_font = style.number("search.font.size").unwrap_or(22.0);
+    let search_display = if search.is_empty() {
       container(
-        text("Search...")
-          .size(24)
-          .color(Color::from_rgba(1.0, 1.0, 1.0, 0.35)),
+        text(format!("Search {}...", current_mode))
+          .size(search_font)
+          .color(style.color(theme, "search.placeholder.color", theme.overlay)),
       )
     } else {
       container(
-        text(format!("{}|", inner.search))
-          .size(24)
-          .color(Color::WHITE),
+        text(format!("{search}|"))
+          .size(search_font)
+          .color(style.color(theme, "search.color", theme.text)),
       )
     };
 
+    let search_bg = style.color(theme, "search.background", theme.mantle);
+    let radius = style.number("radius").unwrap_or(12.0);
+    let border_color = style.color(theme, "border.color", theme.overlay);
+    let border_width = style.number("border.width").unwrap_or(1.0);
+    let padding = style.number("padding").unwrap_or(14.0);
+
     let search_bar = container(search_display)
       .width(Length::Fill)
-      .padding(12)
-      .style(|_t| container::Style {
-        background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.08).into()),
+      .padding(padding)
+      .style(move |_t| container::Style {
+        background: Some(search_bg.into()),
         border: iced::Border {
-          radius: 8.0.into(),
-          width: 1.0,
-          color: Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+          radius: radius.into(),
+          width: border_width,
+          color: border_color,
         },
         ..container::Style::default()
       });
 
-    let filtered = self.filtered_results(&inner.search);
-    let selected = inner.selected_index;
+    let result_bg = style.color(theme, "row.background", theme.mantle);
+    let selected_bg = style.color(theme, "row.selected", theme.primary);
+    let result_color = style.color(theme, "result.color", theme.text);
+    let result_font = style.number("result.font.size").unwrap_or(15.0);
+    let row_padding = style.number("row.padding").unwrap_or(10.0);
+    let spacing = style.number("spacing").unwrap_or(8.0);
+    let mantle_bg = theme.mantle;
+    let subtext_color = style.color(theme, "subtitle.color", theme.subtext);
+    let hint_color = style.color(theme, "hint.color", theme.overlay);
+    let tag_color = style.color(theme, "tag.color", theme.subtext);
+    let accent_color = style.color(theme, "color.accent", theme.primary);
+    let single_font_size = style.number("single.font.size").unwrap_or(32.0);
+    let single_padding = style.number("single.padding").unwrap_or(16.0);
 
-    let mut results_col = column![].spacing(4);
-    for (i, (_orig_idx, label)) in filtered.iter().enumerate() {
-      let is_selected = i == selected;
+    let mut actions: Vec<Vec<SpotlightActionDef>> = Vec::new();
+    let body: Element<'static, ItemMessage>;
 
-      let row_content = container(text(*label).size(18).color(Color::WHITE))
+    match mode_result {
+      ModeResult::Single(Some(item)) => {
+        actions = vec![item.actions.clone()];
+
+        let single_card = container(
+          column![
+            row![
+              Icon::any(
+                item
+                  .image_icon
+                  .as_deref()
+                  .into_iter()
+                  .chain(std::iter::once("accessories-calculator-symbolic"))
+              )
+              .size(28)
+              .color(accent_color),
+              text(item.title).size(single_font_size).color(result_color),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+            if let Some(sub) = item.subtitle {
+              text(sub).size(14.0).color(subtext_color)
+            } else {
+              text(String::new())
+            },
+            if let Some(hint) = item.subtext {
+              text(hint).size(11.0).color(hint_color)
+            } else {
+              text(String::new())
+            }
+          ]
+          .spacing(6),
+        )
         .width(Length::Fill)
-        .padding(10)
-        .style(move |_t| {
-          if is_selected {
-            container::Style {
-              background: Some(Color::from_rgba(0.5, 0.0, 0.0, 0.8).into()),
-              border: iced::Border {
-                radius: 8.0.into(),
-                ..Default::default()
-              },
-              ..container::Style::default()
-            }
-          } else {
-            container::Style {
-              background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.04).into()),
-              border: iced::Border {
-                radius: 8.0.into(),
-                ..Default::default()
-              },
-              ..container::Style::default()
-            }
-          }
+        .padding(single_padding)
+        .style(move |_t| container::Style {
+          background: Some(result_bg.into()),
+          border: iced::Border {
+            radius: radius.into(),
+            width: border_width,
+            color: border_color,
+          },
+          ..container::Style::default()
         });
 
-      results_col = results_col.push(row_content);
+        body = container(single_card).into();
+      }
+      ModeResult::Single(None) => {
+        body = container(text("No result").size(14.0).color(hint_color))
+          .padding(row_padding)
+          .into();
+      }
+      ModeResult::List(items) => {
+        let mut results_col = column![].spacing(spacing);
+
+        let max_idx = items.len();
+        actions = items.iter().map(|item| item.actions.clone()).collect();
+        let mut render_start = win_start.min(max_idx);
+        let render_end;
+        if max_idx <= WINDOW_LEN {
+          render_start = 0;
+          render_end = max_idx;
+        } else {
+          if render_start >= max_idx || render_start + WINDOW_LEN > max_idx {
+            render_start = max_idx.saturating_sub(WINDOW_LEN);
+          }
+          render_end = (render_start + WINDOW_LEN).min(max_idx);
+        }
+        if let Ok(mut inner) = self.inner.lock() {
+          inner.visible_start_idx = render_start;
+          inner.visible_end_idx = render_end;
+        }
+
+        for (j, item) in items[render_start..render_end].iter().enumerate() {
+          let i = render_start + j;
+
+          let is_selected = i == selected;
+          let bg = if is_selected { selected_bg } else { result_bg };
+
+          let icon_elem = if let Some(ref icon_name) = item.image_icon {
+            Icon::new(icon_name.clone()).size(24).into_element()
+          } else if let Some(ref raw_bytes) = item.image_bytes {
+            iced::widget::image(Icon::<ItemMessage>::from_bytes(i as i32, raw_bytes))
+              .width(Length::Fixed(24.0))
+              .height(Length::Fixed(24.0))
+              .into()
+          } else {
+            Icon::new("application-x-executable-symbolic")
+              .size(24)
+              .into_element()
+          };
+
+          let title_elem = text(item.title.clone())
+            .size(result_font)
+            .color(result_color);
+
+          let text_col = if let Some(subtitle) = &item.subtitle {
+            column![
+              title_elem,
+              text(subtitle.clone()).size(11.0).color(subtext_color)
+            ]
+            .spacing(2)
+          } else {
+            column![title_elem]
+          };
+
+          let mut row_content = row![icon_elem, text_col]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .width(Length::Fill);
+
+          if let Some(tags) = &item.tags {
+            if let Some(tag) = tags.iter().next() {
+              row_content = row_content.push(
+                container(text(tag.clone()).size(10.0).color(tag_color))
+                  .padding([2.0, 6.0])
+                  .style(move |_t| container::Style {
+                    background: Some(mantle_bg.into()),
+                    border: iced::Border {
+                      radius: 4.0.into(),
+                      ..Default::default()
+                    },
+                    ..container::Style::default()
+                  }),
+              );
+            }
+          }
+
+          if is_selected {
+            let defs = &actions[i];
+            let action_label = defs
+              .get(action_index)
+              .map(|def| def.label(action_index))
+              .unwrap_or_default();
+            if !action_label.is_empty() {
+              let label = if defs.len() > 1 {
+                format!("{action_label}  [Tab]")
+              } else {
+                action_label
+              };
+              row_content = row_content.push(
+                container(text(label).size(10.0).color(accent_color))
+                  .padding([2.0, 6.0])
+                  .style(move |_t| container::Style {
+                    background: Some(mantle_bg.into()),
+                    border: iced::Border {
+                      radius: 4.0.into(),
+                      ..Default::default()
+                    },
+                    ..container::Style::default()
+                  }),
+              );
+            }
+          }
+
+          let row_container = clickable(
+            container(row_content)
+              .width(Length::Fill)
+              .height(Length::Fixed(ROW_HEIGHT))
+              .padding(row_padding)
+              .style(move |_t| container::Style {
+                background: Some(bg.into()),
+                border: iced::Border {
+                  radius: radius.into(),
+                  ..Default::default()
+                },
+                ..container::Style::default()
+              })
+              .into(),
+            move |_, _, _| Some(ItemMessage::Effect(id, ItemEffect::Custom([2, i, 0, 0]))),
+          );
+
+          results_col = results_col.push(row_container);
+        }
+
+        body = container(results_col)
+          .width(Length::Fill)
+          .height(Length::Fixed(LIST_HEIGHT))
+          .clip(true)
+          .into();
+      }
     }
 
-    let content = column![
-      search_bar,
-      scrollable(results_col).height(Length::Fixed(600.0))
-    ]
-    .spacing(8)
-    .padding(20)
-    .width(Length::Fixed(600.0));
+    let content = column![search_bar, body]
+      .spacing(style.number("spacing").unwrap_or(10.0))
+      .padding(padding)
+      .width(Length::Fixed(600.0));
+
+    let backdrop_bg = style.color(theme, "backdrop", theme.base);
 
     let main_container = center(container(content))
       .width(Length::Fill)
       .height(Length::Fill)
       .center_x(Length::Fill)
       .center_y(Length::Fill)
-      .style(|_t| container::Style {
-        background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+      .style(move |_t| container::Style {
+        background: Some(backdrop_bg.into()),
         ..container::Style::default()
       });
 
-    drop(inner);
-
     let inner_ref = self.inner.clone();
-    let result_count = filtered.len();
+    let result_count = actions.len();
+
+    {
+      let mut s = inner_ref.lock().unwrap();
+      let mut triggered = None;
+      for trigger in &modes.triggers {
+        if (trigger.check)(&s.search) {
+          if modes.allow_triggers.contains(&trigger.target_mode) {
+            triggered = Some(trigger.target_mode.clone());
+            break;
+          }
+        }
+      }
+      if let Some(m) = triggered {
+        s.current_mode = m;
+      } else {
+        s.current_mode = s.base_mode.clone();
+      }
+    }
 
     EventWrapper::new(
       main_container.into(),
@@ -206,24 +780,66 @@ impl DesktopItem for Spotlight {
         Event::Keyboard(keyboard::Event::KeyPressed { key, text, .. }) => {
           match key.as_ref() {
             keyboard::Key::Named(keyboard::key::Named::Escape) => {
-              inner_ref.lock().unwrap().should_close = true;
+              let mut s = inner_ref.lock().unwrap();
+              s.should_close = true;
+              s.pending_action = None;
+              s.current_mode = "applications".into();
+              s.base_mode = "applications".into();
+              s.search.clear();
+              s.selected_index = 0;
+              s.action_index = 0;
+              s.visible_start_idx = 0;
+              s.visible_end_idx = WINDOW_LEN;
               return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
             }
             keyboard::Key::Named(keyboard::key::Named::Enter) => {
-              inner_ref.lock().unwrap().should_close = true;
+              let mut s = inner_ref.lock().unwrap();
+              if s.selected_index < actions.len() {
+                let defs = &actions[s.selected_index];
+                if let Some(def) = defs.get(s.action_index) {
+                  s.pending_action = Some(def.action.clone());
+                }
+              }
+              s.should_close = true;
+              return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
+            }
+            keyboard::Key::Named(keyboard::key::Named::Tab) => {
+              let mut s = inner_ref.lock().unwrap();
+              if s.selected_index < actions.len() {
+                let defs = &actions[s.selected_index];
+                if defs.len() > 1 {
+                  s.action_index = (s.action_index + 1) % defs.len();
+                }
+              }
               return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
             }
             keyboard::Key::Named(keyboard::key::Named::ArrowUp) => {
               let mut s = inner_ref.lock().unwrap();
-              if s.selected_index > 0 {
-                s.selected_index -= 1;
+              if s.selected_index == 0 {
+                return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
+              }
+              s.selected_index -= 1;
+              s.action_index = 0;
+              if let Some((ns, _)) =
+                scroll_target(s.selected_index, s.visible_start_idx, s.visible_end_idx)
+              {
+                s.visible_start_idx = ns;
+                s.visible_end_idx = (ns + WINDOW_LEN).min(result_count);
               }
               return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
             }
             keyboard::Key::Named(keyboard::key::Named::ArrowDown) => {
               let mut s = inner_ref.lock().unwrap();
-              if s.selected_index + 1 < result_count {
-                s.selected_index += 1;
+              if s.selected_index + 1 >= result_count {
+                return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
+              }
+              s.selected_index += 1;
+              s.action_index = 0;
+              if let Some((ns, _)) =
+                scroll_target(s.selected_index, s.visible_start_idx, s.visible_end_idx)
+              {
+                s.visible_start_idx = ns;
+                s.visible_end_idx = (ns + WINDOW_LEN).min(result_count);
               }
               return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
             }
@@ -231,6 +847,8 @@ impl DesktopItem for Spotlight {
               let mut s = inner_ref.lock().unwrap();
               s.search.pop();
               s.selected_index = 0;
+              s.action_index = 0;
+
               return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
             }
             _ => {
@@ -240,6 +858,8 @@ impl DesktopItem for Spotlight {
                   let mut s = inner_ref.lock().unwrap();
                   s.search.push_str(ch);
                   s.selected_index = 0;
+                  s.action_index = 0;
+
                   return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
                 }
               }
@@ -248,17 +868,46 @@ impl DesktopItem for Spotlight {
           None
         }
         Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
-          if let Some(col_layout) = layout.children().next() {
-            let mut col_children = col_layout.children();
-            let _ = col_children.next();
-            if let Some(scrollable_layout) = col_children.next() {
-              if let Some(results_col) = scrollable_layout.children().next() {
-                for (i, row_layout) in results_col.children().enumerate() {
-                  if cursor.is_over(row_layout.bounds()) {
-                    let mut s = inner_ref.lock().unwrap();
-                    s.selected_index = i;
-                    s.should_close = true;
-                    return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
+          if let Some(center_layout) = layout.children().next() {
+            if let Some(col_layout) = center_layout.children().next() {
+              if !cursor.is_over(col_layout.bounds()) {
+                let mut s = inner_ref.lock().unwrap();
+                s.should_close = true;
+                s.pending_action = None;
+                s.current_mode = "applications".into();
+                s.base_mode = "applications".into();
+                s.search.clear();
+                s.selected_index = 0;
+                s.action_index = 0;
+                s.visible_start_idx = 0;
+                s.visible_end_idx = WINDOW_LEN;
+                return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
+              }
+
+              let mut col_children = col_layout.children();
+              let _ = col_children.next();
+              if let Some(body_layout) = col_children.next() {
+                let (start, end) = {
+                  let s = inner_ref.lock().unwrap();
+                  (s.visible_start_idx, s.visible_end_idx)
+                };
+                if let Some(pos) = cursor.position() {
+                  let bounds = body_layout.bounds();
+                  if cursor.is_over(bounds) {
+                    let row_top = bounds.y;
+                    let row_bottom = bounds.y + (end - start) as f32 * ROW_HEIGHT;
+                    if pos.y >= row_top && pos.y < row_bottom {
+                      let j = ((pos.y - row_top) / ROW_HEIGHT) as usize;
+                      let idx = start + j;
+                      if idx < actions.len() {
+                        let mut s = inner_ref.lock().unwrap();
+                        if let Some(def) = actions[idx].get(s.action_index) {
+                          s.pending_action = Some(def.action.clone());
+                        }
+                        s.should_close = true;
+                        return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
+                      }
+                    }
                   }
                 }
               }
@@ -272,3 +921,69 @@ impl DesktopItem for Spotlight {
     .into()
   }
 }
+
+#[derive(Default)]
+pub struct SpotlightConfig {
+  pub cache: bool,
+  pub cliphist: bool,
+}
+
+slowshell_registry::register_resources!(
+  payload: Unknown(PayloadBuilder {
+    commands: &["spotlight.open", "spotlight.toggle"],
+    build: |_, args| {
+      Some(PayloadBox::new(args.0.get(0)?.clone()))
+    }
+  }.into_boxed()),
+  config: Unknown(Box::new(ConfigParser {
+    type_id: TypeId::of::<SpotlightConfig>(),
+    de: |nodes| match slowshell_config::find_node(nodes, "spotlight") {
+      Some(node) => Ok(Some(Box::new(SpotlightConfig {
+        cache: slowshell_config::child_bool(node, "cache").unwrap_or(false),
+        cliphist: slowshell_config::child_bool(node, "cliphist").unwrap_or(false),
+      }))),
+      None => Ok(None),
+    },
+  })),
+  app: Custom(|store| {
+    DesktopEntries::initialize_unless(store);
+  }),
+  app: Store {
+    type_id: TypeId::of::<SpotlightModes>(),
+    create: |config, store| {
+      let mut modes = SpotlightModes::default();
+      modes.configure(config);
+      modes.precache(store);
+      Ok(Box::new(modes))
+    },
+  },
+  app: Item(|_, _| Ok(vec![Box::new(Spotlight::new())])),
+  spotlight: Style(
+    slowshell_config::style! {
+      "background" => "crust",
+      "background.opacity" => 0.8,
+      "radius" => 12,
+      "border.width" => 1,
+      "border.color" => "overlay",
+      "border.color.opacity" => 0.3,
+      "padding" => 14,
+      "spacing" => 8,
+      "row.padding" => 10,
+      "row.background" => "mantle",
+      "row.background.opacity" => 0.6,
+      "row.selected" => "primary",
+      "row.selected.opacity" => 0.7,
+      "search.background" => "mantle",
+      "search.background.opacity" => 0.8,
+      "search.color" => "text",
+      "search.placeholder.color" => "overlay",
+      "result.color" => "text",
+      "backdrop" => "crust",
+      "backdrop.opacity" => 0.6,
+      "search.font.size" => 22,
+      "result.font.size" => 15,
+      "single.font.size" => 32,
+      "single.padding" => 18,
+    }
+  )
+);

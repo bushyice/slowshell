@@ -5,6 +5,7 @@ use iced::{
     widget::{Tree, Widget},
   },
 };
+use slowshell_core::message::ItemMessage;
 
 pub struct EventWrapper<'a, Message> {
   content: Element<'a, Message>,
@@ -135,4 +136,24 @@ impl<'a, Message: 'a> From<EventWrapper<'a, Message>> for Element<'a, Message> {
   fn from(wrapper: EventWrapper<'a, Message>) -> Self {
     Element::new(wrapper)
   }
+}
+
+pub fn clickable<'a>(
+  content: Element<'a, ItemMessage>,
+  on_click: impl Fn(&Event, Layout<'_>, mouse::Cursor) -> Option<ItemMessage> + 'a,
+) -> Element<'a, ItemMessage> {
+  EventWrapper::new(content, move |event, layout, cursor| {
+    if !cursor.is_over(layout.bounds()) {
+      return None;
+    }
+    let Event::Mouse(mouse::Event::ButtonPressed(button)) = event else {
+      return None;
+    };
+    if !matches!(button, mouse::Button::Left | mouse::Button::Right) {
+      return None;
+    }
+
+    on_click(event, layout, cursor)
+  })
+  .into()
 }

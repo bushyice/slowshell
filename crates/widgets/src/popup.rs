@@ -1,9 +1,212 @@
 use iced::{
-  Color, Element, Length, Padding,
-  widget::{Pin, Space, container, mouse_area, stack},
+  Color, Element, Event, Length, Padding, Point, Rectangle, Size, Vector,
+  advanced::{
+    Clipboard, Layout, Shell, layout, mouse, overlay, renderer,
+    widget::{self, Widget},
+  },
+  widget::{Space, container, mouse_area, stack},
 };
 use slowshell_commons::panels::{PanelEdge, PanelPositions};
 use slowshell_core::{Store, message::ItemMessage};
+
+pub struct PopupPin<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
+where
+  Renderer: renderer::Renderer,
+{
+  content: Element<'a, Message, Theme, Renderer>,
+  width: Length,
+  height: Length,
+  position: Point,
+}
+
+impl<'a, Message, Theme, Renderer> PopupPin<'a, Message, Theme, Renderer>
+where
+  Renderer: renderer::Renderer,
+{
+  pub fn new(content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
+    Self {
+      content: content.into(),
+      width: Length::Fill,
+      height: Length::Fill,
+      position: Point::ORIGIN,
+    }
+  }
+
+  pub fn x(mut self, x: f32) -> Self {
+    self.position.x = x;
+    self
+  }
+
+  pub fn y(mut self, y: f32) -> Self {
+    self.position.y = y;
+    self
+  }
+}
+
+impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+  for PopupPin<'a, Message, Theme, Renderer>
+where
+  Renderer: renderer::Renderer,
+{
+  fn tag(&self) -> widget::tree::Tag {
+    self.content.as_widget().tag()
+  }
+
+  fn state(&self) -> widget::tree::State {
+    self.content.as_widget().state()
+  }
+
+  fn children(&self) -> Vec<widget::Tree> {
+    self.content.as_widget().children()
+  }
+
+  fn diff(&self, tree: &mut widget::Tree) {
+    self.content.as_widget().diff(tree);
+  }
+
+  fn size(&self) -> Size<Length> {
+    Size {
+      width: self.width,
+      height: self.height,
+    }
+  }
+
+  fn layout(
+    &mut self,
+    tree: &mut widget::Tree,
+    renderer: &Renderer,
+    limits: &layout::Limits,
+  ) -> layout::Node {
+    let limits = limits.width(self.width).height(self.height);
+
+    let node = self.content.as_widget_mut().layout(tree, renderer, &limits);
+
+    let max = limits.max();
+    let clamped_x = self
+      .position
+      .x
+      .clamp(0.0, (max.width - node.size().width).max(0.0));
+    let clamped_y = self
+      .position
+      .y
+      .clamp(0.0, (max.height - node.size().height).max(0.0));
+
+    let node = node.move_to(Point::new(clamped_x, clamped_y));
+
+    let size = limits.resolve(self.width, self.height, node.size());
+    layout::Node::with_children(size, vec![node])
+  }
+
+  fn operate(
+    &mut self,
+    tree: &mut widget::Tree,
+    layout: Layout<'_>,
+    renderer: &Renderer,
+    operation: &mut dyn widget::Operation,
+  ) {
+    self.content.as_widget_mut().operate(
+      tree,
+      layout.children().next().unwrap(),
+      renderer,
+      operation,
+    );
+  }
+
+  fn update(
+    &mut self,
+    tree: &mut widget::Tree,
+    event: &Event,
+    layout: Layout<'_>,
+    cursor: mouse::Cursor,
+    renderer: &Renderer,
+    clipboard: &mut dyn Clipboard,
+    shell: &mut Shell<'_, Message>,
+    viewport: &Rectangle,
+  ) {
+    self.content.as_widget_mut().update(
+      tree,
+      event,
+      layout.children().next().unwrap(),
+      cursor,
+      renderer,
+      clipboard,
+      shell,
+      viewport,
+    );
+  }
+
+  fn mouse_interaction(
+    &self,
+    tree: &widget::Tree,
+    layout: Layout<'_>,
+    cursor: mouse::Cursor,
+    viewport: &Rectangle,
+    renderer: &Renderer,
+  ) -> mouse::Interaction {
+    self.content.as_widget().mouse_interaction(
+      tree,
+      layout.children().next().unwrap(),
+      cursor,
+      viewport,
+      renderer,
+    )
+  }
+
+  fn draw(
+    &self,
+    tree: &widget::Tree,
+    renderer: &mut Renderer,
+    theme: &Theme,
+    style: &renderer::Style,
+    layout: Layout<'_>,
+    cursor: mouse::Cursor,
+    viewport: &Rectangle,
+  ) {
+    let bounds = layout.bounds();
+    if let Some(clipped_viewport) = bounds.intersection(viewport) {
+      self.content.as_widget().draw(
+        tree,
+        renderer,
+        theme,
+        style,
+        layout.children().next().unwrap(),
+        cursor,
+        &clipped_viewport,
+      );
+    }
+  }
+
+  fn overlay<'b>(
+    &'b mut self,
+    tree: &'b mut widget::Tree,
+    layout: Layout<'b>,
+    renderer: &Renderer,
+    viewport: &Rectangle,
+    translation: Vector,
+  ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+    self.content.as_widget_mut().overlay(
+      tree,
+      layout.children().next().unwrap(),
+      renderer,
+      viewport,
+      translation,
+    )
+  }
+}
+
+impl<'a, Message, Theme, Renderer> From<PopupPin<'a, Message, Theme, Renderer>>
+  for Element<'a, Message, Theme, Renderer>
+where
+  Message: 'a,
+  Theme: 'a,
+  Renderer: renderer::Renderer + 'a,
+{
+  fn from(
+    popup_pin: PopupPin<'a, Message, Theme, Renderer>,
+  ) -> Element<'a, Message, Theme, Renderer> {
+    Element::new(popup_pin)
+  }
+}
 
 #[derive(Debug, Clone)]
 pub struct Backdrop {
@@ -52,6 +255,7 @@ pub struct SizedPopup<'a> {
   backdrop: Option<Backdrop>,
   on_close: Option<ItemMessage>,
   insets: Padding,
+  panel_edge: Option<PanelEdge>,
 }
 
 impl<'a> SizedPopup<'a> {
@@ -64,6 +268,7 @@ impl<'a> SizedPopup<'a> {
       backdrop: None,
       on_close: None,
       insets: Padding::ZERO,
+      panel_edge: None,
     }
   }
 
@@ -122,9 +327,19 @@ impl<'a> SizedPopup<'a> {
     self
   }
 
+  pub fn with_panel_edge(mut self, panel_edge: Option<PanelEdge>) -> Self {
+    self.panel_edge = panel_edge;
+    self
+  }
+
   pub fn into_element(self) -> Element<'a, ItemMessage> {
-    let x = (self.x + self.insets.left) - self.size.0;
-    let y = (self.y + self.insets.top) - self.size.1;
+    let (x, y) = match self.panel_edge {
+      Some(PanelEdge::Left { .. }) => (self.x, (self.y + self.insets.top) - self.size.1),
+      _ => (
+        (self.x + self.insets.left) - self.size.0,
+        (self.y + self.insets.top) - self.size.1,
+      ),
+    };
 
     let content_box = container(self.content).padding(Padding {
       top: 0.0,
@@ -135,7 +350,7 @@ impl<'a> SizedPopup<'a> {
 
     let shielded_content = mouse_area(content_box).on_press(ItemMessage::Noop);
 
-    let actual = Pin::new(shielded_content).x(x.max(0.0)).y(y.max(0.0));
+    let actual = PopupPin::new(shielded_content).x(x.max(0.0)).y(y.max(0.0));
 
     match self.backdrop {
       Some(backdrop) => {

@@ -9,6 +9,7 @@ slowshell-commons = { path = "../commons" }
 slowshell-widgets = { path = "../widgets" }
 slowshell-config = { path = "../config" }
 slowshell-desktop = { path = "../desktop" }
+slowshell-registry = { path = "../registry" }
 
 iced.workspace = true
 iced_layershell.workspace = true

@@ -9,7 +9,7 @@ use niri_ipc::state::{EventStreamState, EventStreamStatePart};
 use nix::sys::epoll::EpollFlags;
 use slowshell_config::Config;
 use slowshell_core::{
-  Monitor, Store, Window,
+  Monitor, Store, Window, Workspace,
   listeners::{ListenerAction, Listeners},
   message::Message,
   types::{Ustr, Void},
@@ -22,6 +22,7 @@ pub struct NiriCompositor {
   state: CompositorState,
   _state: EventStreamState,
   reader: Option<BufReader<UnixStream>>,
+  cmd_socket: Option<niri_ipc::socket::Socket>,
 }
 
 impl Compositor for NiriCompositor {
@@ -29,8 +30,27 @@ impl Compositor for NiriCompositor {
     &self.state
   }
 
-  fn send_cmd(&self, _cmd: crate::CompositorCommand) -> anyhow::Result<Void> {
-    Ok(Void)
+  fn send_cmd(&mut self, cmd: crate::CompositorCommand) -> anyhow::Result<Void> {
+    match cmd {
+      crate::CompositorCommand::FocusWorkspace(idx) => {
+        let socket = self.get_or_connect_cmd_socket()?;
+
+        let reply = socket.send(niri_ipc::Request::Action(
+          niri_ipc::Action::FocusWorkspace {
+            reference: niri_ipc::WorkspaceReferenceArg::Index(idx as u8),
+          },
+        ));
+
+        match reply {
+          Ok(Err(e)) => Err(anyhow::anyhow!("niri failed to focus workspace: {e}")),
+          Ok(Ok(_)) => Ok(Void),
+          Err(e) => {
+            self.cmd_socket = None;
+            Err(e.into())
+          }
+        }
+      }
+    }
   }
 
   fn is_active(&self, _config: &Config) -> bool {
@@ -114,6 +134,20 @@ impl NiriCompositor {
     Self::default()
   }
 
+  fn get_or_connect_cmd_socket(&mut self) -> anyhow::Result<&mut niri_ipc::socket::Socket> {
+    if self.cmd_socket.is_none() {
+      let socket_path = std::env::var_os("NIRI_SOCKET")
+        .or_else(|| std::env::var_os("NIRI_SOCKET_PATH"))
+        .ok_or_else(|| {
+          anyhow::anyhow!("NIRI_SOCKET or NIRI_SOCKET_PATH environment variable not set")
+        })?;
+
+      self.cmd_socket = Some(niri_ipc::socket::Socket::connect_to(socket_path)?);
+    }
+
+    Ok(self.cmd_socket.as_mut().unwrap())
+  }
+
   #[inline]
   fn update_state_inner(&mut self, tx: Option<UnboundedSender<Message>>) -> Result<Void> {
     let reader = self
@@ -121,11 +155,16 @@ impl NiriCompositor {
       .as_mut()
       .ok_or(anyhow::anyhow!("Stream not initialized"))?;
 
-    loop {
-      let mut line = String::new();
+    let mut line = String::new();
 
+    loop {
+      line.clear();
       match reader.read_line(&mut line) {
-        Ok(0) => break,
+        Ok(0) => {
+          // EOF: socket was closed by niri
+          self.reader = None;
+          return Err(anyhow::anyhow!("Niri stream closed (EOF)"));
+        }
 
         Ok(_) => {
           if let Ok(event) = serde_json::from_str::<niri_ipc::Event>(&line) {
@@ -181,6 +220,29 @@ impl NiriCompositor {
         class: w.app_id.clone().unwrap_or_default(),
         metadata: Default::default(),
       });
+
+    self.state.overview_active = self._state.overview.is_open;
+
+    self.state.workspaces = self
+      ._state
+      .workspaces
+      .workspaces
+      .values()
+      .map(|ws| Workspace {
+        id: ws.id,
+        idx: ws.idx,
+        is_active: ws.is_active,
+        is_focused: ws.is_focused,
+        is_urgent: ws.is_urgent,
+        name: ws.name.clone(),
+        output: ws.output.clone(),
+      })
+      .collect();
+
+    self
+      .state
+      .workspaces
+      .sort_unstable_by(|a, b| a.output.cmp(&b.output).then_with(|| a.idx.cmp(&b.idx)));
 
     self.state.monitors = self
       ._state

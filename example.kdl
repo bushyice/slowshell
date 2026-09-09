@@ -1,90 +1,162 @@
-theme "catppuccin"
-style "default"
+font "Lexend"
+tick-interval 60
+wgpu-backend "vulkan"
 
-components {
-  component "core/clock" {
-    format "%H:%M"
-  }
+notifications {
+  enabled #true
+}
 
-  // new component from existing ones
-  // with custom settings
-  override "@myown" {
-    inherit "core/clock"
-    format "%H:%M:%S"
-    update "1s"
+spotlight {
+  cache #true
+  // cliphist #true
+}
+
+wallpaper {
+  backend "swaybg" // "slowshell" | "swaybg" | "swww" | "hyprpaper" | "custom"
+  file "/home/makano/Pictures/bg/cat_leaves.png"
+  // paths {
+  //   "HDMI-A-1" "/home/makano/Pictures/bg/1.png"
+  //   "eDP-1" "/home/makano/Pictures/bg/2.png"
+  // }
+  // spawn-args "command $PATH" // for backend = "custom"
+  // max-width 1920
+  // max-height 1080
+}
+
+theme "catppuccin-mocha"
+
+style "item" {
+  spacing 8
+  "highlight.padding" 0.0
+  "highlight.radius" 6.0
+}
+
+style "workspaces" {
+  "width.active" 34
+  "width.inactive" 26
+  "padding.x" 6.0
+  "padding.y" 0.0
+}
+
+widgets {
+  widget "MyClock" {
+    width 300
+    height 200
+    x 50
+    y 100
+    anchor "top-right"
+    monitor "HDMI-A-1"
+    inner "wifi"
   }
 }
 
-layout "default" {
-  monitor "*" {
-    bar "Main" position="top" {
+panels {
+  panel "Main" position="top" transparent=#true {
+    // height 40
+    // overlay #true
+    // autohide #true
+    // autohide-trigger 4
+
+    components {
       left {
-        component "core/workspaces"
-        component "core/active-window" \
-          icon=#true
-      }
-
-      center {
-        component "core/clock"
-      }
-
-      right {
-        component "core/wifi"
-        component "core/bluetooth"
-        component "core/battery"
-      }
-    }
-
-    bar "Secondary" position="left" {
-      center {
-        component "core/cpu"
-      }
-    }
-
-    dock "Main" \
-      position="bottom" \
-      autohide=#true {
-        prefix {
-          component "core/applications"
+        component "core/icon" {
+          label "Slowshell"
+          icon "slowshell-icon-shell.svg"
+          menu "menus/power"
         }
-        suffix {
-          component "core/trash"
+        component "core/workspaces" {
+          label "Workspaces"
+          text #true
+          "override-text" {
+            "1" ""
+          }
+        }
+        component "core/window" {
+          label "Window"
         }
       }
 
-    spotlight "Main" {
-      provider "core/apps"
-      provider "core/files"
-      provider "core/calculator"
-      provider "core/websearch"
-    }
-  }
-
-  monitor "HDMI-A-1" {
-    // disable the inherited secondary bar.
-    bar "Secondary" \
-      enabled=#false
-
-    // override properties of the inherited Main bar.
-    bar "Main" {
-      position "top"
+      center {
+        component "core/nowplaying" {
+          label "Now Playing"
+          "show-artist" #true
+          "controls" #true
+          "max-length" 40
+        }
+        group "SomeGroup" {
+          item "core/clock" {
+            label "Clock"
+            format "%I:%M %p"
+          }
+          item "core/separator" {
+            label "Sep"
+            size 5.0
+            opacity 0.5
+            circle #true
+          }
+          item "core/clock" {
+            label "Date"
+            format "%b %-d"
+          }
+        }
+      }
 
       right {
-        component "core/network"
-        component "core/battery"
-      }
-    }
-
-    // override the dock.
-    dock "Main" \
-      autohide=#false
-  }
-
-  monitor "eDP-1" {
-    bar "Main" {
-      left {
-        component "niri/workspaces"
-        component "niri/active-window"
+        component "core/tray" {
+          label "Tray"
+        }
+        group "SomeGroup" {
+          item "core/audio" {
+            label "Audio"
+            "show-percent" #true
+            "show-track" #false
+          }
+          item "core/separator" {
+            label "Sep"
+            opacity 0.05
+          }
+          item "core/bluetooth" {
+            label "Bluetooth"
+          }
+          item "core/separator" {
+            label "Sep"
+            opacity 0.05
+          }
+          item "core/network" {
+            label "Network"
+            icon #true
+            ssid #true
+          }
+          item "core/separator" {
+            label "Sep"
+            opacity 0.05
+          }
+          item "core/power" {
+            label "Battery"
+            battery #true
+            brightness #true
+          }
+          item "core/separator" {
+            label "Sep"
+            opacity 0.05
+          }
+          item "core/notifications" {
+            label "Notifs"
+          }
+        }
+        component "core/system" {
+          label "CPU"
+          interval 5
+          icons #true
+          progress #true
+          labels #true
+          progress-direction "vertical"
+          items "cpu" "mem"
+        }
+        component "core/icon" {
+          label "Power"
+          menu "menus/actions"
+        }
       }
     }
   }

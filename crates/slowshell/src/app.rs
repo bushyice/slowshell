@@ -4,33 +4,38 @@ use std::task::{Context, Poll};
 
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use iced::{Element, Task};
-use iced_layershell::reexport::{Anchor, IcedId};
+use iced_layershell::reexport::IcedId;
 use slowshell_components::Components;
 use slowshell_compositor::CompositorStore;
 use slowshell_config::Config;
-use slowshell_core::listeners::{FdHandle, Listeners};
+use slowshell_core::listeners::{FdHandle, ListenerAction, Listeners};
+use slowshell_core::types::{PayloadBuilder, PayloadBuilderRegistry};
 use slowshell_desktop::DesktopItems;
-use slowshell_desktop::wallpaper::Wallpaper;
+use slowshell_registry::{GlobalRegistry, ResourceRegistration};
 
 use slowshell_core::Store;
 use slowshell_core::message::Message;
 use slowshell_ipc::IpcListener;
-use slowshell_notifications::NotificationManager;
-use slowshell_panels::{Panel, PanelDeloyer, PanelPositions, Position};
+use slowshell_panels::{PanelDeloyer, PanelPositions};
 use slowshell_popups::Popup;
-use slowshell_spotlight::Spotlight;
 use slowshell_widgets::Renderables;
 
 static EPOLL_RX: OnceLock<Mutex<Option<UnboundedReceiver<Message>>>> = OnceLock::new();
 
 pub struct App {
+  config: Config,
   store: Store,
   items: DesktopItems,
   _tx: UnboundedSender<Message>,
+  config_watcher_fd: Option<i32>,
 }
 
 impl App {
-  pub fn new(config: Config, tx: UnboundedSender<Message>) -> (Self, Task<Message>) {
+  pub fn new(
+    registry: &mut GlobalRegistry,
+    config: Config,
+    tx: UnboundedSender<Message>,
+  ) -> (Self, Task<Message>) {
     let mut store = Store::new();
 
     let mut listeners = Listeners::default();
@@ -45,16 +50,61 @@ impl App {
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
     let eloop_tx = tx.clone();
     let ipc_tx = tx.clone();
-    let (mut eloop, wake_write) = crate::eloop::EventLoop::new(listeners, eloop_tx, 3, cmd_rx)
-      .expect("failed to create event loop");
-    store.insert(FdHandle::new(cmd_tx, wake_write));
-    store.insert(IpcListener::new(ipc_tx));
+    let (mut eloop, wake_write) =
+      crate::eloop::EventLoop::new(listeners, eloop_tx, config.tick_interval, cmd_rx)
+        .expect("failed to create event loop");
+    let fd_handle = FdHandle::new(cmd_tx, wake_write);
+
+    let config_watcher_fd = if let Some(watch_dir) = config.current_dir() {
+      match crate::watcher::ConfigWatcher::watch(&watch_dir) {
+        Ok(watcher) => {
+          let owned = watcher.into_owned_fd();
+          let raw_fd = std::os::fd::AsRawFd::as_raw_fd(&owned);
+          fd_handle.watch_with_flags(
+            owned,
+            nix::sys::epoll::EpollFlags::EPOLLIN | nix::sys::epoll::EpollFlags::EPOLLET,
+            ListenerAction::Signal {
+              name: "config.reload".into(),
+              fd: raw_fd,
+            },
+          );
+          Some(raw_fd)
+        }
+        Err(e) => {
+          eprintln!("[config] failed to watch config directory: {e}");
+          None
+        }
+      }
+    } else {
+      None
+    };
+
+    store.insert(fd_handle);
+
+    let mut preg = PayloadBuilderRegistry::new();
+
+    for payload in registry.inside("payload") {
+      if let ResourceRegistration::Unknown(payload) = payload {
+        if let Ok(builder) = payload.downcast::<PayloadBuilder>() {
+          preg.register(*builder);
+        }
+      }
+    }
+    store.insert(IpcListener::new(ipc_tx, preg));
 
     store.insert(cs);
-    store.insert(Config);
+
+    // TODO: Move registration into a global registerar
+    // start of registeration
     store.insert(PanelPositions::default());
     let mut renderables = Renderables::default();
-    slowshell_menus::register_all(&mut renderables);
+
+    for renderable in registry.inside("renderables") {
+      if let Some((name, renderable)) = renderable.as_renderable(&config, &mut store) {
+        renderables.insert(name.into(), renderable);
+      }
+    }
+
     store.insert(renderables);
     let mut components = Components::default();
     slowshell_components::register_all(&mut components);
@@ -68,44 +118,20 @@ impl App {
       }
     }
 
-    tasks.push(items.register(
-      &config,
-      Box::new(NotificationManager::new(Anchor::Top | Anchor::Right)),
-    ));
-    tasks.push(items.register(
-      &config,
-      Box::new(Wallpaper::new("/home/makano/Pictures/bg/1387138.png")),
-    ));
-    tasks.push(items.register(&config, Box::new(Spotlight::new())));
+    for resource in registry.inside("app") {
+      // TODO: handle err
+      match resource.create(&config, &mut store, &mut items, registry) {
+        Ok(Some(task)) => tasks.push(task),
+        Err(e) => eprintln!("{e}"),
+        _ => {}
+      }
+    }
 
-    items.deployable(Box::new(PanelDeloyer));
-
-    let main_bar = Panel::new("Main", Position::Top)
-      .with_height(32)
-      .with_item("left", "Workspaces", None)
-      .with_item(
-        "center",
-        "Clock",
-        Some(Box::new(slowshell_components::clock::Clock::new())),
-      )
-      .with_item(
-        "right",
-        "Wifi",
-        Some(Box::new(slowshell_components::wifi::Wifi::new())),
-      )
-      .with_item(
-        "right",
-        "Battery",
-        Some(Box::new(slowshell_components::battery::Battery::new())),
-      )
-      .with_item(
-        "right",
-        "CPU",
-        Some(Box::new(slowshell_components::cpu::CpuMem::new())),
-      );
-    tasks.push(items.register(&config, Box::new(main_bar)));
+    items.deployable(Box::new(PanelDeloyer::new(&config)));
 
     tasks.push(items.register(&config, Box::new(Popup::default())));
+
+    // end of registration
 
     std::thread::spawn(move || {
       eloop.run();
@@ -115,7 +141,9 @@ impl App {
       App {
         store,
         items,
+        config,
         _tx: tx,
+        config_watcher_fd,
       },
       Task::batch(tasks),
     )
@@ -143,24 +171,63 @@ impl App {
 
             self.store.insert(compositor);
           }
+          slowshell_core::listeners::ListenerAction::Named(name)
+          | slowshell_core::listeners::ListenerAction::Signal { name, .. }
+          | slowshell_core::listeners::ListenerAction::Timer { name, .. }
+            if name.as_ref() == "config.reload" =>
+          {
+            if let Some(fd) = self.config_watcher_fd {
+              crate::watcher::drain_inotify_fd(fd);
+            }
+            match self.config.reload() {
+              Ok(()) => {
+                println!("[config] Reloaded configuration");
+              }
+              Err(e) => {
+                eprintln!("[config] Failed to reload configuration: {e}");
+              }
+            }
+          }
           _ => {}
         }
 
         tasks.push(self.items.check_deployables(&mut self.store, &action));
-        self.items.intialize(&mut self.store);
-        tasks.push(self.items.update(&Config, &mut self.store, &action));
+        tasks.push(self.items.update(&self.config, &mut self.store, &action));
         Task::batch(tasks)
       }
       Message::Item(msg) => match msg {
-        slowshell_core::message::ItemMessage::Action(action) => {
-          let mut tasks = vec![self.items.check_deployables(&mut self.store, &action)];
-
-          self.items.intialize(&mut self.store);
-          tasks.push(self.items.update(&Config, &mut self.store, &action));
-
-          Task::batch(tasks)
+        slowshell_core::message::ItemMessage::Action(
+          slowshell_core::listeners::ListenerAction::FocusWorkspace(idx),
+        ) => {
+          let task = {
+            let Some(compositor) = self.store.borrow_mut::<CompositorStore>() else {
+              return Task::none();
+            };
+            match compositor.send_cmd(slowshell_compositor::CompositorCommand::FocusWorkspace(
+              idx as i32,
+            )) {
+              Err(e) => {
+                eprintln!("Failed to focus workspace: {e}");
+                Task::none()
+              }
+              Ok(_) => Task::none(),
+            }
+          };
+          task
         }
-        other => self.items.handle_message(&Config, &other),
+        slowshell_core::message::ItemMessage::Action(action) => self.update_items(&action),
+        slowshell_core::message::ItemMessage::EffectAction(id, effect, action) => Task::batch([
+          self.items.handle_message(
+            &self.config,
+            &slowshell_core::message::ItemMessage::Effect(id, effect),
+            Some(&mut self.store),
+          ),
+          self.update_items(&action),
+        ]),
+        slowshell_core::message::ItemMessage::Task(task) => (task)(),
+        other => self
+          .items
+          .handle_message(&self.config, &other, Some(&mut self.store)),
       },
       Message::UpdateMonitors => {
         let monitors = {
@@ -172,7 +239,7 @@ impl App {
             Err(_) => return Task::none(),
           }
         };
-        let task = self.items.sync_monitors(&Config, monitors);
+        let task = self.items.sync_monitors(&self.config, monitors);
         self.items.intialize(&mut self.store);
         task
       }
@@ -183,6 +250,13 @@ impl App {
 
   pub fn subscription(&self) -> iced::Subscription<Message> {
     iced::Subscription::run(epoll_stream)
+  }
+
+  fn update_items(&mut self, action: &ListenerAction) -> Task<Message> {
+    let mut tasks = vec![self.items.check_deployables(&mut self.store, action)];
+    tasks.push(self.items.update(&self.config, &mut self.store, action));
+
+    Task::batch(tasks)
   }
 }
 
@@ -214,7 +288,7 @@ fn epoll_stream() -> EpollStream {
 }
 
 pub fn view(state: &App, window_id: IcedId) -> Element<'_, Message> {
-  if let Some(item_view) = state.items.view(window_id, &state.store) {
+  if let Some(item_view) = state.items.view(window_id, &state.config, &state.store) {
     return item_view.map(Message::Item);
   }
 

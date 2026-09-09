@@ -13,3 +13,6 @@ bars:
 
 popup:
   echo -n "exec popup.open content=wifi x=panel,Main y=cursor,10.0" | socat - UNIX-CONNECT:/tmp/slowshell.sock
+
+toggle:
+  echo 'exec panel.main.toggle' | socat - UNIX-CONNECT:/tmp/slowshell.sock

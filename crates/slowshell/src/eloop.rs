@@ -52,6 +52,8 @@ impl EventLoop {
     fcntl(&wake_read, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))?;
     epoll.add(&wake_read, EpollEvent::new(EpollFlags::EPOLLIN, 1))?;
 
+    let _ = tx.unbounded_send(Message::Tick);
+
     Ok((
       EventLoop {
         epoll,
@@ -103,6 +105,7 @@ impl EventLoop {
         Err(nix::Error::EINTR) => continue,
         Err(e) => {
           eprintln!("epoll_wait: {e}");
+          std::thread::sleep(Duration::from_millis(100));
           continue;
         }
       };
@@ -116,8 +119,12 @@ impl EventLoop {
             let _ = self.tx.unbounded_send(Message::Tick);
           }
           1 => {
-            let mut buf = [0u8; 8];
-            let _ = nix::unistd::read(self.wake_read.as_fd(), &mut buf);
+            let mut buf = [0u8; 128];
+            while let Ok(n) = nix::unistd::read(self.wake_read.as_fd(), &mut buf) {
+              if n == 0 {
+                break;
+              }
+            }
             while let Ok(cmd) = self.rx.try_recv() {
               match cmd {
                 FdCommand::Register {
@@ -147,6 +154,13 @@ impl EventLoop {
           }
           d if d >= 100 => {
             let fd = (d - 100) as i32;
+            let flags = event.events();
+            if flags.contains(EpollFlags::EPOLLHUP) || flags.contains(EpollFlags::EPOLLERR) {
+              self.oneshot_fds.remove(&fd);
+              self.listeners.terminate(fd);
+              continue;
+            }
+
             if let Some(action) = self.listeners.get_action(fd).cloned() {
               let _ = self.tx.unbounded_send(Message::FdUpdate(action));
             }

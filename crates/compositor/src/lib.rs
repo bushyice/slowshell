@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use futures_channel::mpsc::UnboundedSender;
 use slowshell_config::Config;
 use slowshell_core::{
-  Monitor, Store, Window,
+  Monitor, Store, Window, Workspace,
   listeners::Listeners,
   message::Message,
   types::{Ustr, Void},
@@ -20,11 +20,13 @@ pub enum CompositorCommand {
 pub struct CompositorState {
   pub monitors: HashMap<Ustr, Monitor>,
   pub active_window: Option<Window>,
+  pub workspaces: Vec<Workspace>,
+  pub overview_active: bool,
 }
 
 pub trait Compositor: Send + Sync {
   fn state(&self) -> &CompositorState;
-  fn send_cmd(&self, cmd: CompositorCommand) -> anyhow::Result<Void>;
+  fn send_cmd(&mut self, cmd: CompositorCommand) -> anyhow::Result<Void>;
 
   /// Please make the `CompositorState` here
   fn initialize(&mut self, _config: &Config, _listeners: &mut Listeners) -> anyhow::Result<Void> {
@@ -98,5 +100,13 @@ impl CompositorStore {
     compositor.update_state(store, tx)?;
 
     Ok(())
+  }
+
+  pub fn send_cmd(&mut self, cmd: CompositorCommand) -> anyhow::Result<Void> {
+    let Some(compositor) = self.inner.get_mut(&self.active) else {
+      return Err(anyhow::anyhow!("Current compositor not found."));
+    };
+
+    compositor.send_cmd(cmd)
   }
 }

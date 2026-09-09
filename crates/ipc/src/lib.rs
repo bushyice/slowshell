@@ -1,6 +1,6 @@
 use std::{
-  io::{BufRead, BufReader},
-  os::unix::net::UnixListener,
+  io::{BufRead, BufReader, Write},
+  os::unix::net::{UnixListener, UnixStream},
   path::PathBuf,
 };
 
@@ -9,15 +9,17 @@ use futures_channel::mpsc::UnboundedSender;
 use slowshell_core::{
   listeners::{IpcCommand, ListenerAction},
   message::Message,
-  types::{ToUstr, Ustr},
+  types::{PayloadBuilderRegistry, Ustr},
 };
 
 pub struct IpcListener;
 
 impl IpcListener {
-  pub fn new(tx: UnboundedSender<Message>) -> Self {
+  pub fn new(tx: UnboundedSender<Message>, preg: PayloadBuilderRegistry) -> Self {
     std::thread::spawn(move || {
       let path = ipc_sock_path();
+
+      println!("IPC socket path: {path:?}");
 
       if path.exists() {
         let _ = std::fs::remove_file(&path);
@@ -47,18 +49,8 @@ impl IpcListener {
                           )));
                         } else {
                           let _ = tx.unbounded_send(Message::FdUpdate(ListenerAction::Payload {
+                            payload: preg.build(&command.command, &command.args),
                             name: command.command,
-                            payload: Some(
-                              command
-                                .args
-                                .iter()
-                                .map(|x| {
-                                  x.split_once("=")
-                                    .map(|(n, v)| (n.to_ustr(), v.to_ustr()))
-                                    .unwrap_or_else(|| (x.clone(), "_".into()))
-                                })
-                                .collect(),
-                            ),
                           }));
                         }
                       }
@@ -69,7 +61,10 @@ impl IpcListener {
                   }
                 }
 
-                Err(e) => eprintln!("failed to read from ipc: {e}"),
+                Err(e) => {
+                  eprintln!("failed to read from ipc: {e}");
+                  break;
+                }
               }
             }
           }
@@ -131,6 +126,32 @@ impl IpcListener {
   }
 }
 
+pub fn send(content: String) -> anyhow::Result<()> {
+  let path = ipc_sock_path();
+
+  let mut stream = UnixStream::connect(&path)
+    .with_context(|| format!("Failed to connect to IPC socket at {:?}", path))?;
+
+  let message = if content.ends_with('\n') {
+    content
+  } else {
+    format!("{}\n", content)
+  };
+
+  stream
+    .write_all(message.as_bytes())
+    .context("Failed to write data to IPC socket")?;
+
+  stream
+    .flush()
+    .context("Failed to flush IPC socket stream")?;
+
+  Ok(())
+}
+
 pub fn ipc_sock_path() -> PathBuf {
-  PathBuf::from("/tmp/slowshell.sock")
+  std::env::var("XDG_RUNTIME_DIR")
+    .map(PathBuf::from)
+    .map(|p| p.join("slowshell.sock"))
+    .unwrap_or(PathBuf::from("/tmp/slowshell.sock"))
 }

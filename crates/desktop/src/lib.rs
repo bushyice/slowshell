@@ -1,5 +1,4 @@
 pub mod manager;
-pub mod wallpaper;
 
 use iced::Element;
 use iced_layershell::reexport::{IcedId, Layer, NewLayerShellSettings};
@@ -11,7 +10,7 @@ use slowshell_core::{
 };
 
 pub use manager::DesktopItems;
-pub use slowshell_core::message::{EventFilter, ItemEffect, ItemMessage};
+pub use slowshell_core::message::{EventFilter, ItemEffect, ItemMessage, WindowSettings};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DesktopLayer {
@@ -81,12 +80,23 @@ pub trait DesktopItem: Send {
     Ok(())
   }
 
-  fn update(&mut self, store: &mut Store, event: &ListenerAction) -> anyhow::Result<ItemEffect>;
+  fn update(
+    &mut self,
+    config: &Config,
+    store: &mut Store,
+    event: &ListenerAction,
+  ) -> anyhow::Result<ItemEffect>;
 
-  fn view(&self, store: &Store, id: IcedId) -> Element<'_, ItemMessage>;
+  fn view<'a>(
+    &'a self,
+    config: &'a Config,
+    store: &'a Store,
+    id: IcedId,
+    monitor: &str,
+  ) -> Element<'a, ItemMessage>;
 
-  fn handle_message(&mut self, message: &ItemMessage) -> ItemEffect {
-    let _ = message;
+  fn handle_message(&mut self, store: Option<&mut Store>, message: &ItemMessage) -> ItemEffect {
+    let _ = (store, message);
     ItemEffect::None
   }
 }

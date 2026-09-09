@@ -8,6 +8,10 @@ iced.workspace = true
 iced_layershell.workspace = true
 slowshell-core = { path = "../core" }
 slowshell-config = { path = "../config" }
+slowshell-commons = { path = "../commons" }
 slowshell-desktop = { path = "../desktop" }
 slowshell-widgets = { path = "../widgets" }
+slowshell-registry = { path = "../registry" }
 anyhow.workspace = true
+serde.workspace = true
+libc.workspace = true

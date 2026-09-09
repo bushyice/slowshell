@@ -7,7 +7,7 @@ use std::{
 use nix::sys::epoll::EpollFlags;
 use nix::sys::timerfd::TimerFd;
 
-use crate::types::Ustr;
+use crate::types::{PayloadBox, Ustr};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct IpcCommand {
@@ -30,12 +30,21 @@ impl Default for IpcCommand {
 pub enum ListenerAction {
   UpdateCompositor,
   Named(Ustr),
+  Timer {
+    name: Ustr,
+    fd: i32,
+  },
+  Signal {
+    name: Ustr,
+    fd: i32,
+  },
   Payload {
     name: Ustr,
-    payload: Option<HashMap<Ustr, Ustr>>,
+    payload: Option<PayloadBox>,
   },
   Ipc(IpcCommand),
   StartUp,
+  FocusWorkspace(u8),
   None,
 }
 
@@ -88,12 +97,12 @@ impl Listeners {
     self.watched_fds.insert(res);
   }
 
-  pub fn unwatched_fds(&self) -> Vec<i32> {
-    self.unwatched_fds.iter().copied().collect()
+  pub fn unwatched_fds(&mut self) -> std::collections::HashSet<i32> {
+    std::mem::take(&mut self.unwatched_fds)
   }
 
-  pub fn removed_fds(&self) -> Vec<i32> {
-    self.removed_fds.iter().copied().collect()
+  pub fn removed_fds(&mut self) -> std::collections::HashSet<i32> {
+    std::mem::take(&mut self.removed_fds)
   }
 
   pub fn action(&mut self, res: i32, act: impl Into<ListenerAction>) {
@@ -274,6 +283,26 @@ impl FdHandle {
     Ok(raw)
   }
 
+  pub fn set_named_timer(
+    &self,
+    duration: std::time::Duration,
+    name: impl Into<Ustr>,
+  ) -> anyhow::Result<i32> {
+    let fd = self.get_timer_fd(duration, true)?;
+    let raw = fd.as_fd().as_raw_fd();
+    let _ = self.tx.send(FdCommand::Register {
+      fd: fd.into(),
+      flags: EpollFlags::EPOLLIN,
+      action: ListenerAction::Timer {
+        name: name.into(),
+        fd: raw,
+      },
+      oneshot: true,
+    });
+    self.wake();
+    Ok(raw)
+  }
+
   pub fn set_interval(
     &self,
     duration: std::time::Duration,
@@ -285,6 +314,26 @@ impl FdHandle {
       fd: fd.into(),
       flags: EpollFlags::EPOLLIN,
       action,
+      oneshot: false,
+    });
+    self.wake();
+    Ok(raw)
+  }
+
+  pub fn set_named_interval(
+    &self,
+    duration: std::time::Duration,
+    name: impl Into<Ustr>,
+  ) -> anyhow::Result<i32> {
+    let fd = self.get_timer_fd(duration, false)?;
+    let raw = fd.as_fd().as_raw_fd();
+    let _ = self.tx.send(FdCommand::Register {
+      fd: fd.into(),
+      flags: EpollFlags::EPOLLIN,
+      action: ListenerAction::Timer {
+        name: name.into(),
+        fd: raw,
+      },
       oneshot: false,
     });
     self.wake();

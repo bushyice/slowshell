@@ -56,6 +56,10 @@ impl DesktopItems {
     let old_set: HashSet<Ustr> = self.monitors.iter().cloned().collect();
     let new_set: HashSet<Ustr> = monitors.iter().cloned().collect();
 
+    if old_set == new_set {
+      return Task::none();
+    }
+
     let removed: Vec<Ustr> = self
       .monitors
       .iter()
@@ -220,9 +224,10 @@ impl DesktopItems {
   }
 
   pub fn check_deployables(&mut self, store: &mut Store, event: &ListenerAction) -> Task<Message> {
-    let Some(matching) = self.deployable_subs.get(&event.into()).cloned() else {
+    let Some(matching) = self.deployable_subs.get(&event.into()) else {
       return Task::none();
     };
+    let matching: Vec<usize> = matching.iter().copied().collect();
 
     let mut tasks = Vec::new();
 
@@ -352,9 +357,10 @@ impl DesktopItems {
     store: &mut Store,
     event: &ListenerAction,
   ) -> Task<Message> {
-    let Some(matching) = self.subscriptions.get(&event.into()).cloned() else {
+    let Some(matching) = self.subscriptions.get(&event.into()) else {
       return Task::none();
     };
+    let matching: Vec<usize> = matching.iter().copied().collect();
 
     let mut tasks = Vec::new();
     let mut pending_destroy: Vec<usize> = Vec::new();
@@ -363,7 +369,7 @@ impl DesktopItems {
       // if !self.active.contains(&idx) {
       //   continue;
       // }
-      match self.items[idx].update(store, event) {
+      match self.items[idx].update(config, store, event) {
         Ok(effect) => {
           if effect == ItemEffect::ReallyDestroy {
             pending_destroy.push(idx);
@@ -388,19 +394,30 @@ impl DesktopItems {
   pub fn view<'a>(
     &'a self,
     window_id: IcedId,
+    config: &'a Config,
     store: &'a Store,
   ) -> Option<Element<'a, ItemMessage>> {
     let &idx = self.windows.get(&window_id)?;
     if !self.active.contains(&idx) {
       return None;
     }
-    Some(self.items[idx].view(store, window_id))
+    let monitor = self
+      .window_monitors
+      .get(&window_id)
+      .map(|m| &**m)
+      .unwrap_or("");
+    Some(self.items[idx].view(config, store, window_id, monitor))
   }
 
-  pub fn handle_message(&mut self, config: &Config, message: &ItemMessage) -> Task<Message> {
+  pub fn handle_message(
+    &mut self,
+    config: &Config,
+    message: &ItemMessage,
+    store: Option<&mut Store>,
+  ) -> Task<Message> {
     if let ItemMessage::Effect(id, _) = message {
       if let Some(&idx) = self.windows.get(id) {
-        let effect = self.items[idx].handle_message(message);
+        let effect = self.items[idx].handle_message(store, message);
         if effect == ItemEffect::ReallyDestroy {
           let item_id = self.items[idx].id().to_ustr();
           return self.destroy(item_id);
@@ -437,6 +454,10 @@ impl DesktopItems {
           None
         }
       }
+      ItemEffect::ReallyHide => {
+        self.active.remove(&idx);
+        Some(self.close_item_windows(idx))
+      }
       ItemEffect::Destroy => {
         self.remove_subscriptions(idx);
         self.active.remove(&idx);
@@ -451,6 +472,34 @@ impl DesktopItems {
         None
       }
       ItemEffect::Redraw | ItemEffect::None => None,
+      ItemEffect::UpdateWindow(ws) => {
+        let mut tasks = Vec::new();
+        if let Some(wids) = self.reverse_windows.get(&idx) {
+          for &wid in wids {
+            if let Some(margin) = ws.margin {
+              tasks.push(Task::done(Message::MarginChange { id: wid, margin }));
+            }
+            if let Some(size) = ws.size {
+              tasks.push(Task::done(Message::SizeChange { id: wid, size }));
+            }
+            if let Some(zone) = ws.exclusive_zone {
+              tasks.push(Task::done(Message::ExclusiveZoneChange {
+                id: wid,
+                zone_size: zone,
+              }));
+            }
+          }
+        }
+        Some(Task::batch(tasks))
+      }
+      ItemEffect::Custom([1, y, 0, 0]) => Some(iced::widget::operation::scroll_to(
+        iced::widget::Id::new("spotlight-list"),
+        iced::widget::scrollable::AbsoluteOffset {
+          x: None,
+          y: Some(y as f32),
+        },
+      )),
+      ItemEffect::Custom(_) => None,
     }
   }
 

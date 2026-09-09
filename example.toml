@@ -1,0 +1,94 @@
+# font = "Fira Code"
+tick-interval = 60
+wgpu-backend = "vulkan"
+
+[notifications]
+enabled = true
+
+[spotlight]
+cache = true
+# cliphist = true
+
+[wallpaper]
+backend = "swaybg" # "slowshell" | "swaybg" | "swww" | "hyprpaper" | "custom"
+file = "/home/makano/Pictures/bg/cat_leaves.png"
+# paths = { HDMI-A-1 = "/home/makano/Pictures/bg/1.png", eDP-1 = "/home/makano/Pictures/bg/2.png" }
+# spawn_args = "command $PATH" # for backend = "custom"
+max_width = 1920
+max_height = 1080
+# [theme]
+# crust = "#ff00ff"
+
+# [style.panel]
+# background = "crust"
+# "background.opacity" = 1.0
+
+[style.item]
+spacing = 8
+highlight.padding = 0.0
+highlight.radius = 6.0
+
+# Component styling when the panel is vertical (left/right). Falls back to [style.component].
+# [style.component.vertical]
+# "font.size" = 15
+# "icon.size" = 18
+# "spacing" = 8
+
+[style.workspaces]
+"width.active" = 34
+"width.inactive" = 26
+padding = [0.0, 6.0]
+
+[widgets.MyClock]
+width = 300
+height = 200
+x = 50
+y = 100
+anchor = "top-right"
+monitor = "HDMI-A-1"
+inner = "wifi"
+
+[panels.Main]
+position = "top"
+transparent = true
+# height = 40
+# overlay = true
+# autohide = true
+# autohide_trigger = 4
+# show_on_overview = true
+
+[panels.Main.components]
+left = [
+  { label = "Slowshell", component = "core/icon", options = { icon = "slowshell-icon-shell.svg", menu = "menus/power" } },
+  { label = "Workspaces", component = "core/workspaces", options = { text = true, override-text = { "1" = "" } } },
+  { label = "Window", component = "core/window" }
+]
+center = [
+  {
+    label = "SomeGroup",
+    items = [
+      { label = "Clock", component = "core/clock", options = { format = "%I:%M %p" } },
+      { label = "Sep", component = "core/separator", options = { size = 5.0, opacity = 0.5, circle = true } },
+      { label = "Date", component = "core/clock", options = { format = "%b %-d" } },
+    ]
+  }
+]
+right = [
+  { label = "Tray", component = "core/tray" },
+  {
+    label = "SomeGroup",
+    items = [
+      { label = "Audio", component = "core/audio", options = { show_percent = true, show_track = false } },
+      { label = "Sep", component = "core/separator", options = { opacity = 0.05 } },
+      { label = "Bluetooth", component = "core/bluetooth" },
+      { label = "Sep", component = "core/separator", options = { opacity = 0.05 } },
+      { label = "Network", component = "core/network", options = { icon = true, ssid = true } },
+      { label = "Sep", component = "core/separator", options = { opacity = 0.05 } },
+      { label = "Battery", component = "core/power", options = { battery = true, brightness = true } },
+      { label = "Sep", component = "core/separator", options = { opacity = 0.05 } },
+      { label = "Notifs", component = "core/notifications" }
+    ]
+  },
+  { label = "CPU", component = "core/system", options = { interval = 5, icons = true, progress = true, labels = true, progress-direction = "vertical", items = ["cpu", "mem"] } },
+  { label = "Power", component = "core/icon", options = { menu = "menus/actions" } },
+]

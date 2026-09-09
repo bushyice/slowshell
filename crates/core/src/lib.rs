@@ -7,7 +7,19 @@ use crate::types::Ustr;
 
 pub mod listeners;
 pub mod message;
+pub mod persistence;
 pub mod types;
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Workspace {
+  pub id: u64,
+  pub idx: u8,
+  pub name: Option<String>,
+  pub output: Option<String>,
+  pub is_urgent: bool,
+  pub is_active: bool,
+  pub is_focused: bool,
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Monitor {
@@ -42,15 +54,19 @@ impl Store {
     }
   }
 
-  pub fn insert<T: 'static>(&mut self, val: T) -> bool {
-    let type_id = TypeId::of::<T>();
-
+  pub fn insert_raw(&mut self, type_id: TypeId, val: Box<dyn Any>) -> bool {
     if self.contents.contains_key(&type_id) {
       return false;
     }
 
-    self.contents.insert(type_id, Box::new(val));
+    self.contents.insert(type_id, val);
     true
+  }
+
+  pub fn insert<T: 'static>(&mut self, val: T) -> bool {
+    let type_id = TypeId::of::<T>();
+
+    self.insert_raw(type_id, Box::new(val))
   }
 
   pub fn borrow<T: 'static>(&self) -> Option<&T> {
@@ -152,3 +168,12 @@ impl_handle_tuple!(A, B, C);
 impl_handle_tuple!(A, B, C, D);
 impl_handle_tuple!(A, B, C, D, E);
 impl_handle_tuple!(A, B, C, D, E, F);
+
+// pub trait Registry: Send + Sync {
+//   fn lookup(&mut self) -> anyhow::Result<Void>;
+//   fn into_store(self, store: &mut Store) -> anyhow::Result<Void>;
+//   fn refresh(&self) {}
+// }
+
+// pub static REGISTRY_REGISTRY: LazyLock<std::sync::Arc<std::sync::Mutex<Vec<Box<dyn Registry>>>>> =
+//   LazyLock::new(|| std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));

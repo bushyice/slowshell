@@ -5,8 +5,13 @@ edition = "2024"
 
 [dependencies]
 slowshell-core = { path = "../core" }
+slowshell-config = { path = "../config" }
 slowshell-widgets = { path = "../widgets" }
 slowshell-popups = { path = "../popups" }
+slowshell-registry = { path = "../registry" }
+slowshell-commons = { path = "../commons" }
 
 iced.workspace = true
 iced_layershell.workspace = true
+system-tray.workspace = true
+chrono.workspace = true

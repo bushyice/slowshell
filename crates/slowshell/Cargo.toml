@@ -6,8 +6,9 @@ edition = "2024"
 [dependencies]
 slowshell-core = { path = "../core" }
 slowshell-config = { path = "../config" }
-slowshell-compositor = { path = "../compositor" }
 slowshell-desktop = { path = "../desktop" }
+slowshell-registry = { path = "../registry" }
+slowshell-compositor = { path = "../compositor" }
 slowshell-notifications = { path = "../notifications" }
 slowshell-panels = { path = "../panels" }
 slowshell-spotlight = { path = "../spotlight" }
@@ -16,10 +17,13 @@ slowshell-widgets = { path = "../widgets" }
 slowshell-components = { path = "../components" }
 slowshell-menus = { path = "../menus" }
 slowshell-popups = { path = "../popups" }
+slowshell-background = { path = "../background" }
 
 nix.workspace = true
+libc.workspace = true
 anyhow.workspace = true
 iced.workspace = true
 iced_layershell.workspace = true
 futures-channel.workspace = true
 futures-lite = "2"
+clap.workspace = true
