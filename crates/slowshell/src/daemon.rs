@@ -61,6 +61,12 @@ pub fn daemon() -> miette::Result<()> {
     }
   }
 
+  if let Some(theme) = &config.icon_theme {
+    unsafe {
+      std::env::set_var("SLOWSHELL_ICON_THEME", theme);
+    }
+  }
+
   let font = config.font();
 
   let _ = REGISTRY.set(Mutex::new(reg));

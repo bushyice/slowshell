@@ -25,6 +25,7 @@ pub enum ResourceRegistration {
   },
   Deployable(fn(&Config, &Store) -> miette::Result<Vec<Box<dyn DeployableDesktopItem>>>),
   Custom(fn(store: &mut Store)),
+  CustomConfig(fn(&Config, store: &mut Store)),
   CustomRegistry(fn(reg: &mut GlobalRegistry, store: &mut Store)),
   Unknown(Box<dyn Any + Send + Sync>),
   Style(Style),
@@ -41,6 +42,10 @@ impl ResourceRegistration {
     match self {
       ResourceRegistration::Custom(f) => {
         (f)(store);
+        Ok(None)
+      }
+      ResourceRegistration::CustomConfig(f) => {
+        (f)(config, store);
         Ok(None)
       }
       ResourceRegistration::CustomRegistry(f) => {

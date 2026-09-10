@@ -322,6 +322,7 @@ pub struct PanelItem {
   label: String,
   component: Option<Box<dyn Component>>,
   options: Option<ComponentOptions>,
+  events: Option<Vec<EventFilter>>,
 }
 
 impl PanelItem {
@@ -441,6 +442,7 @@ pub struct PanelSections {
 /// `panel.<name>.destroy`
 pub struct Panel {
   cached_id: Ustr,
+  event_prefix: String,
   name: Ustr,
   position: Position,
   height: u32,
@@ -458,8 +460,10 @@ impl Panel {
   pub fn new(name: impl Into<Ustr>, position: Position) -> Self {
     let name = name.into();
     let cached_id = format!("panel/{}", name.to_lowercase().replace(' ', "-")).to_ustr();
+    let event_prefix = format!("panel.{}", name.to_lowercase().replace(' ', "-"));
     Self {
       cached_id,
+      event_prefix,
       name,
       position,
       height: 32,
@@ -515,6 +519,7 @@ impl Panel {
       label: label.into(),
       component,
       options,
+      events: None,
     };
     match section {
       "left" => self.sections.left.push(item.into_cell()),
@@ -548,12 +553,14 @@ impl Panel {
           label: label.into(),
           component,
           options,
+          events: None,
         })
         .collect(),
       prefix: prefix.map(|(label, component, options)| PanelItem {
         label: label.into(),
         component,
         options,
+        events: None,
       }),
     };
 
@@ -566,8 +573,8 @@ impl Panel {
     self
   }
 
-  fn event_prefix(&self) -> String {
-    format!("panel.{}", self.name.to_lowercase().replace(' ', "-"))
+  fn event_prefix(&self) -> &str {
+    &self.event_prefix
   }
 
   fn size(&self) -> (u32, u32) {
@@ -591,6 +598,7 @@ impl Panel {
       label: payload.label.to_string(),
       component,
       options: options,
+      events: None,
     };
 
     if let Some(comp) = &mut item.component {
@@ -736,6 +744,7 @@ impl Panel {
                 label: item_label,
                 component: comp,
                 options: new_options,
+                events: None,
               };
               if let Some(comp) = &mut item.component {
                 comp.watch(store, item.options.as_ref());
@@ -777,6 +786,7 @@ impl Panel {
                 label: p_label,
                 component: comp,
                 options: new_p_options,
+                events: None,
               };
               if let Some(comp) = &mut item.component {
                 comp.watch(store, item.options.as_ref());
@@ -835,6 +845,7 @@ impl Panel {
                   label,
                   component: comp,
                   options: new_options,
+                  events: None,
                 };
                 if let Some(comp) = &mut item.component {
                   comp.watch(store, item.options.as_ref());
@@ -854,6 +865,7 @@ impl Panel {
               label,
               component: comp,
               options: new_options,
+              events: None,
             };
             if let Some(comp) = &mut item.component {
               comp.watch(store, item.options.as_ref());
@@ -1185,6 +1197,99 @@ impl Panel {
   }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PanelEventKind {
+  Add,
+  Remove,
+  Configure,
+  Destroy,
+  Hide,
+  Show,
+  Toggle,
+  Reload,
+  Other,
+}
+
+fn panel_event_suffix<'a>(prefix: &str, name: &'a str) -> Option<&'a str> {
+  name.strip_prefix(prefix)?.strip_prefix('.')
+}
+
+fn classify_evnet(prefix: &str, event: &ListenerAction) -> PanelEventKind {
+  match event {
+    ListenerAction::Payload { name, .. } => match panel_event_suffix(prefix, name) {
+      Some("add") => PanelEventKind::Add,
+      Some("remove") => PanelEventKind::Remove,
+      Some("configure") => PanelEventKind::Configure,
+      _ => PanelEventKind::Other,
+    },
+    ListenerAction::Named(name) => match panel_event_suffix(prefix, name) {
+      Some("destroy") => PanelEventKind::Destroy,
+      Some("hide") => PanelEventKind::Hide,
+      Some("show") => PanelEventKind::Show,
+      Some("toggle") => PanelEventKind::Toggle,
+      _ if name.as_ref() == "config.reload" => PanelEventKind::Reload,
+      _ => PanelEventKind::Other,
+    },
+    ListenerAction::Signal { name, .. } | ListenerAction::Timer { name, .. }
+      if name.as_ref() == "config.reload" =>
+    {
+      PanelEventKind::Reload
+    }
+    _ => PanelEventKind::Other,
+  }
+}
+
+fn handle_panel_config_reload(panel: &mut Panel, config: &Config, store: &mut Store) -> ItemEffect {
+  let mut need_resubscribe = false;
+
+  if let Some(configs) = config.typed::<PanelConfigs>()
+    && let Some(conf) = configs.get(&*panel.name)
+  {
+    let old_edge = panel.edge();
+    panel.height = conf.height.unwrap_or(32);
+    panel.position = conf.position;
+    panel.transparent = conf.transparent;
+    panel.overlay = conf.overlay;
+    panel.autohide = conf.autohide;
+    if let Some(trigger) = conf.autohide_trigger {
+      panel.trigger = trigger as i32;
+    }
+    if let Some(panels) = store.borrow_mut::<PanelPositions>()
+      && old_edge != panel.edge()
+    {
+      panels.set(panel.name.clone(), panel.edge());
+    }
+
+    let left_changed = panel.diff_section(
+      "left",
+      conf.components.as_ref().and_then(|c| c.get("left")),
+      store,
+    );
+
+    let center_changed = panel.diff_section(
+      "center",
+      conf.components.as_ref().and_then(|c| c.get("center")),
+      store,
+    );
+
+    let right_changed = panel.diff_section(
+      "right",
+      conf.components.as_ref().and_then(|c| c.get("right")),
+      store,
+    );
+
+    if left_changed || center_changed || right_changed {
+      need_resubscribe = true;
+    }
+  }
+
+  if need_resubscribe {
+    ItemEffect::Subscribe(panel.all_events())
+  } else {
+    ItemEffect::Redraw
+  }
+}
+
 impl DesktopItem for Panel {
   fn id(&self) -> &str {
     &self.cached_id
@@ -1256,11 +1361,11 @@ impl DesktopItem for Panel {
     store: &mut Store,
     event: &ListenerAction,
   ) -> miette::Result<ItemEffect> {
-    let prefix = self.event_prefix();
-
-    let mut effect = match event {
-      ListenerAction::Payload { name, payload } if &**name == format!("{}.add", prefix) => {
-        if let Some(p) = payload {
+    let mut effect = match classify_evnet(self.event_prefix(), event) {
+      PanelEventKind::Add => {
+        if let ListenerAction::Payload { payload, .. } = event
+          && let Some(p) = payload
+        {
           self.add_item_from_payload(
             store,
             p.as_this::<PanelComponentPayload>()
@@ -1269,8 +1374,10 @@ impl DesktopItem for Panel {
         }
         ItemEffect::Subscribe(self.all_events())
       }
-      ListenerAction::Payload { name, payload } if &**name == format!("{}.remove", prefix) => {
-        if let Some(p) = payload {
+      PanelEventKind::Remove => {
+        if let ListenerAction::Payload { payload, .. } = event
+          && let Some(p) = payload
+        {
           self.remove_from_payload(
             store,
             p.as_this::<PanelComponentPayload>()
@@ -1279,8 +1386,10 @@ impl DesktopItem for Panel {
         }
         ItemEffect::Subscribe(self.all_events())
       }
-      ListenerAction::Payload { name, payload } if &**name == format!("{}.configure", prefix) => {
-        if let Some(p) = payload {
+      PanelEventKind::Configure => {
+        if let ListenerAction::Payload { name, payload } = event
+          && let Some(p) = payload
+        {
           self.configure_from_payload(p.as_this::<PanelPayload>().expect("wrong panel payload"));
 
           if let Some(panels) = store.borrow_mut::<PanelPositions>() {
@@ -1303,8 +1412,10 @@ impl DesktopItem for Panel {
           ItemEffect::Redraw
         }
       }
-      ListenerAction::Named(name) if &**name == format!("{}.destroy", prefix) => {
-        if let Some(panels) = store.borrow_mut::<PanelPositions>() {
+      PanelEventKind::Destroy => {
+        if let ListenerAction::Named(name) = event
+          && let Some(panels) = store.borrow_mut::<PanelPositions>()
+        {
           panels.remove(&**name);
         }
         for item in self.items_mut() {
@@ -1316,76 +1427,36 @@ impl DesktopItem for Panel {
         }
         ItemEffect::ReallyDestroy
       }
-      ListenerAction::Named(name) if &**name == format!("{}.hide", prefix) => self.hide(store),
-      ListenerAction::Named(name) if &**name == format!("{}.show", prefix) => self.show(store),
-      ListenerAction::Named(name) if &**name == format!("{}.toggle", prefix) => {
+      PanelEventKind::Hide => self.hide(store),
+      PanelEventKind::Show => self.show(store),
+      PanelEventKind::Toggle => {
         if self.hidden {
           self.show(store)
         } else {
           self.hide(store)
         }
       }
-      ListenerAction::Named(name)
-      | ListenerAction::Signal { name, .. }
-      | ListenerAction::Timer { name, .. }
-        if name.as_ref() == "config.reload" =>
-      {
-        let mut need_resubscribe = false;
-        if let Some(configs) = config.typed::<PanelConfigs>() {
-          if let Some(conf) = configs.get(&*self.name) {
-            let old_edge = self.edge();
-            self.height = conf.height.unwrap_or(32);
-            self.position = conf.position;
-            self.transparent = conf.transparent;
-            self.overlay = conf.overlay;
-            self.autohide = conf.autohide;
-            if let Some(trigger) = conf.autohide_trigger {
-              self.trigger = trigger as i32;
-            }
-            if let Some(panels) = store.borrow_mut::<PanelPositions>() {
-              if old_edge != self.edge() {
-                panels.set(self.name.clone(), self.edge());
-              }
-            }
-            let left_changed = self.diff_section(
-              "left",
-              conf.components.as_ref().and_then(|c| c.get("left")),
-              store,
-            );
-            let center_changed = self.diff_section(
-              "center",
-              conf.components.as_ref().and_then(|c| c.get("center")),
-              store,
-            );
-            let right_changed = self.diff_section(
-              "right",
-              conf.components.as_ref().and_then(|c| c.get("right")),
-              store,
-            );
-            if left_changed || center_changed || right_changed {
-              need_resubscribe = true;
-            }
-          }
-        }
-        if need_resubscribe {
-          ItemEffect::Subscribe(self.all_events())
-        } else {
-          ItemEffect::Redraw
-        }
-      }
-      _ => ItemEffect::None,
+      PanelEventKind::Reload => handle_panel_config_reload(self, config, store),
+      PanelEventKind::Other => ItemEffect::None,
     };
 
     for item in self.items_mut() {
       for sub_item in item.all_mut() {
-        if let Some(comp) = &mut sub_item.component {
-          if comp.events().iter().any(|filter| filter.matches(event)) {
-            if let Ok(comp_effect) = comp.update(config, store, event, sub_item.options.as_ref()) {
-              if comp_effect != ItemEffect::None {
-                effect = comp_effect;
-              }
-            }
-          }
+        if sub_item.events.is_none() && sub_item.component.is_some() {
+          sub_item.events = Some(sub_item.component.as_ref().unwrap().events());
+        }
+
+        let matches = sub_item
+          .events
+          .as_ref()
+          .is_some_and(|events| events.iter().any(|filter| filter.matches(event)));
+
+        if matches
+          && let Some(comp) = &mut sub_item.component
+          && let Ok(comp_effect) = comp.update(config, store, event, sub_item.options.as_ref())
+          && comp_effect != ItemEffect::None
+        {
+          effect = comp_effect;
         }
       }
     }

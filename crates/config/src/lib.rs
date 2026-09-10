@@ -83,6 +83,7 @@ pub struct Config {
   font: Font,
   parsed: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
   pub wgpu_backend: Option<String>,
+  pub icon_theme: Option<String>,
   config_parsers: Vec<ConfigParser>,
 }
 
@@ -289,6 +290,9 @@ impl Config {
     }
     if let Some(backend) = find_node(nodes, "wgpu-backend").and_then(|node| str_arg(node, 0)) {
       self.wgpu_backend = Some(backend.into());
+    }
+    if let Some(theme) = find_node(nodes, "icons").and_then(|node| child_str(node, "theme")) {
+      self.icon_theme = Some(theme.into());
     }
   }
 
@@ -554,6 +558,7 @@ impl Default for Config {
       parsed: HashMap::new(),
       tick_interval: 3,
       wgpu_backend: None,
+      icon_theme: None,
       current_path: None,
       config_parsers: Vec::new(),
     }

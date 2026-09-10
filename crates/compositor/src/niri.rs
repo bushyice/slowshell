@@ -159,6 +159,7 @@ impl NiriCompositor {
       .ok_or_else(|| miette::miette!("Stream not initialized"))?;
 
     let mut line = String::new();
+    let mut dirty = false;
 
     loop {
       line.clear();
@@ -192,6 +193,7 @@ impl NiriCompositor {
                 // )))?,
                 _ => {}
               }
+              dirty = is_important(&event);
               self._state.apply(event);
             } else {
               eprintln!("skipping niri event for unknown workspace: {event:?}");
@@ -207,7 +209,11 @@ impl NiriCompositor {
       }
     }
 
-    self.apply_compositor_state()
+    if dirty {
+      self.apply_compositor_state()
+    } else {
+      Ok(Void)
+    }
   }
 
   #[inline]
@@ -271,4 +277,22 @@ impl NiriCompositor {
 
     Ok(Void)
   }
+}
+
+fn is_important(event: &niri_ipc::Event) -> bool {
+  use niri_ipc::Event;
+
+  matches!(
+    event,
+    Event::WorkspacesChanged { .. }
+      | Event::WorkspaceUrgencyChanged { .. }
+      | Event::WorkspaceActivated { .. }
+      | Event::WorkspaceActiveWindowChanged { .. }
+      | Event::WindowsChanged { .. }
+      | Event::WindowOpenedOrChanged { .. }
+      | Event::WindowClosed { .. }
+      | Event::WindowFocusChanged { .. }
+      | Event::WindowUrgencyChanged { .. }
+      | Event::OverviewOpenedOrClosed { .. }
+  )
 }

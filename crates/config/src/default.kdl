@@ -5,6 +5,11 @@ tick-interval 60
 // uncomment this line if you want rendering to forcefully always use vulkan
 // wgpu-backend "vulkan"
 
+// set this to enforce this icon theme
+// icons {
+//   theme "Adwaita"
+// }
+
 // set to "false" if you don't want notifications
 notifications {
   enabled #true
