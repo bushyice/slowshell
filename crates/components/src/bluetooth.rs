@@ -280,6 +280,9 @@ impl Component for Bluetooth {
         panel_name: None,
         position: ctx.position,
       },
+      config,
+      ctx,
+      true,
     )
   }
 }

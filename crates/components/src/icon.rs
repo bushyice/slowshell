@@ -3,7 +3,9 @@ use slowshell_config::Config;
 use slowshell_core::{Store, listeners::ListenerAction, message::ItemMessage};
 use slowshell_widgets::Icon;
 
-use crate::{Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger};
+use crate::{
+  Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger, spaced_component,
+};
 
 #[derive(Default)]
 pub struct IconComp {
@@ -66,14 +68,17 @@ impl Component for IconComp {
           panel_name: None,
           position: ctx.position,
         },
+        config,
+        ctx,
+        true,
       )
     } else if let Some(action) = &self.action {
-      mouse_area(icon)
+      mouse_area(spaced_component(config, ctx, icon))
         .interaction(mouse::Interaction::Pointer)
         .on_press(action.clone())
         .into()
     } else {
-      icon
+      spaced_component(config, ctx, icon)
     }
   }
 }

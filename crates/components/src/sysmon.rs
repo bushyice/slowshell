@@ -188,6 +188,9 @@ impl Component for SystemMon {
         panel_name: None,
         position: ctx.position,
       },
+      config,
+      ctx,
+      true,
     )
   }
 }

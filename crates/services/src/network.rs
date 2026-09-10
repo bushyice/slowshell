@@ -329,13 +329,19 @@ async fn connect_to_network(
           .await;
         match reply {
           Ok(_) => {}
-          Err(e) => return Err(zbus::Error::Failure(format!("AddAndActivateConnection2 failed: {e}"))),
+          Err(e) => {
+            return Err(zbus::Error::Failure(format!(
+              "AddAndActivateConnection2 failed: {e}"
+            )));
+          }
         }
       }
       return Ok(());
     }
   }
-  Err(zbus::Error::Failure(format!("no access point named '{ssid}' found")))
+  Err(zbus::Error::Failure(format!(
+    "no access point named '{ssid}' found"
+  )))
 }
 
 async fn disconnect_active_wifi(
@@ -354,7 +360,9 @@ async fn disconnect_active_wifi(
       return Ok(());
     }
   }
-  Err(zbus::Error::Failure("no active wifi connection to disconnect".into()))
+  Err(zbus::Error::Failure(
+    "no active wifi connection to disconnect".into(),
+  ))
 }
 
 async fn toggle_wired(

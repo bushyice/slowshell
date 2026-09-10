@@ -274,8 +274,7 @@ impl Component for Network {
       (Some(wifi), _) if !wifi.ssid.is_empty() => Some(wifi.ssid.clone()),
       (Some(_), _) => Some("Network".to_string()),
       (None, Some(eth)) if eth.connected => Some("Ethernet".to_string()),
-      (None, _) if show_ssid => Some("Network".to_string()),
-      _ => None,
+      (None, _) => Some("Network".to_string()),
     };
 
     let icon_el: Option<Element<'a, ItemMessage>> = if show_icon {
@@ -291,7 +290,7 @@ impl Component for Network {
       if let Some(icon) = icon_el {
         items.push(icon);
       }
-      if let Some(label) = label {
+      if show_ssid && let Some(label) = label {
         items.push(vertical_text(&label, font_size, color));
       }
       iced::widget::column(items)
@@ -299,21 +298,27 @@ impl Component for Network {
         .align_x(iced::Alignment::Center)
         .into()
     } else {
-      match (show_icon, show_ssid, label) {
-        (true, true, Some(label)) => container(
-          iced::widget::row![
-            Icon::new(icon).color(color).size(icon_size),
-            iced::widget::text(label).size(font_size).color(color)
-          ]
-          .spacing(4)
-          .align_y(iced::Alignment::Center),
+      let mut items: Vec<Element<'a, ItemMessage>> = Vec::new();
+      if let Some(icon) = icon_el {
+        items.push(icon);
+      }
+      if show_ssid && let Some(label) = label {
+        items.push(
+          iced::widget::text(label)
+            .size(font_size)
+            .color(color)
+            .into(),
+        );
+      }
+      if items.is_empty() {
+        container(iced::widget::Space::new()).into()
+      } else {
+        container(
+          iced::widget::row(items)
+            .spacing(4)
+            .align_y(iced::Alignment::Center),
         )
-        .into(),
-        (_, true, Some(label)) => {
-          container(iced::widget::text(label).size(font_size).color(color)).into()
-        }
-        (true, ..) => container(Icon::new(icon).color(color).size(icon_size)).into(),
-        _ => container(Icon::new(icon).color(color).size(icon_size)).into(),
+        .into()
       }
     };
 
@@ -324,6 +329,9 @@ impl Component for Network {
         panel_name: None,
         position: ctx.position,
       },
+      config,
+      ctx,
+      true,
     )
   }
 }

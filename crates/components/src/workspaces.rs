@@ -14,7 +14,7 @@ use slowshell_core::{
 };
 use slowshell_widgets::clickable;
 
-use crate::{Component, ComponentContext, ComponentOptions};
+use crate::{Component, ComponentContext, ComponentOptions, spaced_component};
 
 pub struct Workspaces {
   show_all: bool,
@@ -155,10 +155,12 @@ impl Component for Workspaces {
       })
       .collect();
 
-    if ctx.orientation == PanelOrientation::Horizontal {
+    let content: Element<'a, ItemMessage> = if ctx.orientation == PanelOrientation::Horizontal {
       row(workspaces).spacing(spacing).into()
     } else {
       column(workspaces).spacing(spacing).into()
-    }
+    };
+
+    spaced_component(config, ctx, content)
   }
 }

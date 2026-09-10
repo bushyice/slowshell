@@ -12,7 +12,7 @@ use slowshell_core::{
 };
 use slowshell_widgets::{Icon, separator};
 
-use crate::{Component, ComponentContext, ComponentOptions};
+use crate::{Component, ComponentContext, ComponentOptions, spaced_component};
 
 #[derive(Default)]
 pub struct Window;
@@ -56,19 +56,11 @@ impl Component for Window {
 
     if ctx.orientation == PanelOrientation::Vertical {
       let icon_elem: Element<'_, ItemMessage> = if show_icon {
-        Icon::any([
-          &window.class,
-          "window-symbolic",
-          "window",
-          "application-x-executable-symbolic",
-        ])
-        .size(icon_size as u16)
-        .color(color)
-        .into()
+        window_icon(window, icon_size, color)
       } else {
         row![].into()
       };
-      return container(icon_elem).into();
+      return spaced_component(config, ctx, icon_elem);
     }
 
     let show_name = options.and_then(|o| o.bool("name")).unwrap_or(true);
@@ -78,15 +70,7 @@ impl Component for Window {
     let mut content = row![].spacing(6);
 
     if show_icon {
-      content = content.push(
-        Icon::any([
-          &window.class,
-          "window-symbolic",
-          "window",
-          "application-x-executable-symbolic",
-        ])
-        .size(icon_size as u16),
-      );
+      content = content.push(window_icon(window, icon_size, color));
     }
 
     let class = window.class.clone();
@@ -123,6 +107,31 @@ impl Component for Window {
         content.push(container(text(title).size(font_size).color(color)).width(Length::Shrink));
     }
 
-    container(content).into()
+    spaced_component(config, ctx, content.into())
+  }
+}
+
+fn window_icon<'a>(
+  window: &slowshell_core::Window,
+  size: f32,
+  color: iced::Color,
+) -> Element<'a, ItemMessage> {
+  let icon = Icon::any([
+    &window.class,
+    "window",
+    "application-x-executable",
+    "window-symbolic",
+    "application-x-executable-symbolic",
+  ])
+  .size(size as u16);
+
+  let symbolic = icon
+    .resolved_name()
+    .is_some_and(|name| name.contains("symbolic"));
+
+  if symbolic {
+    icon.color(color).into()
+  } else {
+    icon.into()
   }
 }

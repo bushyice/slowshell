@@ -265,6 +265,14 @@ impl<Message> Icon<Message> {
     self
   }
 
+  pub fn resolved_name(&self) -> Option<&str> {
+    self
+      .names
+      .iter()
+      .find(|name| get_asset(name, self.size).is_some())
+      .map(String::as_str)
+  }
+
   pub fn from_bytes(id: i32, bytes: &[u8]) -> iced::widget::image::Handle {
     get_or_create_byte_icon(id, bytes)
   }

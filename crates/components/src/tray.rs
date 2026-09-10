@@ -2,7 +2,7 @@ use std::{
   collections::HashMap,
   os::fd::AsRawFd,
   sync::{
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicU64, Ordering},
   },
 };
@@ -28,25 +28,23 @@ use slowshell_core::{
 use slowshell_services::util::drain_signal_fd;
 use slowshell_widgets::{Icon, clickable};
 
-use crate::{Component, ComponentContext, ComponentOptions, MenuConfig, popup_open_action};
+use crate::{
+  Component, ComponentContext, ComponentOptions, MenuConfig, popup_open_action, spaced_component,
+};
 
 const TICK: &str = "component/tray.tick";
 
-pub struct SystemTray {
-  signal_fd: Option<i32>,
-  started: bool,
+struct GlobalTray {
   shared: SharedTrayState,
-  last_revision: u64,
-  cmd_rx: Option<tokio::sync::mpsc::UnboundedReceiver<TrayCmd>>,
-  shared_in_store: bool,
+  rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<TrayCmd>>>,
 }
 
-impl SystemTray {
-  pub fn new() -> Self {
+static GLOBAL: OnceLock<GlobalTray> = OnceLock::new();
+
+fn global() -> &'static GlobalTray {
+  GLOBAL.get_or_init(|| {
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-    Self {
-      signal_fd: None,
-      started: false,
+    GlobalTray {
       shared: Arc::new(TrayState {
         state: Mutex::new(TrayStateInner::default()),
         revision: AtomicU64::new(0),
@@ -55,14 +53,32 @@ impl SystemTray {
         nav: Mutex::new(Vec::new()),
         cmd_tx,
       }),
+      rx: Mutex::new(Some(cmd_rx)),
+    }
+  })
+}
+
+pub struct SystemTray {
+  signal_fd: Option<i32>,
+  last_revision: u64,
+}
+
+impl SystemTray {
+  pub fn new() -> Self {
+    Self {
+      signal_fd: None,
       last_revision: 0,
-      cmd_rx: Some(cmd_rx),
-      shared_in_store: false,
     }
   }
 
-  fn take_cmd_rx(&mut self) -> Option<tokio::sync::mpsc::UnboundedReceiver<TrayCmd>> {
-    self.cmd_rx.take()
+  fn redraw_if_changed(&mut self) -> ItemEffect {
+    let revision = global().shared.revision.load(Ordering::Relaxed);
+    if revision != self.last_revision {
+      self.last_revision = revision;
+      ItemEffect::Redraw
+    } else {
+      ItemEffect::None
+    }
   }
 }
 
@@ -81,13 +97,15 @@ impl Component for SystemTray {
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
-    store.insert(self.shared.clone());
-    self.shared_in_store = true;
+    store.insert(global().shared.clone());
 
-    if self.started {
+    if self.signal_fd.is_some() {
       return;
     }
-    self.started = true;
+
+    let Some(rx) = global().rx.lock().unwrap().take() else {
+      return;
+    };
 
     let notify = store.borrow::<FdHandle>().and_then(|handle| {
       let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
@@ -107,11 +125,7 @@ impl Component for SystemTray {
       Some(write_fd)
     });
 
-    let shared = self.shared.clone();
-    let cmd_rx = self.take_cmd_rx();
-    if let Some(cmd_rx) = cmd_rx {
-      slowshell_services::tray::run(shared, cmd_rx, notify);
-    }
+    slowshell_services::tray::run(global().shared.clone(), rx, notify);
   }
 
   fn stop(&mut self, store: &Store, _options: Option<&ComponentOptions>) {
@@ -127,41 +141,32 @@ impl Component for SystemTray {
     event: &ListenerAction,
     _options: Option<&ComponentOptions>,
   ) -> miette::Result<ItemEffect> {
-    if !self.shared_in_store {
-      self.shared_in_store = true;
-      store.insert(self.shared.clone());
+    if store.borrow::<SharedTrayState>().is_none() {
+      store.insert(global().shared.clone());
     }
 
     match event {
-      ListenerAction::Named(n) if &**n == TICK => {
-        let revision = self.shared.revision.load(Ordering::Relaxed);
-        if revision != self.last_revision {
-          self.last_revision = revision;
-          return Ok(ItemEffect::Redraw);
+      ListenerAction::Named(n) if &**n == TICK => Ok(self.redraw_if_changed()),
+      ListenerAction::Signal { name, fd } if &**name == TICK => {
+        if Some(*fd) == self.signal_fd {
+          drain_signal_fd(*fd);
         }
-      }
-      ListenerAction::Signal { name, fd } if &**name == TICK && Some(*fd) == self.signal_fd => {
-        drain_signal_fd(*fd);
-        let revision = self.shared.revision.load(Ordering::Relaxed);
-        if revision != self.last_revision {
-          self.last_revision = revision;
-          return Ok(ItemEffect::Redraw);
-        }
+        Ok(self.redraw_if_changed())
       }
       ListenerAction::Payload { name, payload } if name.as_ref() == "tray.activate" => {
         if let Some(payload) = payload.transform::<TrayPayload>() {
           if let Some(menu_path) = payload.menu_path.clone() {
-            let _ = self.shared.cmd_tx.send(TrayCmd::Activate {
+            let _ = global().shared.cmd_tx.send(TrayCmd::Activate {
               address: payload.address.to_string(),
               menu_path: menu_path.to_string(),
               submenu_id: payload.submenu_id,
             });
           }
         }
+        Ok(ItemEffect::None)
       }
-      _ => {}
+      _ => Ok(ItemEffect::None),
     }
-    Ok(ItemEffect::None)
   }
 
   fn view<'a>(
@@ -179,14 +184,14 @@ impl Component for SystemTray {
       .and_then(|o| o.number("spacing"))
       .unwrap_or(style.number("spacing").unwrap_or(4.0));
 
-    let items = self.shared.state.lock().unwrap().items.clone();
+    let items = global().shared.state.lock().unwrap().items.clone();
 
     let mut tray = Row::<ItemMessage>::new().spacing(spacing);
     if items.is_empty() {
       tray = tray.push(text("󰓄").size(font_size).color(color));
     }
 
-    let shared = self.shared.clone();
+    let shared = global().shared.clone();
     let position = ctx.position;
     for item in items {
       if let Some(el) = render_item(&item, icon_size, color) {
@@ -224,7 +229,7 @@ impl Component for SystemTray {
       }
     }
 
-    container(tray).into()
+    spaced_component(config, ctx, container(tray).into())
   }
 }
 

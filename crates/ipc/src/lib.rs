@@ -4,8 +4,8 @@ use std::{
   path::PathBuf,
 };
 
-use miette::{Context, IntoDiagnostic};
 use futures_channel::mpsc::UnboundedSender;
+use miette::{Context, IntoDiagnostic};
 use slowshell_core::{
   listeners::{IpcCommand, ListenerAction},
   message::Message,

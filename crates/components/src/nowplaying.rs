@@ -1,6 +1,6 @@
 use iced::{
   Element,
-  widget::{column, container, row, text},
+  widget::{column, row, text},
 };
 
 use slowshell_commons::{
@@ -17,7 +17,9 @@ use slowshell_core::{
 use slowshell_services::util::drain_signal_fd;
 use slowshell_widgets::{Icon, clickable};
 
-use crate::{Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger};
+use crate::{
+  Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger, spaced_component,
+};
 
 pub struct NowPlaying;
 
@@ -182,6 +184,9 @@ impl Component for NowPlaying {
           panel_name: None,
           position: ctx.position,
         },
+        config,
+        ctx,
+        false,
       ));
     }
 
@@ -197,6 +202,6 @@ impl Component for NowPlaying {
         .into()
     };
 
-    container(content).into()
+    spaced_component(config, ctx, content)
   }
 }

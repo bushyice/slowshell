@@ -47,11 +47,12 @@ pub fn daemon() -> miette::Result<()> {
     .collect();
 
   let config = Config::from_path_or_default(
-    if cfg!(debug_assertions) {
-      Some("example.kdl")
-    } else {
-      None
-    },
+    // if cfg!(debug_assertions) {
+    //   Some("example.kdl")
+    // } else {
+    //   None
+    // },
+    None::<&str>,
     config_parsers,
   );
 

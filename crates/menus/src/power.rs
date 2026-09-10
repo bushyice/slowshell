@@ -365,13 +365,22 @@ fn render_profiles_section<'a>(
     .size(style.number("header.font.size").unwrap_or(13.0))
     .color(style.color(theme, "color", theme.text));
 
-  let mut profile_btns = Vec::new();
-  for p in &data.available_profiles {
+  let mut rows: Vec<Element<'_, _>> = Vec::new();
+  let mut iter = data.available_profiles.iter().map(|p| {
     let is_active = data.active_profile.as_ref() == Some(p);
-    profile_btns.push(render_profile_pill(p.clone(), is_active, id, style, theme));
+    render_profile_pill(p.clone(), is_active, id, style, theme)
+  });
+
+  while let Some(first) = iter.next() {
+    let row = match iter.next() {
+      Some(second) => row![first, second],
+      None => row![first].width(Length::Fill),
+    };
+
+    rows.push(row.spacing(6).width(Length::Fill).into());
   }
 
-  column![header, row(profile_btns).spacing(6).width(Length::Fill)]
+  column![header, column(rows).spacing(6).width(Length::Fill),]
     .spacing(6)
     .into()
 }
@@ -426,7 +435,8 @@ fn render_profile_pill<'a>(
         radius: radius.into(),
       },
       ..Default::default()
-    });
+    })
+    .width(Length::Fill);
 
   let action_prof = profile.clone();
   clickable(box_cnt.into(), move |_, _, _| {

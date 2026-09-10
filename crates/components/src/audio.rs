@@ -27,7 +27,9 @@ use slowshell_core::{
 use slowshell_services::util::drain_signal_fd;
 use slowshell_widgets::{EventWrapper, Icon};
 
-use crate::{Component, ComponentContext, ComponentOptions, MenuConfig, popup_open_action};
+use crate::{
+  Component, ComponentContext, ComponentOptions, MenuConfig, popup_open_action, spaced_component,
+};
 
 pub struct Audio {
   signal_fd: Option<i32>,
@@ -314,6 +316,6 @@ impl Component for Audio {
         }
       };
 
-    EventWrapper::new(content.into(), action).into()
+    EventWrapper::new(spaced_component(config, ctx, content.into()), action).into()
   }
 }

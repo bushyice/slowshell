@@ -179,10 +179,55 @@ pub fn popup_open_action(config: &MenuConfig, cursor: iced::Point) -> ListenerAc
   }
 }
 
+pub fn fill_cross<'a, Message: 'a>(
+  content: Element<'a, Message>,
+  orientation: PanelOrientation,
+) -> Element<'a, Message> {
+  if orientation == PanelOrientation::Vertical {
+    iced::widget::container(content)
+      .width(iced::Length::Fill)
+      .align_x(iced::Alignment::Center)
+      .into()
+  } else {
+    iced::widget::container(content)
+      .height(iced::Length::Fill)
+      .align_y(iced::Alignment::Center)
+      .into()
+  }
+}
+
+pub fn spaced_component<'a>(
+  config: &Config,
+  ctx: &ComponentContext,
+  content: Element<'a, ItemMessage>,
+) -> Element<'a, ItemMessage> {
+  let style = config.style("item");
+  let spacing = style.number("spacing").unwrap_or(4.0);
+  let [y, x] = style.padding([4.0, 8.0]);
+  let padding = if ctx.orientation == PanelOrientation::Vertical {
+    [spacing / 2., x]
+  } else {
+    [y, spacing / 2.]
+  };
+
+  iced::widget::container(fill_cross(content, ctx.orientation))
+    .padding(padding)
+    .into()
+}
+
 pub fn menu_trigger<'a>(
   content: Element<'a, ItemMessage>,
   config: MenuConfig,
+  app_config: &Config,
+  ctx: &ComponentContext,
+  wrapper: bool,
 ) -> Element<'a, ItemMessage> {
+  let body = if wrapper {
+    spaced_component(app_config, ctx, content)
+  } else {
+    fill_cross(content, ctx.orientation)
+  };
+
   let action =
     move |event: &Event, layout: iced::advanced::layout::Layout<'_>, cursor: mouse::Cursor| {
       if !cursor.is_over(layout.bounds()) {
@@ -200,7 +245,7 @@ pub fn menu_trigger<'a>(
       Some(ItemMessage::Action(popup_open_action(&config, point)))
     };
 
-  EventWrapper::new(content, action).into()
+  EventWrapper::new(body, action).into()
 }
 
 pub type ComponentFactory = Box<dyn Fn() -> Box<dyn Component> + Send + Sync>;

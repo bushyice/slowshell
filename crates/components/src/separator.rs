@@ -4,7 +4,7 @@ use slowshell_config::Config;
 use slowshell_core::{Store, message::ItemMessage};
 use slowshell_widgets::separator;
 
-use crate::{Component, ComponentContext, ComponentOptions};
+use crate::{Component, ComponentContext, ComponentOptions, spaced_component};
 
 #[derive(Default)]
 pub struct Separator;
@@ -17,7 +17,7 @@ impl Component for Separator {
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    separator()
+    let divider: Element<'a, ItemMessage> = separator()
       .vertical(ctx.orientation == PanelOrientation::Horizontal)
       .padding([0, 0])
       .circle(options.and_then(|x| x.bool("circle")).unwrap_or(false))
@@ -28,6 +28,8 @@ impl Component for Separator {
         "color.faded",
         Color::from_rgb(0., 0., 0.),
       ))
-      .into()
+      .into();
+
+    spaced_component(config, ctx, divider)
   }
 }

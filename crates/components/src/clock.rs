@@ -13,30 +13,25 @@ use slowshell_core::{
   message::{EventFilter, ItemEffect, ItemMessage},
 };
 
-use crate::{
-  Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger, vertical_text,
-};
+use crate::{Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger};
 
 const TICK: &str = "component/clock.tick";
 
 pub struct Clock {
   timer_fd: Option<i32>,
   time: String,
-  hours: String,
-  minutes: String,
-  month: String,
+  parts: Vec<String>,
 }
 
 impl Clock {
   pub fn new() -> Self {
-    let now = Local::now();
-    Self {
+    let mut clock = Self {
       timer_fd: None,
-      time: now.format("%H:%M").to_string(),
-      hours: now.format("%H").to_string(),
-      minutes: now.format("%M").to_string(),
-      month: String::new(),
-    }
+      time: String::new(),
+      parts: Vec::new(),
+    };
+    clock.update_time(None);
+    clock
   }
 
   fn update_time(&mut self, options: Option<&ComponentOptions>) {
@@ -44,15 +39,12 @@ impl Clock {
     let now = Local::now();
 
     self.time = now.format(format).to_string();
-
-    let has_month = format.contains("%b") || format.contains("%m");
-    self.hours = now.format("%H").to_string();
-    self.minutes = now.format("%M").to_string();
-    self.month = if has_month {
-      now.format("%b").to_string()
-    } else {
-      String::new()
-    };
+    self.parts = self
+      .time
+      .split(|c: char| c == ':' || c.is_whitespace())
+      .filter(|part| !part.is_empty())
+      .map(str::to_owned)
+      .collect();
   }
 }
 
@@ -129,27 +121,20 @@ impl Component for Clock {
     let theme = &config.theme;
 
     let content = if vertical {
-      let mut items: Vec<Element<'a, ItemMessage>> = vec![];
-      if !self.month.is_empty() {
-        items.push(vertical_text(
-          &self.month,
-          style.number("font.size").unwrap_or(15.0),
-          style.color(theme, "color.faded", theme.subtext),
-        ));
-        items.push(Space::new().height(4).into());
+      let font_size = style.number("font.size").unwrap_or(15.0);
+      let color = style.color(theme, "color", theme.text);
+      let mut items: Vec<Element<'a, ItemMessage>> = Vec::new();
+
+      for (index, part) in self.parts.iter().enumerate() {
+        if index > 0 {
+          items.push(Space::new().height(2).into());
+        }
+        items.push(text(part.clone()).size(font_size).color(color).into());
       }
-      items.push(
-        text(self.hours.clone())
-          .size(style.number("font.size").unwrap_or(15.0))
-          .color(style.color(theme, "color", theme.text))
-          .into(),
-      );
-      items.push(
-        text(self.minutes.clone())
-          .size(style.number("font.size").unwrap_or(15.0))
-          .color(style.color(theme, "color", theme.text))
-          .into(),
-      );
+
+      if items.is_empty() {
+        items.push(text(self.time.clone()).size(font_size).color(color).into());
+      }
 
       container(column(items).align_x(Alignment::Center))
     } else {
@@ -167,6 +152,9 @@ impl Component for Clock {
         panel_name: None,
         position: ctx.position,
       },
+      config,
+      ctx,
+      true,
     )
   }
 }

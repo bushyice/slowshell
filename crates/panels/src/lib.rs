@@ -9,7 +9,9 @@ use iced_layershell::reexport::{
 };
 use slowshell_commons::panels::PanelOrientation;
 pub use slowshell_commons::panels::{PanelEdge, PanelPositions};
-use slowshell_components::{Component, ComponentContext, ComponentOptions, Components};
+use slowshell_components::{
+  Component, ComponentContext, ComponentOptions, Components, spaced_component,
+};
 use slowshell_config::{
   Config, ConfigParser, Value, child, child_str_owned, find_node, node_children, node_name,
   node_options_map, prop_bool, prop_i64, prop_str, str_arg,
@@ -962,8 +964,17 @@ impl Panel {
     let color = style.color(&theme, "color", theme.text);
 
     match &item.component {
-      Some(comp) => comp.view(config, store, ctx, item.options.as_ref()),
-      None => text(&item.label).size(font_size).color(color).into(),
+      Some(comp) => container(comp.view(config, store, ctx, item.options.as_ref()))
+        // .style(|_| container::Style {
+        //   background: Some(iced::Color::from_rgb(1.0, 1.0, 0.5).into()),
+        //   ..Default::default()
+        // })
+        .into(),
+      None => spaced_component(
+        config,
+        ctx,
+        text(&item.label).size(font_size).color(color).into(),
+      ),
     }
   }
 
@@ -982,7 +993,7 @@ impl Panel {
     let radius = style.number("radius").unwrap_or(4.0);
     let prefix_radius = style.number("prefix.radius").unwrap_or(4.0);
     let padding = style.padding([4.0, 8.0]);
-    let spacing = style.number("spacing").unwrap_or(4.0);
+    // let spacing = style.number("spacing").unwrap_or(4.0);
     let margin = style.number("margin").unwrap_or(4.0);
 
     let container_style = move |_t: &iced::Theme| container::Style {
@@ -1024,7 +1035,7 @@ impl Panel {
           } else {
             Length::Shrink
           })
-          .spacing(spacing)
+          // .spacing(spacing)
           .into()
         } else {
           column(
@@ -1043,7 +1054,7 @@ impl Panel {
             Length::Shrink
           })
           .align_x(Alignment::Center)
-          .spacing(spacing)
+          // .spacing(spacing)
           .into()
         };
 
@@ -1068,7 +1079,11 @@ impl Panel {
                 },
                 ..Default::default()
               })
-              .padding(padding)
+              .padding(if ctx.orientation == PanelOrientation::Vertical {
+                [padding[0] / 2., 0.0]
+              } else {
+                [0.0, padding[1] / 2.]
+              })
               .width(if horizontal {
                 Length::Shrink
               } else {
@@ -1096,15 +1111,31 @@ impl Panel {
         row![prefix, content]
           .height(Length::Fill)
           .align_y(Alignment::Center)
+          .padding(if ctx.orientation == PanelOrientation::Vertical {
+            [padding[0] / 2., 0.0]
+          } else {
+            [0.0, padding[1] / 2.]
+          })
           .into()
       } else {
         column![prefix, content]
           .width(Length::Fill)
           .align_x(Alignment::Center)
+          .padding(if ctx.orientation == PanelOrientation::Vertical {
+            [padding[0] / 2., 0.0]
+          } else {
+            [0.0, padding[1] / 2.]
+          })
           .into()
       }
     } else {
-      container(content).padding(padding).into()
+      container(content)
+        .padding(if ctx.orientation == PanelOrientation::Vertical {
+          [padding[0] / 2., 0.0]
+        } else {
+          [0.0, padding[1] / 2.]
+        })
+        .into()
     };
 
     let mut content = container(inner).style(container_style);

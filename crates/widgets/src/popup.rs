@@ -6,8 +6,11 @@ use iced::{
   },
   widget::{Space, container, mouse_area, stack},
 };
+use iced_layershell::reexport::core::keyboard;
 use slowshell_commons::panels::{PanelEdge, PanelPositions};
 use slowshell_core::{Store, message::ItemMessage};
+
+use crate::EventWrapper;
 
 pub struct PopupPin<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
 where
@@ -350,7 +353,22 @@ impl<'a> SizedPopup<'a> {
 
     let shielded_content = mouse_area(content_box).on_press(ItemMessage::Noop);
 
-    let actual = PopupPin::new(shielded_content).x(x.max(0.0)).y(y.max(0.0));
+    let close = self.on_close.clone();
+    let actual = EventWrapper::new(
+      PopupPin::new(shielded_content)
+        .x(x.max(0.0))
+        .y(y.max(0.0))
+        .into(),
+      move |event, _, _| {
+        if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
+          match key.as_ref() {
+            keyboard::Key::Named(keyboard::key::Named::Escape) => return close.clone(),
+            _ => {}
+          }
+        }
+        None
+      },
+    );
 
     match self.backdrop {
       Some(backdrop) => {

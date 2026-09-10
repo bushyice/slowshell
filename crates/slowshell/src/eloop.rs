@@ -5,8 +5,8 @@ use std::{
   time::Duration,
 };
 
-use miette::{IntoDiagnostic, Result};
 use futures_channel::mpsc::UnboundedSender;
+use miette::{IntoDiagnostic, Result};
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use nix::sys::{
   epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags},
