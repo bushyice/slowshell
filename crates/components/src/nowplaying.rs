@@ -44,7 +44,7 @@ impl Component for NowPlaying {
     _store: &mut Store,
     event: &ListenerAction,
     _options: Option<&ComponentOptions>,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     match event {
       ListenerAction::Signal { name, fd } if &**name == AUDIO_CHANGED => {
         drain_signal_fd(*fd);
@@ -75,7 +75,7 @@ impl Component for NowPlaying {
     let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
     let font_size = style.number("font.size").unwrap_or(12.0);
 
-    let show_artist = options.and_then(|o| o.bool("show_artist")).unwrap_or(true);
+    let show_artist = options.and_then(|o| o.bool("show-artist")).unwrap_or(true);
     let show_controls = options.and_then(|o| o.bool("controls")).unwrap_or(false);
 
     let (track_label, playback_status, can_go_next, can_go_previous) = store
@@ -101,7 +101,7 @@ impl Component for NowPlaying {
       .unwrap_or_default();
 
     let max_len = options
-      .and_then(|o| o.number("max_length"))
+      .and_then(|o| o.number("max-length"))
       .map(|n| n as usize)
       .unwrap_or(40);
 

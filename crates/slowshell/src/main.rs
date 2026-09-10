@@ -4,6 +4,6 @@ mod daemon;
 mod eloop;
 mod watcher;
 
-fn main() {
-  cli::cli();
+fn main() -> miette::Result<()> {
+  cli::cli()
 }

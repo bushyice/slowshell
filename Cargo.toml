@@ -28,7 +28,8 @@ image = "0.25"
 libc = "0.2"
 futures-channel = "0.3"
 ductor = { version = "0.1" }
-anyhow = "1"
+miette = { version = "7.6", features = ["derive", "fancy"] }
+thiserror = "2"
 nix = { version = "0.31", features = ["socket", "poll", "user", "ioctl", "signal", "event", "time", "fs"] }
 smol_str = { version = "0.3", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }

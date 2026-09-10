@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 serde.workspace = true
 smol_str.workspace = true
-anyhow.workspace = true
+miette.workspace = true
 nix.workspace = true
 libc.workspace = true
 

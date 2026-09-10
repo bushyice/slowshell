@@ -66,7 +66,7 @@ impl DesktopItem for Popup {
     _config: &Config,
     store: &mut Store,
     event: &ListenerAction,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     match event {
       ListenerAction::Payload { name, payload } if name.as_ref() == "popup.open" => {
         let Some(payload) = payload else {

@@ -123,7 +123,7 @@ impl Component for Notifications {
     store: &mut Store,
     event: &ListenerAction,
     _options: Option<&ComponentOptions>,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     if !self.shared_in_store {
       self.shared_in_store = true;
       store.insert(self.shared.clone());

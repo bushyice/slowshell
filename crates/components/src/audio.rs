@@ -123,7 +123,7 @@ impl Component for Audio {
     store: &mut Store,
     event: &ListenerAction,
     _options: Option<&ComponentOptions>,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     if !self.shared_in_store {
       self.shared_in_store = true;
       store.insert(self.shared.clone());
@@ -237,9 +237,9 @@ impl Component for Audio {
       })
     };
 
-    let show_track = options.and_then(|o| o.bool("show_track")).unwrap_or(false);
+    let show_track = options.and_then(|o| o.bool("show-track")).unwrap_or(false);
     let show_percent = options
-      .and_then(|o| o.bool("show_percent"))
+      .and_then(|o| o.bool("show-percent"))
       .unwrap_or(false);
 
     let icon_name = volume_icon(vol, muted);

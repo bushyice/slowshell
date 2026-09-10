@@ -30,7 +30,7 @@ async fn power_loop(
   cmd_rx: &mut tokio::sync::mpsc::UnboundedReceiver<PowerCmd>,
   notify: &Option<OwnedFd>,
   poll_seconds: u64,
-) -> anyhow::Result<()> {
+) -> miette::Result<()> {
   let system_conn = Connection::system().await.ok();
 
   let upower_proxy = if let Some(ref conn) = system_conn {

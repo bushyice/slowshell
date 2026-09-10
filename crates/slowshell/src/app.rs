@@ -184,7 +184,7 @@ impl App {
                 println!("[config] Reloaded configuration");
               }
               Err(e) => {
-                eprintln!("[config] Failed to reload configuration: {e}");
+                eprintln!("[config] Failed to reload configuration:\n{e:?}");
               }
             }
           }

@@ -1,6 +1,5 @@
 use std::{any::TypeId, collections::HashMap};
 
-use anyhow::anyhow;
 use iced::{
   Alignment, Element, Length,
   widget::{Space, column, container, mouse_area, row, space, text},
@@ -233,7 +232,7 @@ impl DeployableDesktopItem for PanelDeloyer {
     config: &Config,
     store: &mut Store,
     action: &ListenerAction,
-  ) -> anyhow::Result<Option<slowshell_desktop::DeployDesktopItemAction>> {
+  ) -> miette::Result<Option<slowshell_desktop::DeployDesktopItemAction>> {
     match action {
       ListenerAction::Payload { name, payload } if &**name == "panel.create" => {
         let Some(payload) = payload.transform::<PanelPayload>() else {
@@ -1226,7 +1225,7 @@ impl DesktopItem for Panel {
     self.all_events()
   }
 
-  fn initialize(&mut self, store: &mut Store) -> anyhow::Result<Void> {
+  fn initialize(&mut self, store: &mut Store) -> miette::Result<Void> {
     for item in self.items_mut() {
       for sub_item in item.all_mut() {
         if let Some(comp) = &mut sub_item.component {
@@ -1256,7 +1255,7 @@ impl DesktopItem for Panel {
     config: &Config,
     store: &mut Store,
     event: &ListenerAction,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     let prefix = self.event_prefix();
 
     let mut effect = match event {
@@ -1648,7 +1647,7 @@ slowshell_registry::register_resources!(
     type_id: TypeId::of::<PanelConfigs>(),
     de: |nodes| {
       let Some(panels) = find_node(nodes, "panels") else {
-        return Err(anyhow!("missing \"panels\""));
+        return Ok(None);
       };
 
       let mut configs: PanelConfigs = HashMap::new();
@@ -1699,7 +1698,7 @@ slowshell_registry::register_resources!(
     Ok(
       config
         .typed::<PanelConfigs>()
-        .ok_or(anyhow!("Panels not found"))?
+        .ok_or_else(|| miette::miette!("No panel config found"))?
         .iter()
         .map(|(name, conf)| {
           let panel = build_panel_from_config(name, conf, store);

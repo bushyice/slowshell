@@ -47,7 +47,7 @@ pub trait Component: Send {
     store: &mut Store,
     event: &ListenerAction,
     options: Option<&ComponentOptions>,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     let _ = (config, store, event, options);
     Ok(ItemEffect::None)
   }

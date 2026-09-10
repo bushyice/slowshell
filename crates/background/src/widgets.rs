@@ -176,7 +176,7 @@ impl DesktopItem for DesktopWidget {
     config: &Config,
     store: &mut Store,
     event: &ListenerAction,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     let prefix = self.event_prefix();
 
     match event {
@@ -279,7 +279,7 @@ impl DeployableDesktopItem for DesktopWidgetDeployer {
     _config: &Config,
     _store: &mut Store,
     action: &ListenerAction,
-  ) -> anyhow::Result<Option<DeployDesktopItemAction>> {
+  ) -> miette::Result<Option<DeployDesktopItemAction>> {
     let try_deploy = || {
       let (_name, _payload) = match action {
         ListenerAction::Payload { name, payload } if &**name == "widget.create" => {

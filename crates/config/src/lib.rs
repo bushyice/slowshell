@@ -17,6 +17,64 @@ const DEFAULT_FONT: &str = "Lexend";
 
 pub const DEFAULT_CONFIG: &str = include_str!("default.kdl");
 
+#[derive(thiserror::Error, miette::Diagnostic, Debug)]
+#[error("{message}")]
+#[diagnostic(code(slowshell::config::error))]
+pub struct ConfigError {
+  pub message: String,
+  #[help]
+  pub help: Option<String>,
+  #[label("{label}")]
+  pub span: Option<miette::SourceSpan>,
+  pub label: String,
+}
+
+impl ConfigError {
+  pub fn new(message: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+      help: None,
+      span: None,
+      label: "error here".into(),
+    }
+  }
+
+  pub fn with_help(message: impl Into<String>, help: impl Into<String>) -> Self {
+    Self {
+      message: message.into(),
+      help: Some(help.into()),
+      span: None,
+      label: "error here".into(),
+    }
+  }
+
+  pub fn at_node(
+    node: &KdlNode,
+    message: impl Into<String>,
+    help: Option<impl Into<String>>,
+  ) -> Self {
+    Self {
+      message: message.into(),
+      help: help.map(Into::into),
+      span: Some(node.span()),
+      label: "in this block".into(),
+    }
+  }
+
+  pub fn at_entry(
+    entry: &kdl::KdlEntry,
+    message: impl Into<String>,
+    help: Option<impl Into<String>>,
+  ) -> Self {
+    Self {
+      message: message.into(),
+      help: help.map(Into::into),
+      span: Some(entry.span()),
+      label: "invalid value".into(),
+    }
+  }
+}
+
 pub struct Config {
   current_path: Option<PathBuf>,
   styles: HashMap<Ustr, Style>,
@@ -76,11 +134,15 @@ impl Config {
       ..Default::default()
     };
 
-    let _ = config.reload();
+    if let Err(e) = config.reload() {
+      eprintln!("{e:?}");
+    }
     config
   }
 
-  pub fn reload(&mut self) -> anyhow::Result<()> {
+  pub fn reload(&mut self) -> miette::Result<()> {
+    use miette::IntoDiagnostic;
+
     let mut new_styles = HashMap::new();
     let default_styles = DEFAULT_STYLES.lock().unwrap();
     for (k, v) in default_styles.iter() {
@@ -96,11 +158,13 @@ impl Config {
         return Ok(());
       }
 
-      let content = fs::read_to_string(path)?;
+      let content = fs::read_to_string(path).into_diagnostic()?;
       let doc: KdlDocument = match content.parse() {
         Ok(doc) => doc,
         Err(e) => {
-          return Err(anyhow::anyhow!("failed to parse config: {e}"));
+          let report = miette::Report::new(e)
+            .wrap_err(format!("failed to parse config file {}", path.display()));
+          return Err(report);
         }
       };
 
@@ -112,7 +176,11 @@ impl Config {
             new_parsed.insert(deser.type_id, parsed);
           }
           Err(e) => {
-            eprintln!("config parser error: {e}");
+            let report = e.with_source_code(miette::NamedSource::new(
+              path.display().to_string(),
+              content.clone(),
+            ));
+            eprintln!("{report:?}");
           }
           _ => {}
         }
@@ -145,11 +213,13 @@ impl Config {
         let mut theme = path.join("themes").join(name);
         theme.add_extension("kdl");
 
-        if let Ok(content) = fs::read_to_string(theme) {
+        if let Ok(content) = fs::read_to_string(&theme) {
           let doc: KdlDocument = match content.parse() {
             Ok(doc) => doc,
             Err(e) => {
-              eprintln!("failed to parse theme: {e}");
+              let report = miette::Report::new(e)
+                .wrap_err(format!("failed to parse theme file {}", theme.display()));
+              eprintln!("{report:?}");
               return;
             }
           };
@@ -176,11 +246,13 @@ impl Config {
         if let (Some(cpath), Some(name)) = (path.and_then(|x| x.parent()), str_arg(node, 0)) {
           let style = cpath.join(name);
 
-          if let Ok(content) = fs::read_to_string(style) {
+          if let Ok(content) = fs::read_to_string(&style) {
             let doc: KdlDocument = match content.parse() {
               Ok(doc) => doc,
               Err(e) => {
-                eprintln!("failed to parse style: {e}");
+                let report = miette::Report::new(e)
+                  .wrap_err(format!("failed to parse style file {}", style.display()));
+                eprintln!("{report:?}");
                 return;
               }
             };
@@ -345,6 +417,10 @@ impl From<&KdlValue> for Value {
   }
 }
 
+pub fn node_span(node: &KdlNode) -> miette::SourceSpan {
+  node.span()
+}
+
 pub fn node_name(node: &KdlNode) -> &str {
   node.name().value()
 }
@@ -489,5 +565,5 @@ pub const FONT: &[u8] = include_bytes!("../../../assets/lexend.ttf");
 #[derive(Clone, Copy)]
 pub struct ConfigParser {
   pub type_id: TypeId,
-  pub de: fn(&[KdlNode]) -> anyhow::Result<Option<Box<dyn Any + Send + Sync>>>,
+  pub de: fn(&[KdlNode]) -> miette::Result<Option<Box<dyn Any + Send + Sync>>>,
 }

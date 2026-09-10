@@ -34,15 +34,26 @@ async fn audio_loop(
   shared: &SharedAudioState,
   cmd_rx: &mut tokio::sync::mpsc::UnboundedReceiver<AudioCmd>,
   notify: &Option<OwnedFd>,
-) -> anyhow::Result<()> {
-  let session_conn = zbus::connection::Builder::session()?.build().await?;
+) -> miette::Result<()> {
+  use miette::IntoDiagnostic;
+
+  let session_conn = zbus::connection::Builder::session()
+    .into_diagnostic()?
+    .build()
+    .await
+    .into_diagnostic()?;
 
   refresh_audio_wpctl(shared);
   refresh_mpris(&session_conn, shared).await.ok();
   bump(shared, notify);
 
-  let dbus_proxy = zbus::fdo::DBusProxy::new(&session_conn).await?;
-  let mut name_owner_changed = dbus_proxy.receive_name_owner_changed().await?;
+  let dbus_proxy = zbus::fdo::DBusProxy::new(&session_conn)
+    .await
+    .into_diagnostic()?;
+  let mut name_owner_changed = dbus_proxy
+    .receive_name_owner_changed()
+    .await
+    .into_diagnostic()?;
 
   let (pactl_tx, mut pactl_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
   std::thread::Builder::new()
@@ -230,9 +241,11 @@ fn refresh_audio_wpctl(shared: &SharedAudioState) -> bool {
   changed
 }
 
-async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> anyhow::Result<bool> {
-  let dbus_proxy = zbus::fdo::DBusProxy::new(conn).await?;
-  let names = dbus_proxy.list_names().await?;
+async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> miette::Result<bool> {
+  use miette::IntoDiagnostic;
+
+  let dbus_proxy = zbus::fdo::DBusProxy::new(conn).await.into_diagnostic()?;
+  let names = dbus_proxy.list_names().await.into_diagnostic()?;
 
   let mut mpris_buses = Vec::new();
   for name in names {

@@ -34,21 +34,41 @@ async fn bt_loop(
   shared: &SharedBluetoothState,
   cmd_rx: &mut tokio::sync::mpsc::UnboundedReceiver<BluetoothCmd>,
   notify: &Option<OwnedFd>,
-) -> anyhow::Result<()> {
-  let conn = zbus::connection::Builder::system()?.build().await?;
+) -> miette::Result<()> {
+  use miette::IntoDiagnostic;
+
+  let conn = zbus::connection::Builder::system()
+    .into_diagnostic()?
+    .build()
+    .await
+    .into_diagnostic()?;
 
   let mut adapter_path: Option<String> = None;
 
   refresh_all(&conn, shared, &mut adapter_path).await?;
   bump(shared, notify);
 
-  let root = zbus::Proxy::new_owned(conn.clone(), BLUEZ_DEST, "/", OBJ_MGR_IFACE).await?;
-  let mut added_stream = root.receive_signal("InterfacesAdded").await?;
-  let mut removed_stream = root.receive_signal("InterfacesRemoved").await?;
+  let root = zbus::Proxy::new_owned(conn.clone(), BLUEZ_DEST, "/", OBJ_MGR_IFACE)
+    .await
+    .into_diagnostic()?;
+  let mut added_stream = root
+    .receive_signal("InterfacesAdded")
+    .await
+    .into_diagnostic()?;
+  let mut removed_stream = root
+    .receive_signal("InterfacesRemoved")
+    .await
+    .into_diagnostic()?;
 
   let mut adapter_props_stream = if let Some(ref path) = adapter_path {
-    let p = zbus::Proxy::new_owned(conn.clone(), BLUEZ_DEST, path.clone(), PROPS_IFACE).await?;
-    Some(p.receive_signal("PropertiesChanged").await?)
+    let p = zbus::Proxy::new_owned(conn.clone(), BLUEZ_DEST, path.clone(), PROPS_IFACE)
+      .await
+      .into_diagnostic()?;
+    Some(
+      p.receive_signal("PropertiesChanged")
+        .await
+        .into_diagnostic()?,
+    )
   } else {
     None
   };
@@ -88,7 +108,9 @@ async fn refresh_all(
   conn: &zbus::Connection,
   shared: &SharedBluetoothState,
   adapter_path: &mut Option<String>,
-) -> anyhow::Result<()> {
+) -> miette::Result<()> {
+  use miette::IntoDiagnostic;
+
   let reply = conn
     .call_method(
       Some(BLUEZ_DEST),
@@ -97,11 +119,12 @@ async fn refresh_all(
       "GetManagedObjects",
       &(),
     )
-    .await?;
+    .await
+    .into_diagnostic()?;
 
   let body = reply.body();
   let objects: HashMap<ObjectPath<'_>, HashMap<String, HashMap<String, Value<'_>>>> =
-    body.deserialize()?;
+    body.deserialize().into_diagnostic()?;
 
   let mut found_adapter = None;
   let mut adapter_powered = false;

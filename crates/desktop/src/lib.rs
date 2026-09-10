@@ -75,7 +75,7 @@ pub trait DesktopItem: Send {
 
   fn init_events(&self) -> Vec<EventFilter>;
 
-  fn initialize(&mut self, store: &mut Store) -> anyhow::Result<Void> {
+  fn initialize(&mut self, store: &mut Store) -> miette::Result<Void> {
     let _ = store;
     Ok(())
   }
@@ -85,7 +85,7 @@ pub trait DesktopItem: Send {
     config: &Config,
     store: &mut Store,
     event: &ListenerAction,
-  ) -> anyhow::Result<ItemEffect>;
+  ) -> miette::Result<ItemEffect>;
 
   fn view<'a>(
     &'a self,
@@ -126,5 +126,5 @@ pub trait DeployableDesktopItem: Send {
     config: &Config,
     store: &mut Store,
     action: &ListenerAction,
-  ) -> anyhow::Result<Option<DeployDesktopItemAction>>;
+  ) -> miette::Result<Option<DeployDesktopItemAction>>;
 }

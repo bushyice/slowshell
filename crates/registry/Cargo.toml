@@ -10,5 +10,5 @@ slowshell-desktop = { path = "../desktop" }
 slowshell-widgets = { path = "../widgets" }
 
 serde.workspace = true
-anyhow.workspace = true
+miette.workspace = true
 iced.workspace = true

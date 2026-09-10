@@ -102,7 +102,7 @@ impl Component for Clock {
     _store: &mut Store,
     event: &ListenerAction,
     options: Option<&ComponentOptions>,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     if matches!(
       event,
       ListenerAction::Named(n) if &**n == TICK

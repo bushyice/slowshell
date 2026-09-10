@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 slowshell-core = { path = "../core" }
-anyhow.workspace = true
+miette.workspace = true
 futures-channel.workspace = true

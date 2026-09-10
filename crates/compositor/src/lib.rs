@@ -1,6 +1,5 @@
 pub mod niri;
 
-use anyhow::anyhow;
 use futures_channel::mpsc::UnboundedSender;
 use slowshell_config::Config;
 use slowshell_core::{
@@ -26,10 +25,10 @@ pub struct CompositorState {
 
 pub trait Compositor: Send + Sync {
   fn state(&self) -> &CompositorState;
-  fn send_cmd(&mut self, cmd: CompositorCommand) -> anyhow::Result<Void>;
+  fn send_cmd(&mut self, cmd: CompositorCommand) -> miette::Result<Void>;
 
   /// Please make the `CompositorState` here
-  fn initialize(&mut self, _config: &Config, _listeners: &mut Listeners) -> anyhow::Result<Void> {
+  fn initialize(&mut self, _config: &Config, _listeners: &mut Listeners) -> miette::Result<Void> {
     Ok(Void)
   }
   fn is_active(&self, config: &Config) -> bool;
@@ -38,7 +37,7 @@ pub trait Compositor: Send + Sync {
     &mut self,
     _store: Option<&Store>,
     _tx: UnboundedSender<Message>,
-  ) -> anyhow::Result<Void> {
+  ) -> miette::Result<Void> {
     Ok(())
   }
 }
@@ -60,7 +59,7 @@ impl CompositorStore {
     comps
   }
 
-  pub fn initialize(&mut self, config: &Config, listeners: &mut Listeners) -> anyhow::Result<Void> {
+  pub fn initialize(&mut self, config: &Config, listeners: &mut Listeners) -> miette::Result<Void> {
     self.detect_compositor(config, listeners)
   }
 
@@ -68,7 +67,7 @@ impl CompositorStore {
     &mut self,
     config: &Config,
     listeners: &mut Listeners,
-  ) -> anyhow::Result<Void> {
+  ) -> miette::Result<Void> {
     for (name, compositor) in &mut self.inner {
       if compositor.is_active(config) {
         compositor.initialize(config, listeners)?;
@@ -77,14 +76,14 @@ impl CompositorStore {
       }
     }
 
-    Err(anyhow!("Compositor was not detected"))
+    Err(miette::miette!("Compositor was not detected"))
   }
 
-  pub fn state(&self) -> anyhow::Result<&CompositorState> {
+  pub fn state(&self) -> miette::Result<&CompositorState> {
     self
       .inner
       .get(&self.active)
-      .ok_or(anyhow::anyhow!("Current compositor not found."))
+      .ok_or_else(|| miette::miette!("Current compositor not found."))
       .map(|c| c.state())
   }
 
@@ -92,9 +91,9 @@ impl CompositorStore {
     &mut self,
     store: Option<&Store>,
     tx: UnboundedSender<Message>,
-  ) -> anyhow::Result<Void> {
+  ) -> miette::Result<Void> {
     let Some(compositor) = self.inner.get_mut(&self.active) else {
-      return Err(anyhow::anyhow!("Current compositor not found."));
+      return Err(miette::miette!("Current compositor not found."));
     };
 
     compositor.update_state(store, tx)?;
@@ -102,9 +101,9 @@ impl CompositorStore {
     Ok(())
   }
 
-  pub fn send_cmd(&mut self, cmd: CompositorCommand) -> anyhow::Result<Void> {
+  pub fn send_cmd(&mut self, cmd: CompositorCommand) -> miette::Result<Void> {
     let Some(compositor) = self.inner.get_mut(&self.active) else {
-      return Err(anyhow::anyhow!("Current compositor not found."));
+      return Err(miette::miette!("Current compositor not found."));
     };
 
     compositor.send_cmd(cmd)

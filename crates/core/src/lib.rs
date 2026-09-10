@@ -39,8 +39,8 @@ pub struct Window {
 trait HandleStateTuple: Sized {
   fn run<R>(
     state: &mut Store,
-    f: impl FnOnce(&mut Store, Self) -> anyhow::Result<R>,
-  ) -> anyhow::Result<R>;
+    f: impl FnOnce(&mut Store, Self) -> miette::Result<R>,
+  ) -> miette::Result<R>;
 }
 
 pub struct Store {
@@ -94,8 +94,8 @@ impl Store {
   #[allow(warnings)]
   pub fn handle<T, R>(
     &mut self,
-    f: impl FnOnce(&mut Store, T) -> anyhow::Result<R>,
-  ) -> anyhow::Result<R>
+    f: impl FnOnce(&mut Store, T) -> miette::Result<R>,
+  ) -> miette::Result<R>
   where
     T: HandleStateTuple,
   {
@@ -108,15 +108,15 @@ macro_rules! impl_handle_tuple {
     impl<$($T: 'static),+> HandleStateTuple for ($(&mut $T,)+) {
       fn run<R>(
         store: &mut Store,
-        f: impl FnOnce(&mut Store, Self) -> anyhow::Result<R>,
-      ) -> anyhow::Result<R> {
+        f: impl FnOnce(&mut Store, Self) -> miette::Result<R>,
+      ) -> miette::Result<R> {
         {
           let keys = [$(TypeId::of::<$T>()),+];
 
           for i in 0..keys.len() {
             for j in (i + 1)..keys.len() {
               if keys[i] == keys[j] {
-                anyhow::bail!("Duplicate type requested");
+                miette::bail!("Duplicate type requested");
               }
             }
           }
@@ -130,7 +130,7 @@ macro_rules! impl_handle_tuple {
             let val = store
               .contents
               .remove(&key)
-              .ok_or_else(|| anyhow::anyhow!("Missing instance"))?;
+              .ok_or_else(|| miette::miette!("Missing instance"))?;
 
             (key, val)
           };
@@ -143,7 +143,7 @@ macro_rules! impl_handle_tuple {
                 let downcasted = $T
                   .1
                   .downcast_mut::<$T>()
-                  .ok_or_else(|| anyhow::anyhow!("Type mismatch"))?;
+                  .ok_or_else(|| miette::miette!("Type mismatch"))?;
 
                 unsafe { &mut *(downcasted as *mut $T) }
               },
@@ -168,12 +168,3 @@ impl_handle_tuple!(A, B, C);
 impl_handle_tuple!(A, B, C, D);
 impl_handle_tuple!(A, B, C, D, E);
 impl_handle_tuple!(A, B, C, D, E, F);
-
-// pub trait Registry: Send + Sync {
-//   fn lookup(&mut self) -> anyhow::Result<Void>;
-//   fn into_store(self, store: &mut Store) -> anyhow::Result<Void>;
-//   fn refresh(&self) {}
-// }
-
-// pub static REGISTRY_REGISTRY: LazyLock<std::sync::Arc<std::sync::Mutex<Vec<Box<dyn Registry>>>>> =
-//   LazyLock::new(|| std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));

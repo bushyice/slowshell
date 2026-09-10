@@ -309,7 +309,7 @@ impl Spotlight {
     }
   }
 
-  fn toggle(&mut self, payload: Option<&Ustr>) -> anyhow::Result<ItemEffect> {
+  fn toggle(&mut self, payload: Option<&Ustr>) -> miette::Result<ItemEffect> {
     if self.shown {
       self.close();
       self.shown = false;
@@ -411,7 +411,7 @@ impl DesktopItem for Spotlight {
     config: &Config,
     store: &mut Store,
     event: &ListenerAction,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     match event {
       ListenerAction::Named(name)
       | ListenerAction::Signal { name, .. }

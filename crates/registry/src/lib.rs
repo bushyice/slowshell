@@ -14,16 +14,16 @@ use slowshell_widgets::Renderable;
 
 #[repr(C)]
 pub enum ResourceRegistration {
-  Item(fn(&Config, &Store) -> anyhow::Result<Vec<Box<dyn DesktopItem + Send>>>),
+  Item(fn(&Config, &Store) -> miette::Result<Vec<Box<dyn DesktopItem + Send>>>),
   Renderable {
     name: String,
     create: fn(&Config, &Store) -> Option<Box<dyn Renderable + Send>>,
   },
   Store {
     type_id: TypeId,
-    create: fn(&Config, &Store) -> anyhow::Result<Box<dyn Any + Send>>,
+    create: fn(&Config, &Store) -> miette::Result<Box<dyn Any + Send>>,
   },
-  Deployable(fn(&Config, &Store) -> anyhow::Result<Vec<Box<dyn DeployableDesktopItem>>>),
+  Deployable(fn(&Config, &Store) -> miette::Result<Vec<Box<dyn DeployableDesktopItem>>>),
   Custom(fn(store: &mut Store)),
   CustomRegistry(fn(reg: &mut GlobalRegistry, store: &mut Store)),
   Unknown(Box<dyn Any + Send + Sync>),
@@ -37,7 +37,7 @@ impl ResourceRegistration {
     store: &mut Store,
     items: &mut DesktopItems,
     reg: &mut GlobalRegistry,
-  ) -> anyhow::Result<Option<Task<Message>>> {
+  ) -> miette::Result<Option<Task<Message>>> {
     match self {
       ResourceRegistration::Custom(f) => {
         (f)(store);

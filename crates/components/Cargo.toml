@@ -13,7 +13,7 @@ slowshell-compositor = { path = "../compositor" }
 slowshell-services = { path = "../services" }
 
 chrono.workspace = true
-anyhow.workspace = true
+miette.workspace = true
 iced.workspace = true
 iced_layershell.workspace = true
 nix.workspace = true

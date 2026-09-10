@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 slowshell-commons = { path = "../commons" }
 
-anyhow.workspace = true
+miette.workspace = true
 libc.workspace = true
 tokio.workspace = true
 zbus.workspace = true

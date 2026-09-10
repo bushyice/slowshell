@@ -9,5 +9,4 @@ iced_layershell.workspace = true
 slowshell-core = { path = "../core" }
 slowshell-commons = { path = "../commons" }
 slowshell-config = { path = "../config" }
-anyhow.workspace = true
 freedesktop-icons.workspace = true

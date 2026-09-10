@@ -100,7 +100,7 @@ impl Component for SystemMon {
     store: &mut Store,
     event: &ListenerAction,
     _options: Option<&ComponentOptions>,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     if store.borrow::<SharedSystemState>().is_none() {
       store.insert(self.shared.clone());
     }

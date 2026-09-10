@@ -21,7 +21,7 @@ slowshell-background = { path = "../background" }
 
 nix.workspace = true
 libc.workspace = true
-anyhow.workspace = true
+miette.workspace = true
 iced.workspace = true
 iced_layershell.workspace = true
 futures-channel.workspace = true

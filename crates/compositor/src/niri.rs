@@ -3,8 +3,8 @@ use std::{
   os::{fd::AsRawFd, unix::net::UnixStream},
 };
 
-use anyhow::{Context, Result};
 use futures_channel::mpsc::UnboundedSender;
+use miette::{Context, IntoDiagnostic, Result};
 use niri_ipc::state::{EventStreamState, EventStreamStatePart};
 use nix::sys::epoll::EpollFlags;
 use slowshell_config::Config;
@@ -30,7 +30,7 @@ impl Compositor for NiriCompositor {
     &self.state
   }
 
-  fn send_cmd(&mut self, cmd: crate::CompositorCommand) -> anyhow::Result<Void> {
+  fn send_cmd(&mut self, cmd: crate::CompositorCommand) -> miette::Result<Void> {
     match cmd {
       crate::CompositorCommand::FocusWorkspace(idx) => {
         let socket = self.get_or_connect_cmd_socket()?;
@@ -42,11 +42,11 @@ impl Compositor for NiriCompositor {
         ));
 
         match reply {
-          Ok(Err(e)) => Err(anyhow::anyhow!("niri failed to focus workspace: {e}")),
+          Ok(Err(e)) => Err(miette::miette!("niri failed to focus workspace: {e}")),
           Ok(Ok(_)) => Ok(Void),
           Err(e) => {
             self.cmd_socket = None;
-            Err(e.into())
+            Err(e).into_diagnostic()
           }
         }
       }
@@ -63,35 +63,38 @@ impl Compositor for NiriCompositor {
     &mut self,
     _config: &slowshell_config::Config,
     listeners: &mut Listeners,
-  ) -> anyhow::Result<Void> {
+  ) -> miette::Result<Void> {
     let socket_path = std::env::var_os("NIRI_SOCKET")
       .or_else(|| std::env::var_os("NIRI_SOCKET_PATH"))
       .ok_or_else(|| {
-        anyhow::anyhow!("NIRI_SOCKET or NIRI_SOCKET_PATH environment variable not set")
+        miette::miette!("NIRI_SOCKET or NIRI_SOCKET_PATH environment variable not set")
       })?;
 
-    let mut stream = UnixStream::connect(socket_path)?;
+    let mut stream = UnixStream::connect(socket_path).into_diagnostic()?;
 
+    let req_str = serde_json::to_string(&niri_ipc::Request::EventStream).into_diagnostic()?;
     stream
-      .write_all({ serde_json::to_string(&niri_ipc::Request::EventStream)? + "\n" }.as_bytes())?;
-    stream.flush()?;
+      .write_all(format!("{req_str}\n").as_bytes())
+      .into_diagnostic()?;
+    stream.flush().into_diagnostic()?;
 
     let mut reader = BufReader::new(stream);
 
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    reader.read_line(&mut line).into_diagnostic()?;
 
-    let reply: niri_ipc::Reply =
-      serde_json::from_str(&line).context("Failed to parse handshake")?;
+    let reply: niri_ipc::Reply = serde_json::from_str(&line)
+      .into_diagnostic()
+      .context("Failed to parse handshake")?;
     if let Err(e) = reply {
-      eprintln!("niri is dumb: {e}");
-      return Err(anyhow::anyhow!("Niri refused EventStream: {}", e));
+      return Err(miette::miette!("Niri refused EventStream: {}", e));
     }
 
     self._state = niri_ipc::state::EventStreamState::default();
     reader
       .get_ref()
-      .set_read_timeout(Some(std::time::Duration::from_millis(500)))?;
+      .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+      .into_diagnostic()?;
     loop {
       let mut init_line = String::new();
       match reader.read_line(&mut init_line) {
@@ -107,12 +110,12 @@ impl Compositor for NiriCompositor {
         {
           break;
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e).into_diagnostic(),
       }
     }
-    reader.get_ref().set_read_timeout(None)?;
+    reader.get_ref().set_read_timeout(None).into_diagnostic()?;
 
-    reader.get_ref().set_nonblocking(true)?;
+    reader.get_ref().set_nonblocking(true).into_diagnostic()?;
 
     let fd = reader.get_ref().as_raw_fd();
     listeners.flag(fd, EpollFlags::EPOLLIN | EpollFlags::EPOLLET);
@@ -134,15 +137,15 @@ impl NiriCompositor {
     Self::default()
   }
 
-  fn get_or_connect_cmd_socket(&mut self) -> anyhow::Result<&mut niri_ipc::socket::Socket> {
+  fn get_or_connect_cmd_socket(&mut self) -> miette::Result<&mut niri_ipc::socket::Socket> {
     if self.cmd_socket.is_none() {
       let socket_path = std::env::var_os("NIRI_SOCKET")
         .or_else(|| std::env::var_os("NIRI_SOCKET_PATH"))
         .ok_or_else(|| {
-          anyhow::anyhow!("NIRI_SOCKET or NIRI_SOCKET_PATH environment variable not set")
+          miette::miette!("NIRI_SOCKET or NIRI_SOCKET_PATH environment variable not set")
         })?;
 
-      self.cmd_socket = Some(niri_ipc::socket::Socket::connect_to(socket_path)?);
+      self.cmd_socket = Some(niri_ipc::socket::Socket::connect_to(socket_path).into_diagnostic()?);
     }
 
     Ok(self.cmd_socket.as_mut().unwrap())
@@ -153,7 +156,7 @@ impl NiriCompositor {
     let reader = self
       .reader
       .as_mut()
-      .ok_or(anyhow::anyhow!("Stream not initialized"))?;
+      .ok_or_else(|| miette::miette!("Stream not initialized"))?;
 
     let mut line = String::new();
 
@@ -163,7 +166,7 @@ impl NiriCompositor {
         Ok(0) => {
           // EOF: socket was closed by niri
           self.reader = None;
-          return Err(anyhow::anyhow!("Niri stream closed (EOF)"));
+          return Err(miette::miette!("Niri stream closed (EOF)"));
         }
 
         Ok(_) => {
@@ -177,7 +180,7 @@ impl NiriCompositor {
             } {
               match (&event, &tx) {
                 (niri_ipc::Event::WorkspacesChanged { workspaces: _ }, Some(tx)) => {
-                  tx.unbounded_send(Message::UpdateMonitors)?;
+                  let _ = tx.unbounded_send(Message::UpdateMonitors);
                 }
                 // (niri_ipc::Event::WindowClosed { .. }, Some(tx)) => {
                 //   tx.unbounded_send(Message::FdUpdate(ListenerAction::Named(
@@ -191,7 +194,7 @@ impl NiriCompositor {
               }
               self._state.apply(event);
             } else {
-              eprintln!("skipping niri event for unknown workspace (not yet in map): {event:?}");
+              eprintln!("skipping niri event for unknown workspace: {event:?}");
             }
           }
         }
@@ -200,7 +203,7 @@ impl NiriCompositor {
           break;
         }
 
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e).into_diagnostic(),
       }
     }
 

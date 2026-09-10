@@ -154,7 +154,7 @@ async fn notif_loop(
   shared: &SharedNotificationState,
   cmd_rx: &mut tokio::sync::mpsc::UnboundedReceiver<NotificationCmd>,
   notify: &Option<OwnedFd>,
-) -> anyhow::Result<()> {
+) -> miette::Result<()> {
   let server = NotificationServer {
     shared: shared.clone(),
     notify: notify.as_ref().map(|f| {
@@ -164,11 +164,17 @@ async fn notif_loop(
     next_id: AtomicU32::new(1),
   };
 
-  let conn = zbus::connection::Builder::session()?
-    .name("org.freedesktop.Notifications")?
-    .serve_at("/org/freedesktop/Notifications", server)?
+  use miette::IntoDiagnostic;
+
+  let conn = zbus::connection::Builder::session()
+    .into_diagnostic()?
+    .name("org.freedesktop.Notifications")
+    .into_diagnostic()?
+    .serve_at("/org/freedesktop/Notifications", server)
+    .into_diagnostic()?
     .build()
-    .await?;
+    .await
+    .into_diagnostic()?;
 
   loop {
     if let Some(cmd) = cmd_rx.recv().await {

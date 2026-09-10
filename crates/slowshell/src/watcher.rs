@@ -6,10 +6,10 @@ pub struct ConfigWatcher {
 }
 
 impl ConfigWatcher {
-  pub fn watch<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
+  pub fn watch<P: AsRef<Path>>(path: P) -> miette::Result<Self> {
     let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
     if fd < 0 {
-      return Err(anyhow::anyhow!(
+      return Err(miette::miette!(
         "failed to initialize inotify: {}",
         std::io::Error::last_os_error()
       ));
@@ -22,7 +22,7 @@ impl ConfigWatcher {
         unsafe {
           libc::close(fd);
         }
-        return Err(anyhow::anyhow!("invalid path for inotify: {e}"));
+        return Err(miette::miette!("invalid path for inotify: {e}"));
       }
     };
 
@@ -33,7 +33,7 @@ impl ConfigWatcher {
       unsafe {
         libc::close(fd);
       }
-      return Err(anyhow::anyhow!(
+      return Err(miette::miette!(
         "failed to add inotify watch on {path_str}: {err}"
       ));
     }

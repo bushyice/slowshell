@@ -20,7 +20,9 @@ pub fn pid_path() -> Option<std::path::PathBuf> {
     .ok()
 }
 
-pub fn daemon() {
+pub fn daemon() -> miette::Result<()> {
+  use miette::{Context, IntoDiagnostic};
+
   let mut reg = GlobalRegistry::default();
 
   slowshell_registry::include(&mut reg);
@@ -97,5 +99,8 @@ pub fn daemon() {
     start_mode: StartMode::Active,
   })
   .run()
-  .expect("failed to run iced");
+  .into_diagnostic()
+  .wrap_err("Failed to run slowshell iced layer-shell daemon")?;
+
+  Ok(())
 }

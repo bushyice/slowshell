@@ -135,7 +135,7 @@ impl Component for Power {
     store: &mut Store,
     event: &ListenerAction,
     _options: Option<&ComponentOptions>,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     if !self.shared_in_store {
       if let Some(existing) = store.borrow::<SharedPowerState>() {
         self.shared = existing.clone();

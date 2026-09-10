@@ -242,7 +242,7 @@ impl FdHandle {
     &self,
     duration: std::time::Duration,
     oneshot: bool,
-  ) -> anyhow::Result<nix::sys::timerfd::TimerFd> {
+  ) -> miette::Result<nix::sys::timerfd::TimerFd> {
     use nix::sys::{
       time::TimeSpec,
       timer::{Expiration, TimerSetTimeFlags},
@@ -252,16 +252,19 @@ impl FdHandle {
     let timer_fd = TimerFd::new(
       ClockId::CLOCK_MONOTONIC,
       TimerFlags::TFD_NONBLOCK | TimerFlags::TFD_CLOEXEC,
-    )?;
+    )
+    .map_err(|e| miette::miette!("Failed to create timerfd: {e}"))?;
 
-    timer_fd.set(
-      if oneshot {
-        Expiration::OneShot(TimeSpec::from(duration))
-      } else {
-        Expiration::Interval(TimeSpec::from(duration))
-      },
-      TimerSetTimeFlags::empty(),
-    )?;
+    timer_fd
+      .set(
+        if oneshot {
+          Expiration::OneShot(TimeSpec::from(duration))
+        } else {
+          Expiration::Interval(TimeSpec::from(duration))
+        },
+        TimerSetTimeFlags::empty(),
+      )
+      .map_err(|e| miette::miette!("Failed to arm timerfd: {e}"))?;
 
     Ok(timer_fd)
   }
@@ -270,7 +273,7 @@ impl FdHandle {
     &self,
     duration: std::time::Duration,
     action: ListenerAction,
-  ) -> anyhow::Result<i32> {
+  ) -> miette::Result<i32> {
     let fd = self.get_timer_fd(duration, true)?;
     let raw = fd.as_fd().as_raw_fd();
     let _ = self.tx.send(FdCommand::Register {
@@ -287,7 +290,7 @@ impl FdHandle {
     &self,
     duration: std::time::Duration,
     name: impl Into<Ustr>,
-  ) -> anyhow::Result<i32> {
+  ) -> miette::Result<i32> {
     let fd = self.get_timer_fd(duration, true)?;
     let raw = fd.as_fd().as_raw_fd();
     let _ = self.tx.send(FdCommand::Register {
@@ -307,7 +310,7 @@ impl FdHandle {
     &self,
     duration: std::time::Duration,
     action: ListenerAction,
-  ) -> anyhow::Result<i32> {
+  ) -> miette::Result<i32> {
     let fd = self.get_timer_fd(duration, false)?;
     let raw = fd.as_fd().as_raw_fd();
     let _ = self.tx.send(FdCommand::Register {
@@ -324,7 +327,7 @@ impl FdHandle {
     &self,
     duration: std::time::Duration,
     name: impl Into<Ustr>,
-  ) -> anyhow::Result<i32> {
+  ) -> miette::Result<i32> {
     let fd = self.get_timer_fd(duration, false)?;
     let raw = fd.as_fd().as_raw_fd();
     let _ = self.tx.send(FdCommand::Register {

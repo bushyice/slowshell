@@ -137,7 +137,7 @@ impl DesktopItem for NotificationManager {
     _config: &Config,
     store: &mut Store,
     event: &ListenerAction,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     match event {
       ListenerAction::Signal { name, .. } if &**name == NOTIF_CHANGED => {
         if let Some(shared) = store.borrow::<SharedNotificationState>() {
@@ -478,10 +478,15 @@ slowshell_registry::register_resources!(
     type_id: TypeId::of::<NotificationConfig>(),
     de: |nodes| {
       let Some(node) = slowshell_config::find_node(nodes, "notifications") else {
-        return Err(anyhow::anyhow!("missing \"notifications\""));
+        return Ok(None);
       };
-      let enabled = slowshell_config::child_bool(node, "enabled")
-        .ok_or_else(|| anyhow::anyhow!("missing \"enabled\" in notifications"))?;
+      let enabled = slowshell_config::child_bool(node, "enabled").ok_or_else(|| {
+        slowshell_config::ConfigError::at_node(
+          node,
+          "missing `enabled` in `notifications` block",
+          Some("put `enabled true` or `enabled false` inside `notifications`"),
+        )
+      })?;
       Ok(Some(Box::new(NotificationConfig { enabled })))
     }
   })),

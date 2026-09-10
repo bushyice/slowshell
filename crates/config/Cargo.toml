@@ -7,5 +7,6 @@ edition = "2024"
 slowshell-core = { path = "../core" }
 iced.workspace = true
 
-anyhow.workspace = true
+miette.workspace = true
+thiserror.workspace = true
 kdl.workspace = true

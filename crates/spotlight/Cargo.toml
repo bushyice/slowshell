@@ -12,6 +12,6 @@ slowshell-commons = { path = "../commons" }
 slowshell-desktop = { path = "../desktop" }
 slowshell-widgets = { path = "../widgets" }
 slowshell-registry = { path = "../registry" }
-anyhow.workspace = true
+miette.workspace = true
 serde.workspace = true
 libc.workspace = true

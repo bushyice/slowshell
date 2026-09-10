@@ -1,6 +1,7 @@
 use std::{os::unix::process::CommandExt, process::Stdio};
 
 use clap::Parser;
+use miette::{Context, IntoDiagnostic};
 
 use crate::daemon::pid_path;
 
@@ -15,9 +16,13 @@ struct Cli {
 
 #[derive(clap::Subcommand)]
 enum Commands {
+  #[command(about = "Run daemon in foreground")]
   Daemon,
+  #[command(about = "Start the daemon in background")]
   Start,
+  #[command(about = "Stop the running daemon")]
   Stop,
+  #[command(about = "Send an IPC command to the running daemon")]
   Ipc {
     #[arg(name = "Command")]
     command: String,
@@ -27,17 +32,19 @@ enum Commands {
   },
 }
 
-pub fn cli() {
+pub fn cli() -> miette::Result<()> {
   let cli = Cli::parse();
 
   match cli.command {
     Commands::Daemon => {
-      crate::daemon::daemon();
+      crate::daemon::daemon()?;
     }
     Commands::Start => {
-      let mut cmd = std::process::Command::new(
-        std::env::current_exe().expect("Current exe could not be determined"),
-      );
+      let exe = std::env::current_exe()
+        .into_diagnostic()
+        .wrap_err("Current exe could not be determined")?;
+
+      let mut cmd = std::process::Command::new(exe);
 
       cmd
         .args(["daemon"])
@@ -52,36 +59,34 @@ pub fn cli() {
         });
       }
 
-      match cmd.spawn() {
-        Ok(child) => {
-          let path = pid_path().expect("XDG_RUNTIME_DIR not set");
-          if let Err(e) = std::fs::write(&path, child.id().to_string()) {
-            eprintln!("Failed to save PID file: {}", e);
-          } else {
-            println!("Started daemon with PID {}", child.id());
-          }
-        }
-        Err(e) => eprintln!("Failed to spawn daemon: {}", e),
-      }
+      let child = cmd
+        .spawn()
+        .into_diagnostic()
+        .wrap_err("Failed to spawn background daemon")?;
+
+      let path = pid_path().ok_or_else(|| miette::miette!("XDG_RUNTIME_DIR env not set."))?;
+
+      std::fs::write(&path, child.id().to_string())
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Failed to write PID file to {:?}", path))?;
+
+      println!("Started daemon with PID {}", child.id());
     }
     Commands::Stop => {
-      let path = pid_path().expect("XDG_RUNTIME_DIR not set");
+      let path = pid_path().ok_or_else(|| miette::miette!("XDG_RUNTIME_DIR env not set."))?;
 
       let pid_str = match std::fs::read_to_string(&path) {
         Ok(content) => content.trim().to_string(),
         Err(_) => {
           eprintln!("Daemon is not running.");
-          return;
+          return Ok(());
         }
       };
 
-      let pid: libc::pid_t = match pid_str.parse() {
-        Ok(num) => num,
-        Err(_) => {
-          eprintln!("Invalid PID found in file.");
-          return;
-        }
-      };
+      let pid: libc::pid_t = pid_str
+        .parse()
+        .into_diagnostic()
+        .wrap_err_with(|| format!("Invalid PID in {:?}", path))?;
 
       unsafe {
         if libc::kill(-pid, libc::SIGTERM) == 0 {
@@ -109,7 +114,9 @@ pub fn cli() {
         }
       }
 
-      slowshell_ipc::send(payload).expect("IPC Send failed:");
+      slowshell_ipc::send(payload).wrap_err("Failed to send command to slowshell IPC daemon")?;
     }
   }
+
+  Ok(())
 }

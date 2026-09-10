@@ -31,17 +31,19 @@ pub fn load<T: DeserializeOwned>(name: impl AsRef<str>) -> Option<T> {
   }
 }
 
-pub fn save<T: Serialize>(name: impl AsRef<str>, value: &T) -> anyhow::Result<()> {
+use miette::IntoDiagnostic;
+
+pub fn save<T: Serialize>(name: impl AsRef<str>, value: &T) -> miette::Result<()> {
   let name = name.as_ref();
   let path =
-    file_for(name).ok_or_else(|| anyhow::anyhow!("[persistence] invalid name {name:?}"))?;
+    file_for(name).ok_or_else(|| miette::miette!("[persistence] invalid name {name:?}"))?;
   let dir = path
     .parent()
-    .ok_or_else(|| anyhow::anyhow!("invalid path"))?;
-  fs::create_dir_all(dir)?;
+    .ok_or_else(|| miette::miette!("invalid path"))?;
+  fs::create_dir_all(dir).into_diagnostic()?;
 
   let content = ron::ser::to_string_pretty(value, ron::ser::PrettyConfig::default())
-    .map_err(|e| anyhow::anyhow!("[persistence] failed to serialize {name:?}: {e}"))?;
+    .map_err(|e| miette::miette!("[persistence] failed to serialize {name:?}: {e}"))?;
 
   atomic_write(&path, content.as_bytes())?;
   Ok(())
@@ -51,19 +53,19 @@ pub fn has(name: impl AsRef<str>) -> bool {
   file_for(name.as_ref()).is_some_and(|p| p.exists())
 }
 
-pub fn remove(name: impl AsRef<str>) -> anyhow::Result<()> {
+pub fn remove(name: impl AsRef<str>) -> miette::Result<()> {
   let name = name.as_ref();
   let path =
-    file_for(name).ok_or_else(|| anyhow::anyhow!("[persistence] invalid name {name:?}"))?;
+    file_for(name).ok_or_else(|| miette::miette!("[persistence] invalid name {name:?}"))?;
   if path.exists() {
-    fs::remove_file(&path)?;
+    fs::remove_file(&path).into_diagnostic()?;
   }
   Ok(())
 }
 
-fn atomic_write(path: &Path, content: &[u8]) -> anyhow::Result<()> {
+fn atomic_write(path: &Path, content: &[u8]) -> miette::Result<()> {
   let tmp = path.with_extension("tmp");
-  fs::write(&tmp, content)?;
-  fs::rename(&tmp, path)?;
+  fs::write(&tmp, content).into_diagnostic()?;
+  fs::rename(&tmp, path).into_diagnostic()?;
   Ok(())
 }

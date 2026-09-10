@@ -209,7 +209,7 @@ impl DesktopItem for Wallpaper {
     config: &Config,
     _store: &mut Store,
     event: &ListenerAction,
-  ) -> anyhow::Result<ItemEffect> {
+  ) -> miette::Result<ItemEffect> {
     match event {
       ListenerAction::Named(n)
       | ListenerAction::Signal { name: n, .. }
@@ -284,7 +284,7 @@ slowshell_registry::register_resources!(
     type_id: TypeId::of::<WallpaperConfig>(),
     de: |nodes| {
       let Some(node) = slowshell_config::find_node(nodes, "wallpaper") else {
-        return Err(anyhow::anyhow!("missing \"wallpaper\""));
+        return Ok(None);
       };
       let paths = slowshell_config::child(node, "paths").map(|paths_node| {
         slowshell_config::node_children(paths_node)

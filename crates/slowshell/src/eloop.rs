@@ -5,7 +5,7 @@ use std::{
   time::Duration,
 };
 
-use anyhow::Result;
+use miette::{IntoDiagnostic, Result};
 use futures_channel::mpsc::UnboundedSender;
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use nix::sys::{
@@ -34,23 +34,30 @@ impl EventLoop {
     interval_secs: u64,
     rx: Receiver<FdCommand>,
   ) -> Result<(Self, OwnedFd)> {
-    let epoll = Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?;
+    let epoll = Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC).into_diagnostic()?;
 
     let timer_fd = TimerFd::new(
       ClockId::CLOCK_MONOTONIC,
       TimerFlags::TFD_NONBLOCK | TimerFlags::TFD_CLOEXEC,
-    )?;
+    )
+    .into_diagnostic()?;
 
-    timer_fd.set(
-      Expiration::Interval(TimeSpec::from(Duration::from_secs(interval_secs))),
-      TimerSetTimeFlags::empty(),
-    )?;
+    timer_fd
+      .set(
+        Expiration::Interval(TimeSpec::from(Duration::from_secs(interval_secs))),
+        TimerSetTimeFlags::empty(),
+      )
+      .into_diagnostic()?;
 
-    epoll.add(timer_fd.as_fd(), EpollEvent::new(EpollFlags::EPOLLIN, 0))?;
+    epoll
+      .add(timer_fd.as_fd(), EpollEvent::new(EpollFlags::EPOLLIN, 0))
+      .into_diagnostic()?;
 
-    let (wake_read, wake_write) = nix::unistd::pipe()?;
-    fcntl(&wake_read, FcntlArg::F_SETFL(OFlag::O_NONBLOCK))?;
-    epoll.add(&wake_read, EpollEvent::new(EpollFlags::EPOLLIN, 1))?;
+    let (wake_read, wake_write) = nix::unistd::pipe().into_diagnostic()?;
+    fcntl(&wake_read, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).into_diagnostic()?;
+    epoll
+      .add(&wake_read, EpollEvent::new(EpollFlags::EPOLLIN, 1))
+      .into_diagnostic()?;
 
     let _ = tx.unbounded_send(Message::Tick);
 

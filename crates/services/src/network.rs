@@ -43,7 +43,7 @@ struct SourceRegistry {
 }
 
 impl SourceRegistry {
-  async fn new(conn: &zbus::Connection) -> anyhow::Result<Self> {
+  async fn new(conn: &zbus::Connection) -> zbus::Result<Self> {
     let mut all = Sources::new();
 
     let root = zbus::Proxy::new_owned(conn.clone(), DEST, NM_PATH, NM_IFACE).await?;
@@ -67,7 +67,7 @@ impl SourceRegistry {
     })
   }
 
-  async fn ensure_dev(&mut self, conn: &zbus::Connection, path: &str) -> anyhow::Result<()> {
+  async fn ensure_dev(&mut self, conn: &zbus::Connection, path: &str) -> zbus::Result<()> {
     if self.devs.insert(path.to_string()) {
       let props = zbus::Proxy::new_owned(conn.clone(), DEST, path.to_string(), PROPS_IFACE).await?;
       let stream = props.receive_signal("PropertiesChanged").await?;
@@ -84,7 +84,7 @@ async fn sync_sources(
   conn: &zbus::Connection,
   registry: &mut SourceRegistry,
   devices: &HashMap<String, DeviceInfo>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   for path in devices.keys() {
     registry.ensure_dev(conn, path).await?;
   }
@@ -127,7 +127,7 @@ async fn net_loop(
   shared: &SharedNetworkState,
   cmd_rx: &mut tokio::sync::mpsc::UnboundedReceiver<NetCmd>,
   notify: &Option<OwnedFd>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   let conn = zbus::Connection::system().await?;
 
   let mut devices: HashMap<String, DeviceInfo> = HashMap::new();
@@ -194,7 +194,7 @@ async fn handle_event(
   shared: &SharedNetworkState,
   notify: &Option<OwnedFd>,
   source: &Source,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   match source {
     Source::RootSignal("DeviceAdded", _) | Source::RootSignal("DeviceRemoved", _) => {
       refresh_devices(conn, devices, aps, shared, notify).await?;
@@ -230,7 +230,7 @@ async fn handle_cmd(
   shared: &SharedNetworkState,
   notify: &Option<OwnedFd>,
   cmd: NetCmd,
-) -> anyhow::Result<(bool, bool)> {
+) -> zbus::Result<(bool, bool)> {
   match cmd {
     NetCmd::Connect { ssid, password } => {
       set_busy(shared, notify, true);
@@ -293,7 +293,7 @@ async fn connect_to_network(
   shared: &SharedNetworkState,
   ssid: &str,
   password: Option<String>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   let root = zbus::Proxy::new_owned(conn.clone(), DEST, NM_PATH, NM_IFACE).await?;
   let saved = load_saved_ssids(conn, shared).await;
   let devices: Vec<OwnedObjectPath> = root.get_property::<Vec<OwnedObjectPath>>("Devices").await?;
@@ -329,19 +329,19 @@ async fn connect_to_network(
           .await;
         match reply {
           Ok(_) => {}
-          Err(e) => anyhow::bail!("AddAndActivateConnection2 failed: {e}"),
+          Err(e) => return Err(zbus::Error::Failure(format!("AddAndActivateConnection2 failed: {e}"))),
         }
       }
       return Ok(());
     }
   }
-  anyhow::bail!("no access point named '{ssid}' found")
+  Err(zbus::Error::Failure(format!("no access point named '{ssid}' found")))
 }
 
 async fn disconnect_active_wifi(
   conn: &zbus::Connection,
   devices: &HashMap<String, DeviceInfo>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   let root = zbus::Proxy::new_owned(conn.clone(), DEST, NM_PATH, NM_IFACE).await?;
   for info in devices.values() {
     if info.dev_type == DEV_WIRELESS
@@ -354,13 +354,13 @@ async fn disconnect_active_wifi(
       return Ok(());
     }
   }
-  anyhow::bail!("no active wifi connection to disconnect")
+  Err(zbus::Error::Failure("no active wifi connection to disconnect".into()))
 }
 
 async fn toggle_wired(
   conn: &zbus::Connection,
   devices: &HashMap<String, DeviceInfo>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   let root = zbus::Proxy::new_owned(conn.clone(), DEST, NM_PATH, NM_IFACE).await?;
   let mut target: Option<String> = None;
   let mut active_conn: Option<String> = None;
@@ -376,7 +376,7 @@ async fn toggle_wired(
   }
 
   let Some(dev) = target else {
-    anyhow::bail!("no wired device found");
+    return Err(zbus::Error::Failure("no wired device found".into()));
   };
 
   if let Some(conn_path) = active_conn {
@@ -394,7 +394,7 @@ async fn toggle_wired(
   }
 }
 
-async fn toggle_wifi_radio(conn: &zbus::Connection) -> anyhow::Result<()> {
+async fn toggle_wifi_radio(conn: &zbus::Connection) -> zbus::Result<()> {
   let root = zbus::Proxy::new_owned(conn.clone(), DEST, NM_PATH, NM_IFACE).await?;
   let current = root.get_property::<bool>("WirelessEnabled").await?;
   root.set_property("WirelessEnabled", !current).await?;
@@ -404,7 +404,7 @@ async fn toggle_wifi_radio(conn: &zbus::Connection) -> anyhow::Result<()> {
 async fn request_scan(
   conn: &zbus::Connection,
   devices: &HashMap<String, DeviceInfo>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   for info in devices.values() {
     if info.dev_type == DEV_WIRELESS {
       let wifi = zbus::Proxy::new_owned(conn.clone(), DEST, info.path.clone(), WIFI_IFACE).await?;
@@ -446,7 +446,7 @@ async fn refresh_radio(
   conn: &zbus::Connection,
   shared: &SharedNetworkState,
   notify: &Option<OwnedFd>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   let root = zbus::Proxy::new_owned(conn.clone(), DEST, NM_PATH, NM_IFACE).await?;
   let enabled = root
     .get_property::<bool>("WirelessEnabled")
@@ -473,7 +473,7 @@ async fn refresh_devices(
   aps: &mut HashMap<String, AccessPoint>,
   shared: &SharedNetworkState,
   notify: &Option<OwnedFd>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   let root = zbus::Proxy::new_owned(conn.clone(), DEST, NM_PATH, NM_IFACE).await?;
   let paths: Vec<OwnedObjectPath> = root
     .get_property::<Vec<OwnedObjectPath>>("Devices")
@@ -508,7 +508,7 @@ async fn refresh_device(
   aps: &mut HashMap<String, AccessPoint>,
   shared: &SharedNetworkState,
   notify: &Option<OwnedFd>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   let info = fetch_device(conn, path).await?;
   if info.dev_type == DEV_WIRELESS {
     refresh_aps_for(conn, path, aps).await?;
@@ -520,7 +520,7 @@ async fn refresh_device(
   Ok(())
 }
 
-async fn fetch_device(conn: &zbus::Connection, path: &str) -> anyhow::Result<DeviceInfo> {
+async fn fetch_device(conn: &zbus::Connection, path: &str) -> zbus::Result<DeviceInfo> {
   let base = zbus::Proxy::new_owned(conn.clone(), DEST, path.to_string(), DEV_IFACE).await?;
   let dev_type = base.get_property::<u32>("DeviceType").await.unwrap_or(0);
   let state = base.get_property::<u32>("State").await.unwrap_or(0);
@@ -692,7 +692,7 @@ async fn refresh_ap(
   aps: &mut HashMap<String, AccessPoint>,
   shared: &SharedNetworkState,
   notify: &Option<OwnedFd>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   let ap = fetch_ap(conn, path).await?;
   aps.insert(path.to_string(), ap);
   let saved = load_saved_ssids(conn, shared).await;
@@ -709,7 +709,7 @@ async fn refresh_aps_for(
   conn: &zbus::Connection,
   dev_path: &str,
   aps: &mut HashMap<String, AccessPoint>,
-) -> anyhow::Result<()> {
+) -> zbus::Result<()> {
   let wifi = zbus::Proxy::new_owned(conn.clone(), DEST, dev_path.to_string(), WIFI_IFACE).await?;
   let paths: Vec<OwnedObjectPath> = wifi
     .get_property::<Vec<OwnedObjectPath>>("AccessPoints")
@@ -724,7 +724,7 @@ async fn refresh_aps_for(
   Ok(())
 }
 
-async fn fetch_ap(conn: &zbus::Connection, path: &str) -> anyhow::Result<AccessPoint> {
+async fn fetch_ap(conn: &zbus::Connection, path: &str) -> zbus::Result<AccessPoint> {
   let ap = zbus::Proxy::new_owned(conn.clone(), DEST, path.to_string(), AP_IFACE).await?;
   let ssid = ap.get_property::<Vec<u8>>("Ssid").await.unwrap_or_default();
   let signal = ap.get_property::<u8>("Strength").await.unwrap_or(0);

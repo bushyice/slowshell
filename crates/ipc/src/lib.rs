@@ -4,7 +4,7 @@ use std::{
   path::PathBuf,
 };
 
-use anyhow::Context;
+use miette::{Context, IntoDiagnostic};
 use futures_channel::mpsc::UnboundedSender;
 use slowshell_core::{
   listeners::{IpcCommand, ListenerAction},
@@ -75,7 +75,7 @@ impl IpcListener {
     Self
   }
 
-  pub fn parse(content: &str) -> anyhow::Result<IpcCommand> {
+  pub fn parse(content: &str) -> miette::Result<IpcCommand> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut quotes = false;
@@ -102,14 +102,18 @@ impl IpcListener {
     }
 
     if quotes {
-      anyhow::bail!("string quote mismatch");
+      miette::bail!("string quote mismatch");
     }
 
     let mut iterator = tokens.into_iter();
 
-    let name = iterator.next().context("missing command name")?;
+    let name = iterator
+      .next()
+      .ok_or_else(|| miette::miette!("missing command name"))?;
 
-    let cmd = iterator.next().context("missing command")?;
+    let cmd = iterator
+      .next()
+      .ok_or_else(|| miette::miette!("missing command"))?;
 
     let command = cmd.trim_matches(|c| c == '(' || c == ')').to_string();
 
@@ -126,10 +130,11 @@ impl IpcListener {
   }
 }
 
-pub fn send(content: String) -> anyhow::Result<()> {
+pub fn send(content: String) -> miette::Result<()> {
   let path = ipc_sock_path();
 
   let mut stream = UnixStream::connect(&path)
+    .into_diagnostic()
     .with_context(|| format!("Failed to connect to IPC socket at {:?}", path))?;
 
   let message = if content.ends_with('\n') {
@@ -140,10 +145,12 @@ pub fn send(content: String) -> anyhow::Result<()> {
 
   stream
     .write_all(message.as_bytes())
+    .into_diagnostic()
     .context("Failed to write data to IPC socket")?;
 
   stream
     .flush()
+    .into_diagnostic()
     .context("Failed to flush IPC socket stream")?;
 
   Ok(())
