@@ -19,8 +19,10 @@ members = [
   "crates/services",
   "crates/slowshell",
   "crates/spotlight",
-  "crates/widgets"
+  "crates/widgets",
+  "xtask"
 ]
+default-members = ["crates/*"]
 resolver = "2"
 
 [workspace.dependencies]

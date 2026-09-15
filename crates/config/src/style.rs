@@ -286,22 +286,22 @@ pub struct Theme {
 impl Default for Theme {
   fn default() -> Self {
     Self {
-      base: Color::from_rgb8(30, 30, 46),
-      crust: Color::from_rgb8(17, 17, 27),
-      mantle: Color::from_rgb8(24, 24, 37),
+      base: Color::from_rgb8(14, 28, 36),   // #0e1c24
+      crust: Color::from_rgb8(6, 16, 22),   // #061016
+      mantle: Color::from_rgb8(10, 21, 28), // #0a151c
 
-      primary: Color::from_rgb8(235, 160, 172),
-      secondary: Color::from_rgb8(203, 166, 247),
+      primary: Color::from_rgb8(130, 182, 204),   // #82b6cc
+      secondary: Color::from_rgb8(162, 211, 226), // #a2d3e2
 
-      green: Color::from_rgb8(148, 226, 213),
-      red: Color::from_rgb8(243, 139, 168),
-      blue: Color::from_rgb8(137, 220, 235),
-      yellow: Color::from_rgb8(249, 226, 175),
-      orange: Color::from_rgb8(250, 179, 135),
+      green: Color::from_rgb8(143, 214, 207),  // #8fd6cf
+      red: Color::from_rgb8(111, 168, 192),    // #6fa8c0
+      blue: Color::from_rgb8(143, 214, 234),   // #8fd6ea
+      yellow: Color::from_rgb8(159, 208, 224), // #9fd0e0
+      orange: Color::from_rgb8(143, 198, 220), // #8fc6dc
 
-      text: Color::from_rgb8(205, 214, 244),
-      subtext: Color::from_rgb8(186, 194, 222),
-      overlay: Color::from_rgb8(147, 153, 178),
+      text: Color::from_rgb8(219, 234, 241),    // #dbeaf1
+      subtext: Color::from_rgb8(176, 205, 217), // #b0cdd9
+      overlay: Color::from_rgb8(143, 179, 194), // #8fb3c2
     }
   }
 }

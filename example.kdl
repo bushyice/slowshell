@@ -1,42 +1,147 @@
+// slowshell example config
+//
+// In here, there should be every built-in block and every component and
+// panel option. The values are the built-in defaults unless noted, so you
+// can delete anything you don't need. Check these commands:
+//
+//   slowshell config --show           print the fully resolved config
+//   slowshell list components         list all components
+//   slowshell list renderables        list menu/widget content names
+//   slowshell list spotlights         list spotlight modes
+//
+
+
+// # General
+
+// the UI font family (default: "Lexend", which is embedded)
 font "Lexend"
+
+// seconds between passive ticks (default: 3)
 tick-interval 60
+
+// force a wgpu backend: "vulkan" or "gl" (default: choose automatically)
 wgpu-backend "vulkan"
 
+// force an icon theme instead of following the session
+icons {
+  theme "Adwaita"
+}
+
+
+// # Notification daemon
+
+// if this block is missing, or `enabled` is false, slowshell's
+// notification daemon won't activate.
 notifications {
   enabled #true
 }
 
+
+// Spotlight
+
 spotlight {
-  cache #true
-  // cliphist #true
+  cache #true     // cache empty query results for faster repeat launches
+  // cliphist #true  // enable the "cliphist" clipboard mode (requires cliphist)
 }
 
+
+// Wallpaper
+//
+// Without this block no wallpaper is set. `backend` is how it shows wallpaper:
+//   "slowshell" (built in) | "swaybg" | "swww" | "hyprpaper" | "custom"
+
 wallpaper {
-  backend "swaybg" // "slowshell" | "swaybg" | "swww" | "hyprpaper" | "custom"
+  backend "swaybg"
+
+  // the image used for every output
   file "/home/makano/Pictures/bg/cat_leaves.png"
-  // paths {
-  //   "HDMI-A-1" "/home/makano/Pictures/bg/1.png"
-  //   "eDP-1" "/home/makano/Pictures/bg/2.png"
-  // }
-  // spawn-args "command $PATH" // for backend = "custom"
+
+  // per-output overrides
+  paths {
+    "HDMI-A-1" "/home/makano/Pictures/bg/1.png"
+    "eDP-1"    "/home/makano/Pictures/bg/2.png"
+  }
+
+  // only for backend "custom": $PATH is replaced with the image path
+  spawn-args "command $PATH"
+
+  // downscale caps applied before handing the image to the backend
   // max-width 1920
   // max-height 1080
 }
 
+
+// Plugins
+//
+// A plugin can define its own top-level block (named by the plugin),
+// which is passed to it as raw KDL.
+
+plugins {
+  enabled "my-plugin"   // allow-list; empty/missing means allow everything
+  disabled "broken"     // always wins over `enabled`
+}
+
+// Theme
+
+// a string loads `./themes/<name>.kdl` relative to this config file
 theme "catppuccin-mocha"
 
-style "item" {
-  spacing 8
-  "highlight.padding" 0.0
-  "highlight.radius" 6.0
+// ...or define the palette inline (all keys):
+/*
+theme {
+  base "#1e1e2e"
+  crust "#11111b"
+  mantle "#181825"
+
+  primary "#eba0ac"
+  secondary "#cba6f7"
+
+  green "#94e2d5"
+  red "#f38ba8"
+  blue "#89dceb"
+  yellow "#f9e2af"
+  orange "#fab387"
+
+  text "#cdd6f4"
+  subtext "#bac2de"
+  overlay "#9399b2"
+}
+*/
+
+
+// Styles
+//
+// A style is a named map. User styles *extend* the built-in style of the same
+// name, so list only the keys you want to change. Values can be numbers,
+// booleans, strings, hex colours, `transparent`, or a theme colour name
+// ("primary", "text", "red", ...). A `"key.opacity"` entry scales a colour.
+//
+// You can list all style names with `slowshell list styles`
+
+
+// include more style blocks from another file (relative to this config)
+// include-style "extra-styles.kdl"
+
+style "component" {
+  color "text"
+  "color.faded" "subtext"
+  "color.invert" "base"
+  "color.primary" "primary"
+  "font.size" 12
+  "icon.size" 14
+  spacing 5
+  "padding.x" 9
+  "padding.y" 5
 }
 
-style "workspaces" {
-  "width.active" 34
-  "width.inactive" 26
-  "padding.x" 6.0
-  "padding.y" 0.0
-}
+// Desktop widgets (free-floating renderables)
+//
+//   inner    a renderable name. see `slowshell list renderables`
+//   width    width in px              (default: 200)
+//   height   height in px             (default: 200)
+//   x, y     offset from the anchor   (default: 0, 0)
+//   anchor   "top-left" | "top-right" | "bottom-left" | "bottom-right"
+//   monitor  an output name, or "*" for every monitor (default: "*")
 
 widgets {
   widget "MyClock" {
@@ -46,54 +151,109 @@ widgets {
     y 100
     anchor "top-right"
     monitor "HDMI-A-1"
-    inner "wifi"
+    inner "widgets/systemmon"
   }
 }
 
+
+// Panels
+//
+// Panel props:
+//   position          "top" | "bottom" | "left" | "right"          (default: "top")
+//   monitor           output name, or "*" = one panel per monitor  (default: "*")
+//   height            thickness in px                              (default: 32)
+//   transparent       #true | #false                               (default: #false)
+//   overlay           draw on the overlay layer                    (default: #false)
+//   autohide          hide until the pointer comes close           (default: #false)
+//   autohide-trigger  hover distance in px for autohide
+//
+// Sections are `left`, `center` and `right`. within:
+//   component "name" { ... }   a single component
+//   group "Label" { item "name" { ... } prefix "name" { ... } }
+
 panels {
-  panel "Main" position="top" transparent=#true {
-    // height 40
+  panel "Main" position="top" transparent=#true monitor="*" height=40 {
     // overlay #true
     // autohide #true
     // autohide-trigger 4
 
     components {
       left {
+        // core/icon - a standalone clickable / menu icon
+        //   action  command dispatched on click
+        //   menu    renderable opened on click
+        //   icon    a single icon name
+        //   icons   a table of icon names where the first one that resolves is used
         component "core/icon" {
           label "Slowshell"
-          icon "slowshell-icon-shell.svg"
-          menu "menus/power"
+          action "panel.main.toggle"
+          // menu "menus/power"
+          // icon "slowshell-icon-shell.svg"
+          // icons {
+          //   "slowshell-icon-shell.svg" "applications-system-symbolic"
+          // }
         }
+
+        // core/workspaces - compositor workspaces
+        //   all            include workspaces from every output (default: #false)
+        //   text           draw the workspace text / icon       (default: #false)
+        //   override-text  table: workspace index/name -> replacement text
         component "core/workspaces" {
           label "Workspaces"
+          all #false
           text #true
           "override-text" {
             "1" ""
+            "2" ""
           }
         }
+
+        // core/window - the focused window
+        //   icon, name, title   (all default: #true)
         component "core/window" {
           label "Window"
+          icon #true
+          name #true
+          title #true
         }
       }
 
       center {
+        // core/nowplaying - now-playing
+        //   show-artist  (default: #true)
+        //   controls     transport buttons (default: #false)
+        //   max-length   characters before ellipsis (default: 40)
         component "core/nowplaying" {
           label "Now Playing"
           "show-artist" #true
-          "controls" #true
-          "max-length" 40
+          controls #true
+          "max-length" 40.0
         }
+
         group "SomeGroup" {
+          // optional header component:
+          // prefix "core/icon" { label "Group" icon "applications-system-symbolic" }
+
+          // core/clock
+          //   format       time format (default: "%H:%M")
+          //   update-time  seconds between repaints (default: 60)
           item "core/clock" {
             label "Clock"
             format "%I:%M %p"
+            "update-time" 60
           }
+
+          // core/separator
+          //   circle   draw a dot instead of a line (default: #false)
+          //   size     thickness in px               (default: 2.0)
+          //   opacity  alpha                          (default: 0.1)
           item "core/separator" {
             label "Sep"
+            circle #false
             size 5.0
             opacity 0.5
-            circle #true
           }
+
           item "core/clock" {
             label "Date"
             format "%b %-d"
@@ -102,60 +262,92 @@ panels {
       }
 
       right {
+        // core/tray - the system tray
+        //   spacing  gap between icons (default: the component spacing)
         component "core/tray" {
           label "Tray"
+          spacing 4
         }
-        group "SomeGroup" {
+
+        group "Media" {
+          // core/audio (or core/sound) - volume + nowplaying controls
+          //   show-percent  (default: #false)
+          //   show-track    (default: #false)
           item "core/audio" {
             label "Audio"
             "show-percent" #true
             "show-track" #false
           }
+
           item "core/separator" {
             label "Sep"
             opacity 0.05
           }
+
+          // core/bluetooth - no options
           item "core/bluetooth" {
             label "Bluetooth"
           }
+
           item "core/separator" {
             label "Sep"
             opacity 0.05
           }
+
+          // core/network
+          //   icon  show the connection icon (default: #true)
+          //   ssid  show the SSID / interface (default: #false)
           item "core/network" {
             label "Network"
             icon #true
             ssid #true
           }
+
           item "core/separator" {
             label "Sep"
             opacity 0.05
           }
+
+          // core/power - battery and brightness
+          //   interval    seconds between refreshes (default: 10)
+          //   battery     force battery on/off     (default: auto)
+          //   brightness  force brightness on/off  (default: auto)
           item "core/power" {
             label "Battery"
+            interval 10
             battery #true
             brightness #true
           }
+
           item "core/separator" {
             label "Sep"
             opacity 0.05
           }
+
+          // core/notifications - no options
           item "core/notifications" {
             label "Notifs"
           }
         }
+
+        // core/system - the system monitor
+        //   interval            seconds between refreshes (default: 2, min 1)
+        //   items               these: cpu, mem, temp, net, load
+        //                       (default: cpu mem)
+        //   icons               show item icons (default: #true)
+        //   labels              show item labels (default: #true)
+        //   progress            show a progress bar (default: #false)
+        //   progress-direction  "horizontal" | "vertical" (default "horizontal")
+        //   icon_names          up to 3 icon overrides, in order: cpu, mem, load
         component "core/system" {
           label "CPU"
           interval 5
+          items "cpu" "mem" "temp" "net" "load"
           icons #true
-          progress #true
           labels #true
+          progress #true
           progress-direction "vertical"
-          items "cpu" "mem"
-        }
-        component "core/icon" {
-          label "Power"
-          menu "menus/actions"
+          icon_names "cpu-symbolic" "memory-symbolic" "drive-harddisk-symbolic"
         }
       }
     }

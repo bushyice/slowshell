@@ -182,19 +182,19 @@ impl Default for Theme {
     let rgb =
       |r: u8, g: u8, b: u8| Color::rgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
     Self {
-      base: rgb(30, 30, 46),
-      crust: rgb(17, 17, 27),
-      mantle: rgb(24, 24, 37),
-      primary: rgb(235, 160, 172),
-      secondary: rgb(203, 166, 247),
-      green: rgb(148, 226, 213),
-      red: rgb(243, 139, 168),
-      blue: rgb(137, 220, 235),
-      yellow: rgb(249, 226, 175),
-      orange: rgb(250, 179, 135),
-      text: rgb(205, 214, 244),
-      subtext: rgb(186, 194, 222),
-      overlay: rgb(147, 153, 178),
+      base: rgb(14, 28, 36),
+      crust: rgb(6, 16, 22),
+      mantle: rgb(10, 21, 28),
+      primary: rgb(130, 182, 204),
+      secondary: rgb(162, 211, 226),
+      green: rgb(143, 214, 207),
+      red: rgb(111, 168, 192),
+      blue: rgb(143, 214, 234),
+      yellow: rgb(159, 208, 224),
+      orange: rgb(143, 198, 220),
+      text: rgb(219, 234, 241),
+      subtext: rgb(176, 205, 217),
+      overlay: rgb(143, 179, 194),
     }
   }
 }
