@@ -30,6 +30,38 @@ enum Commands {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<String>,
   },
+  #[command(about = "List registered resources")]
+  List {
+    #[command(subcommand)]
+    resource: ListResource,
+  },
+  #[command(about = "Inspect config")]
+  Config {
+    #[arg(long, help = "Validate the current config")]
+    validate: bool,
+
+    #[arg(long, help = "Show the resolved config")]
+    show: bool,
+
+    #[arg(long, help = "Print the path of config in use")]
+    current: bool,
+  },
+}
+
+#[derive(clap::Subcommand)]
+enum ListResource {
+  #[command(about = "List all styles")]
+  Styles,
+  #[command(about = "List loaded plugins")]
+  Plugins,
+  #[command(about = "List all renderables")]
+  Renderables,
+  #[command(about = "List all components")]
+  Components,
+  #[command(about = "List all desktop items")]
+  Items,
+  #[command(about = "List all spotlight modes")]
+  Spotlights,
 }
 
 pub fn cli() -> miette::Result<()> {
@@ -115,6 +147,32 @@ pub fn cli() -> miette::Result<()> {
       }
 
       slowshell_ipc::send(payload).wrap_err("Failed to send command to slowshell IPC daemon")?;
+    }
+    Commands::List { resource } => match resource {
+      ListResource::Styles => crate::inspect::styles()?,
+      ListResource::Plugins => crate::inspect::plugins()?,
+      ListResource::Renderables => crate::inspect::renderables()?,
+      ListResource::Components => crate::inspect::components()?,
+      ListResource::Items => crate::inspect::items()?,
+      ListResource::Spotlights => crate::inspect::spotlights()?,
+    },
+    Commands::Config {
+      validate,
+      show,
+      current,
+    } => {
+      if validate {
+        crate::inspect::config_validate()?;
+      }
+      if show {
+        crate::inspect::config_show()?;
+      }
+      if current {
+        crate::inspect::config_current()?;
+      }
+      if !validate && !show && !current {
+        crate::inspect::config_show()?;
+      }
     }
   }
 

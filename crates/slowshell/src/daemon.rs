@@ -20,29 +20,33 @@ pub fn pid_path() -> Option<std::path::PathBuf> {
     .ok()
 }
 
-pub fn daemon() -> miette::Result<()> {
-  use miette::{Context, IntoDiagnostic};
+pub struct Loaded {
+  pub registry: GlobalRegistry,
+  pub config: Config,
+  pub plugins: slowshell_plugin_host::PluginHost,
+}
 
-  let mut reg = GlobalRegistry::default();
+pub fn load() -> Loaded {
+  let mut registry = GlobalRegistry::default();
 
-  slowshell_registry::include(&mut reg);
-  slowshell_components::include(&mut reg);
+  slowshell_registry::include(&mut registry);
+  slowshell_components::include(&mut registry);
   slowshell_components::register_vertical_style();
-  slowshell_menus::include(&mut reg);
-  slowshell_notifications::include(&mut reg);
-  slowshell_panels::include(&mut reg);
-  slowshell_popups::include(&mut reg);
-  slowshell_spotlight::include(&mut reg);
-  slowshell_background::wallpaper::include(&mut reg);
-  slowshell_background::widgets::include(&mut reg);
+  slowshell_menus::include(&mut registry);
+  slowshell_notifications::include(&mut registry);
+  slowshell_panels::include(&mut registry);
+  slowshell_popups::include(&mut registry);
+  slowshell_spotlight::include(&mut registry);
+  slowshell_background::wallpaper::include(&mut registry);
+  slowshell_background::widgets::include(&mut registry);
 
   let plugin_selection = {
     let config_path = Config::resolve_path(None::<&str>);
     slowshell_plugin_host::PluginSelection::from_path(config_path.as_deref())
   };
-  let _plugins = slowshell_plugin_host::PluginHost::load(&mut reg, &plugin_selection);
+  let plugins = slowshell_plugin_host::PluginHost::load(&mut registry, &plugin_selection);
 
-  let config_parsers = reg
+  let config_parsers = registry
     .inside("config")
     .into_iter()
     .filter_map(|res| {
@@ -52,15 +56,23 @@ pub fn daemon() -> miette::Result<()> {
     })
     .collect();
 
-  let config = Config::from_path_or_default(
-    // if cfg!(debug_assertions) {
-    //   Some("example.kdl")
-    // } else {
-    //   None
-    // },
-    None::<&str>,
-    config_parsers,
-  );
+  let config = Config::from_path_or_default(None::<&str>, config_parsers);
+
+  Loaded {
+    registry,
+    config,
+    plugins,
+  }
+}
+
+pub fn daemon() -> miette::Result<()> {
+  use miette::{Context, IntoDiagnostic};
+
+  let Loaded {
+    registry,
+    config,
+    plugins,
+  } = load();
 
   if let Some(backend) = &config.wgpu_backend {
     unsafe {
@@ -76,7 +88,7 @@ pub fn daemon() -> miette::Result<()> {
 
   let font = config.font();
 
-  let _ = REGISTRY.set(Mutex::new(reg));
+  let _ = REGISTRY.set(Mutex::new(registry));
   let _ = CONFIG.set(Mutex::new(Some(config)));
 
   iced_layershell::daemon(
@@ -114,6 +126,8 @@ pub fn daemon() -> miette::Result<()> {
   .run()
   .into_diagnostic()
   .wrap_err("Failed to run slowshell iced layer-shell daemon")?;
+
+  drop(plugins);
 
   Ok(())
 }

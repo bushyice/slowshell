@@ -89,6 +89,10 @@ pub struct Config {
 }
 
 impl Config {
+  pub fn styles(&self) -> &HashMap<Ustr, Style> {
+    &self.styles
+  }
+
   pub fn current_path(&self) -> Option<&PathBuf> {
     self.current_path.as_ref()
   }
@@ -322,6 +326,44 @@ impl Config {
 
   pub fn font(&self) -> Font {
     self.font
+  }
+
+  pub fn font_name(&self) -> &str {
+    self.font_name.unwrap_or(DEFAULT_FONT)
+  }
+
+  pub fn validate(&self) -> miette::Result<()> {
+    use miette::IntoDiagnostic;
+
+    let Some(path) = &self.current_path else {
+      return Ok(());
+    };
+
+    if !path.exists() {
+      return Ok(());
+    }
+
+    let content = fs::read_to_string(path).into_diagnostic()?;
+    let doc: KdlDocument = match content.parse() {
+      Ok(doc) => doc,
+      Err(e) => {
+        let report = miette::Report::new(e)
+          .wrap_err(format!("failed to parse config file {}", path.display()));
+        return Err(report);
+      }
+    };
+
+    for deser in &self.config_parsers {
+      if let Err(e) = (deser.de)(doc.nodes()) {
+        let report = e.with_source_code(miette::NamedSource::new(
+          path.display().to_string(),
+          content.clone(),
+        ));
+        return Err(report);
+      }
+    }
+
+    Ok(())
   }
 
   fn insert_style(&mut self, name: Ustr, style: Style) {

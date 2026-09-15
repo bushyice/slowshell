@@ -22,7 +22,10 @@ use slowshell_widgets::Renderables;
 
 static EPOLL_RX: OnceLock<Mutex<Option<UnboundedReceiver<Message>>>> = OnceLock::new();
 
-fn register_plugin_components(registry: &mut GlobalRegistry, components: &mut Components) {
+pub(crate) fn register_plugin_components(
+  registry: &mut GlobalRegistry,
+  components: &mut Components,
+) {
   for resource in registry.inside("components") {
     if let ResourceRegistration::Unknown(registration) = resource
       && let Ok(registration) = registration.downcast::<ComponentRegistration>()

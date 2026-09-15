@@ -8,7 +8,7 @@ use std::{
   path::PathBuf,
   sync::{
     Mutex, OnceLock,
-    atomic::{AtomicU32, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
   },
   time::Duration,
 };
@@ -147,11 +147,14 @@ impl PluginHost {
 
         match unsafe { load_one(&path, registry, selection) } {
           Ok(Some(library)) => {
-            println!("[plugin] loaded {}", path.display());
+            plugin_log(format_args!("[plugin] loaded {}", path.display()));
             libraries.push(library);
           }
           Ok(None) => {}
-          Err(e) => eprintln!("[plugin] failed to load {}: {e}", path.display()),
+          Err(e) => plugin_log(format_args!(
+            "[plugin] failed to load {}: {e}",
+            path.display()
+          )),
         }
       }
     }
@@ -212,9 +215,9 @@ impl PluginHost {
     let renderable_count = renderables().lock().map(|r| r.len()).unwrap_or(0);
     let desktop_count = desktop_items().lock().map(|d| d.len()).unwrap_or(0);
     if payload_count + renderable_count + desktop_count > 0 {
-      println!(
+      plugin_log(format_args!(
         "[plugin] registered {payload_count} payload(s), {renderable_count} renderable(s), {desktop_count} desktop item(s)"
-      );
+      ));
     }
 
     Self { libraries }
@@ -264,19 +267,32 @@ unsafe fn load_one(
     .to_owned();
 
   if !selection.allows(&id) {
-    println!("[plugin] {id} disabled");
+    plugin_log(format_args!("[plugin] {id} disabled"));
     return Ok(None);
   }
 
   plugin_ids().lock().unwrap().push(id.clone());
 
+  let version = unsafe { meta.version.as_str() }
+    .unwrap_or("<unknown>")
+    .to_owned();
+  plugin_infos().lock().unwrap().push(PluginInfo {
+    id: id.clone(),
+    version,
+    path: path.to_path_buf(),
+  });
+
   let init_fn: Symbol<SlPluginInitFn> = unsafe { library.get(SL_PLUGIN_INIT_SYMBOL.as_bytes()) }
     .map_err(|e| miette::miette!("missing {SL_PLUGIN_INIT_SYMBOL}: {e}"))?;
 
   PENDING.with(|pending| pending.borrow_mut().clear());
+  CURRENT_PLUGIN.with(|current| *current.borrow_mut() = Some(id.clone()));
 
   let mut userdata: *mut c_void = std::ptr::null_mut();
   let status = unsafe { init_fn(&HOST_API, std::ptr::null_mut(), &mut userdata) };
+
+  CURRENT_PLUGIN.with(|current| *current.borrow_mut() = None);
+
   if status != 0 {
     return Err(miette::miette!("[plugin] {id} init returned {status}"));
   }
@@ -354,6 +370,7 @@ enum Pending {
 
 thread_local! {
   static PENDING: RefCell<Vec<Pending>> = const { RefCell::new(Vec::new()) };
+  static CURRENT_PLUGIN: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
@@ -370,6 +387,10 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
           let vtable = vtable as *const SlComponentVtable;
           let state = unsafe { ((*vtable).create.expect("component create"))(ctx) };
           Box::new(PluginComponent::new(ctx, vtable, state)) as Box<dyn Component>
+        });
+
+        contribute(plugin_id, |contributions| {
+          contributions.components.push(name.clone());
         });
 
         registry.include_in(
@@ -389,6 +410,10 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
           Box::new(PluginCompositor { ctx, vtable, state }) as Box<dyn Compositor>
         });
 
+        contribute(plugin_id, |contributions| {
+          contributions.compositors.push(name.clone());
+        });
+
         registry.include_in(
           "compositor",
           ResourceRegistration::Unknown(Box::new(CompositorRegistration::new(name, factory))),
@@ -406,6 +431,10 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
           state,
         });
 
+        contribute(plugin_id, |contributions| {
+          contributions.payloads.push(command.clone());
+        });
+
         registry.include_in(
           "payload",
           ResourceRegistration::Unknown(Box::new(PayloadBuilder {
@@ -420,31 +449,48 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
       Pending::Renderable { name, vtable } => {
         let ctx = Box::into_raw(Box::new(PluginInstance::new(plugin_id))) as *mut c_void;
         renderables().lock().unwrap().push(RenderableEntry {
-          name: name.into(),
+          name: name.clone().into(),
           ctx,
           vtable,
+        });
+
+        contribute(plugin_id, |contributions| {
+          contributions.renderables.push(name);
         });
       }
 
       Pending::DesktopItem { name, vtable } => {
         let ctx = Box::into_raw(Box::new(PluginInstance::new(plugin_id))) as *mut c_void;
         desktop_items().lock().unwrap().push(DesktopEntry {
-          name: name.into(),
+          name: name.clone().into(),
           ctx,
           vtable,
+        });
+
+        contribute(plugin_id, |contributions| {
+          contributions.desktop_items.push(name);
         });
       }
 
       Pending::ConfigParser { name, callback } => {
+        contribute(plugin_id, |contributions| {
+          contributions.config_parsers.push(name.clone());
+        });
+
         register_plugin_config_parser(plugin_id, name, callback);
       }
 
       Pending::Spotlight { name, vtable } => {
         let ctx = Box::into_raw(Box::new(PluginInstance::new(plugin_id))) as *mut c_void;
-        spotlights()
-          .lock()
-          .unwrap()
-          .push(SpotlightEntry { name, ctx, vtable });
+        spotlights().lock().unwrap().push(SpotlightEntry {
+          name: name.clone(),
+          ctx,
+          vtable,
+        });
+
+        contribute(plugin_id, |contributions| {
+          contributions.spotlights.push(name);
+        });
       }
     }
   }
@@ -1388,6 +1434,83 @@ pub struct PluginConfigs {
 fn plugin_ids() -> &'static Mutex<Vec<String>> {
   static IDS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
   IDS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[derive(Clone)]
+pub struct PluginInfo {
+  pub id: String,
+  pub version: String,
+  pub path: PathBuf,
+}
+
+fn plugin_infos() -> &'static Mutex<Vec<PluginInfo>> {
+  static INFOS: OnceLock<Mutex<Vec<PluginInfo>>> = OnceLock::new();
+  INFOS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub fn loaded_plugins() -> Vec<PluginInfo> {
+  plugin_infos().lock().unwrap().clone()
+}
+
+pub fn renderable_names() -> Vec<String> {
+  renderables()
+    .lock()
+    .unwrap()
+    .iter()
+    .map(|entry| entry.name.to_string())
+    .collect()
+}
+
+pub fn spotlight_names() -> Vec<String> {
+  spotlights()
+    .lock()
+    .unwrap()
+    .iter()
+    .map(|entry| entry.name.clone())
+    .collect()
+}
+
+#[derive(Default, Clone)]
+pub struct PluginContributions {
+  pub components: Vec<String>,
+  pub compositors: Vec<String>,
+  pub payloads: Vec<String>,
+  pub renderables: Vec<String>,
+  pub desktop_items: Vec<String>,
+  pub config_parsers: Vec<String>,
+  pub spotlights: Vec<String>,
+  pub styles: Vec<String>,
+}
+
+fn plugin_contributions() -> &'static Mutex<HashMap<String, PluginContributions>> {
+  static CONTRIBUTIONS: OnceLock<Mutex<HashMap<String, PluginContributions>>> = OnceLock::new();
+  CONTRIBUTIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn contribute(plugin_id: &str, update: impl FnOnce(&mut PluginContributions)) {
+  let mut contributions = plugin_contributions().lock().unwrap();
+  update(contributions.entry(plugin_id.to_owned()).or_default());
+}
+
+pub fn contributions(plugin_id: &str) -> PluginContributions {
+  plugin_contributions()
+    .lock()
+    .unwrap()
+    .get(plugin_id)
+    .cloned()
+    .unwrap_or_default()
+}
+
+static SILENT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_silent(silent: bool) {
+  SILENT.store(silent, Ordering::Relaxed);
+}
+
+fn plugin_log(message: std::fmt::Arguments) {
+  if !SILENT.load(Ordering::Relaxed) {
+    eprintln!("{message}");
+  }
 }
 
 fn plugin_configs() -> &'static Mutex<HashMap<String, HashMap<String, String>>> {
@@ -2791,6 +2914,15 @@ unsafe extern "C" fn host_style_register(
   }
   let style = sheet_to_style(unsafe { &*sheet });
   new_default_style(Ustr::from(name), style);
+
+  CURRENT_PLUGIN.with(|current| {
+    if let Some(plugin_id) = current.borrow().as_deref() {
+      contribute(plugin_id, |contributions| {
+        contributions.styles.push(name.to_owned());
+      });
+    }
+  });
+
   0
 }
 
