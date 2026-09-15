@@ -8,3 +8,4 @@ slowshell-core = { path = "../core" }
 tokio.workspace = true
 system-tray.workspace = true
 freedesktop-desktop-entry.workspace = true
+libc.workspace = true

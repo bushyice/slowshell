@@ -996,11 +996,15 @@ impl Panel {
     // let spacing = style.number("spacing").unwrap_or(4.0);
     let margin = style.number("margin").unwrap_or(4.0);
 
+    let border_width = style.number("border.width").unwrap_or(0.0);
+    let border_color = style.color(&theme, "border.color", theme.overlay);
+
     let container_style = move |_t: &iced::Theme| container::Style {
       background: Some(bg.into()),
       border: iced::Border {
         radius: radius.into(),
-        ..Default::default()
+        width: border_width,
+        color: border_color,
       },
       ..Default::default()
     };
@@ -1471,6 +1475,8 @@ impl DesktopItem for Panel {
       PanelEventKind::Other => ItemEffect::None,
     };
 
+    let mut resubscribe = false;
+
     for item in self.items_mut() {
       for sub_item in item.all_mut() {
         if sub_item.events.is_none() && sub_item.component.is_some() {
@@ -1487,9 +1493,17 @@ impl DesktopItem for Panel {
           && let Ok(comp_effect) = comp.update(config, store, event, sub_item.options.as_ref())
           && comp_effect != ItemEffect::None
         {
-          effect = comp_effect;
+          if matches!(comp_effect, ItemEffect::Subscribe(_)) {
+            resubscribe = true;
+          } else {
+            effect = comp_effect;
+          }
         }
       }
+    }
+
+    if resubscribe {
+      effect = ItemEffect::Subscribe(self.all_events());
     }
 
     Ok(effect)
@@ -1573,6 +1587,8 @@ impl DesktopItem for Panel {
     );
 
     let pad = style.number("padding").unwrap_or(8.0);
+    let border_width = style.number("border.width").unwrap_or(0.0);
+    let border_color = style.color(&config.theme, "border.color", config.theme.overlay);
     let bar = mouse_area(
       container(bar_content)
         .width(Length::Fill)
@@ -1587,6 +1603,11 @@ impl DesktopItem for Panel {
             None
           } else {
             Some(background.into())
+          },
+          border: iced::Border {
+            width: border_width,
+            color: border_color,
+            ..Default::default()
           },
           ..container::Style::default()
         }),
@@ -1813,6 +1834,9 @@ slowshell_registry::register_resources!(
     slowshell_config::style! {
       "background" => "base",
       "background.opacity" => 0.45,
+      "border.width" => 0,
+      "border.color" => "overlay",
+      "border.color.opacity" => 0.15,
       "padding" => 8,
       "spacing" => 4,
       "item.spacing" => 4,
@@ -1823,6 +1847,9 @@ slowshell_registry::register_resources!(
       "background" => "mantle",
       "background.opacity" => 0.6,
       "radius" => 4,
+      "border.width" => 0,
+      "border.color" => "overlay",
+      "border.color.opacity" => 0.15,
       "padding.x" => 8,
       "padding.y" => 4,
       "margin" => 4,

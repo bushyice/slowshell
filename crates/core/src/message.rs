@@ -15,6 +15,7 @@ pub enum EventFilter {
   Payload(Ustr),
   Ipc(IpcCommand),
   Tick,
+  Frame,
   All,
   StartUp,
 }
@@ -26,6 +27,7 @@ impl PartialEq for EventFilter {
       (Self::Named(a), Self::Named(b)) => a == b,
       (Self::Payload(a), Self::Payload(b)) => a == b,
       (Self::Tick, Self::Tick) => true,
+      (Self::Frame, Self::Frame) => true,
       (Self::Ipc(cmd1), Self::Ipc(cmd2)) => cmd1.name == cmd2.name,
       (Self::All, Self::All) => true,
       _ => false,
@@ -51,6 +53,7 @@ impl std::hash::Hash for EventFilter {
         cmd.name.hash(state);
       }
       EventFilter::Tick => {}
+      EventFilter::Frame => {}
       EventFilter::All => {}
       EventFilter::StartUp => {}
     }
@@ -77,6 +80,7 @@ impl EventFilter {
         matches!(action, ListenerAction::Ipc(cmd2) if cmd2.name == cmd1.name)
       }
       EventFilter::Tick => false,
+      EventFilter::Frame => matches!(action, ListenerAction::Frame),
       EventFilter::All => true,
       EventFilter::StartUp => matches!(action, ListenerAction::StartUp),
     }
@@ -89,6 +93,7 @@ impl From<EventFilter> for ListenerAction {
       EventFilter::All => ListenerAction::UpdateCompositor,
       EventFilter::UpdateCompositor => ListenerAction::UpdateCompositor,
       EventFilter::Tick => ListenerAction::None,
+      EventFilter::Frame => ListenerAction::Frame,
       EventFilter::Named(n) => ListenerAction::Named(n),
       EventFilter::Payload(name) => ListenerAction::Payload {
         name,
@@ -107,6 +112,7 @@ impl Into<EventFilter> for &ListenerAction {
       ListenerAction::Timer { name, .. } => EventFilter::Named(name.clone()),
       ListenerAction::Signal { name, .. } => EventFilter::Named(name.clone()),
       ListenerAction::UpdateCompositor => EventFilter::UpdateCompositor,
+      ListenerAction::Frame => EventFilter::Frame,
       ListenerAction::None => EventFilter::Tick,
       ListenerAction::StartUp => EventFilter::StartUp,
       ListenerAction::FocusWorkspace(_) => EventFilter::Tick,

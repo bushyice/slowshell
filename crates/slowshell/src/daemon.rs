@@ -36,6 +36,12 @@ pub fn daemon() -> miette::Result<()> {
   slowshell_background::wallpaper::include(&mut reg);
   slowshell_background::widgets::include(&mut reg);
 
+  let plugin_selection = {
+    let config_path = Config::resolve_path(None::<&str>);
+    slowshell_plugin_host::PluginSelection::from_path(config_path.as_deref())
+  };
+  let _plugins = slowshell_plugin_host::PluginHost::load(&mut reg, &plugin_selection);
+
   let config_parsers = reg
     .inside("config")
     .into_iter()

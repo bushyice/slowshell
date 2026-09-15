@@ -81,6 +81,7 @@ pub struct Config {
   pub theme: Theme,
   pub tick_interval: u64,
   font: Font,
+  font_name: Option<&'static str>,
   parsed: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
   pub wgpu_backend: Option<String>,
   pub icon_theme: Option<String>,
@@ -102,11 +103,8 @@ impl Config {
     })
   }
 
-  pub fn from_path_or_default<P: AsRef<Path>>(
-    path: Option<P>,
-    config_parsers: Vec<ConfigParser>,
-  ) -> Self {
-    let current_path = path
+  pub fn resolve_path<P: AsRef<Path>>(path: Option<P>) -> Option<PathBuf> {
+    path
       .and_then(|p| p.as_ref().canonicalize().ok())
       .or_else(|| {
         std::env::var_os("HOME")
@@ -119,15 +117,16 @@ impl Config {
             ]
             .into_iter()
             .find(|p| p.exists())
-            .or_else(|| {
-              let p = home.join(".config/slowshell/config.kdl");
-              std::fs::create_dir_all(p.parent()?).ok()?;
-              std::fs::write(&p, DEFAULT_CONFIG).ok()?;
-              Some(p)
-            })
             .and_then(|p| p.canonicalize().ok())
           })
-      });
+      })
+  }
+
+  pub fn from_path_or_default<P: AsRef<Path>>(
+    path: Option<P>,
+    config_parsers: Vec<ConfigParser>,
+  ) -> Self {
+    let current_path = Self::resolve_path(path);
 
     let mut config = Config {
       current_path,
@@ -281,7 +280,14 @@ impl Config {
     let Some(name) = find_node(nodes, "font").and_then(|node| str_arg(node, 0)) else {
       return;
     };
-    self.font = Font::with_name(Box::leak(name.to_string().into_boxed_str()));
+
+    if self.font_name == Some(name) {
+      return;
+    }
+
+    let name: &'static str = Box::leak(name.to_string().into_boxed_str());
+    self.font_name = Some(name);
+    self.font = Font::with_name(name);
   }
 
   fn parse_misc(&mut self, nodes: &[KdlNode]) {
@@ -298,6 +304,10 @@ impl Config {
 
   pub fn style(&self, name: &str) -> Style {
     self.styles.get(name).cloned().unwrap_or_default()
+  }
+
+  pub fn has_style(&self, name: &str) -> bool {
+    self.styles.contains_key(name)
   }
 
   pub fn style_any(&self, names: &[&str]) -> Style {
@@ -555,6 +565,7 @@ impl Default for Config {
       styles: HashMap::new(),
       theme: Theme::default(),
       font: Font::with_name(DEFAULT_FONT),
+      font_name: None,
       parsed: HashMap::new(),
       tick_interval: 3,
       wgpu_backend: None,

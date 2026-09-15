@@ -77,21 +77,30 @@ impl DesktopItem for Popup {
 
         let settings = payload.as_this::<PopupSettings>();
 
-        if settings.is_some()
-          && store
-            .borrow::<Renderables>()
-            .is_some_and(|x| x.contains_key(&settings.unwrap().content))
-        {
-          self.current = settings.cloned();
+        let Some(settings) = settings else {
+          return Ok(ItemEffect::None);
+        };
+
+        let available = store
+          .borrow::<Renderables>()
+          .is_some_and(|x| x.contains_key(&settings.content));
+
+        if available {
+          self.current = Some(settings.clone());
 
           Ok(ItemEffect::Show)
         } else {
+          eprintln!(
+            "[popup] no renderable registered for content '{}'",
+            settings.content
+          );
           Ok(ItemEffect::None)
         }
       }
       ListenerAction::Payload { name, payload } if name.as_ref() == "popup.close" => {
+        let _ = payload;
         self.current = None;
-        Ok(ItemEffect::Destroy)
+        Ok(ItemEffect::Hide)
       }
       ListenerAction::Signal { name, .. }
         if name.as_ref() == "component/network.changed" && self.current.is_some() =>

@@ -62,7 +62,7 @@ pub fn search_applications(query: &str, store: &Store) -> Vec<SpotlightItem> {
         action: SpotlightAction::Copy(exec),
       });
       let item = SpotlightItem {
-        image_path: None,
+        image: None,
         image_bytes: None,
         image_icon: app.icon.clone(),
         title: app.name.clone(),

@@ -89,6 +89,8 @@ impl Component for Workspaces {
         .color(&config.theme, "color.invert", config.theme.text);
 
     let radius = style.number("radius").unwrap_or(999.0);
+    let border_width = style.number("border.width").unwrap_or(0.0);
+    let border_color = style.color(&config.theme, "border.color", config.theme.overlay);
 
     let workspaces: Vec<Element<'a, ItemMessage>> = state
       .workspaces
@@ -144,7 +146,8 @@ impl Component for Workspaces {
           },
           border: iced::Border {
             radius: radius.into(),
-            ..Default::default()
+            width: border_width,
+            color: border_color,
           },
           ..Default::default()
         });

@@ -43,15 +43,17 @@ impl IpcListener {
 
                     match &*command.name {
                       "exec" => {
-                        if command.args.is_empty() {
+                        let payload = preg.build(&command.command, &command.args);
+
+                        if payload.is_some() || !command.args.is_empty() {
+                          let _ = tx.unbounded_send(Message::FdUpdate(ListenerAction::Payload {
+                            payload,
+                            name: command.command,
+                          }));
+                        } else {
                           let _ = tx.unbounded_send(Message::FdUpdate(ListenerAction::Named(
                             command.command,
                           )));
-                        } else {
-                          let _ = tx.unbounded_send(Message::FdUpdate(ListenerAction::Payload {
-                            payload: preg.build(&command.command, &command.args),
-                            name: command.command,
-                          }));
                         }
                       }
                       _ => {

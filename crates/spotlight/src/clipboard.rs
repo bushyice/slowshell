@@ -67,7 +67,7 @@ pub fn search_clipboard(query: &str, _store: &Store) -> Vec<SpotlightItem> {
       };
 
       SpotlightItem {
-        image_path: None,
+        image: None,
         image_bytes: None,
         image_icon: Some(
           if row.is_image {

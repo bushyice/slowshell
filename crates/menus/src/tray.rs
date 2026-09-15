@@ -81,7 +81,6 @@ fn menu_row<'a>(
   let enabled = has_submenu || item.enabled;
 
   let font_size = style.number("font.size").unwrap_or(13.0);
-  let row_radius = style.number("row.radius").unwrap_or(6.0);
   let row_padding = TrayRenderable::row_padding(style);
   let row_spacing = style.number("row.spacing").unwrap_or(8.0);
   let checkbox_size = style.number("checkbox.size").unwrap_or(14.0) as u16;
@@ -138,6 +137,10 @@ fn menu_row<'a>(
     );
   }
 
+  let row_radius = style.number("row.radius").unwrap_or(6.0);
+  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
+  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
+
   let row_elem: Element<'a, ItemMessage> =
     container(row.spacing(row_spacing).align_y(iced::Alignment::Center))
       .padding(row_padding)
@@ -146,7 +149,8 @@ fn menu_row<'a>(
         background: Some(bg.into()),
         border: iced::Border {
           radius: row_radius.into(),
-          ..Default::default()
+          width: row_border_width,
+          color: row_border_color,
         },
         ..container::Style::default()
       })
@@ -219,6 +223,8 @@ fn back_row<'a>(
   let row_spacing = style.number("row.spacing").unwrap_or(8.0);
   let bg = style.color(theme, "row.background", Color::TRANSPARENT);
   let color = style.color(theme, "color", theme.text);
+  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
+  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
 
   let content: Element<'a, ItemMessage> = container(
     row![
@@ -237,7 +243,8 @@ fn back_row<'a>(
     background: Some(bg.into()),
     border: iced::Border {
       radius: row_radius.into(),
-      ..Default::default()
+      width: row_border_width,
+      color: row_border_color,
     },
     ..container::Style::default()
   })

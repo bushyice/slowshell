@@ -44,6 +44,7 @@ pub enum ListenerAction {
   },
   Ipc(IpcCommand),
   StartUp,
+  Frame,
   FocusWorkspace(u8),
   None,
 }

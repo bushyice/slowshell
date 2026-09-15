@@ -34,12 +34,77 @@ const ROW_HEIGHT: f32 = 52.0;
 const LIST_HEIGHT: f32 = 440.0;
 const WINDOW_LEN: usize = (LIST_HEIGHT / ROW_HEIGHT) as usize;
 
+const GRID_COLUMNS: usize = 4;
+const GRID_TILE_HEIGHT: f32 = 96.0;
+const GRID_PAGE: usize = GRID_COLUMNS * 4;
+
+const IMAGE_COLUMNS: usize = 2;
+const IMAGE_TILE_HEIGHT: f32 = 204.0;
+const IMAGE_PAGE: usize = IMAGE_COLUMNS * 2;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DisplayStyle {
+  List,
+  Grid,
+  ImageList,
+}
+
+impl DisplayStyle {
+  pub fn parse(value: &str) -> Option<Self> {
+    match value {
+      "list" => Some(Self::List),
+      "grid" => Some(Self::Grid),
+      "image-list" | "image_list" | "imagelist" => Some(Self::ImageList),
+      _ => None,
+    }
+  }
+
+  pub fn name(self) -> &'static str {
+    match self {
+      Self::List => "list",
+      Self::Grid => "grid",
+      Self::ImageList => "image-list",
+    }
+  }
+
+  fn page(self) -> usize {
+    match self {
+      Self::List => WINDOW_LEN,
+      Self::Grid => GRID_PAGE,
+      Self::ImageList => IMAGE_PAGE,
+    }
+  }
+
+  fn columns(self) -> usize {
+    match self {
+      Self::List => 1,
+      Self::Grid => GRID_COLUMNS,
+      Self::ImageList => IMAGE_COLUMNS,
+    }
+  }
+
+  fn tile_height(self) -> f32 {
+    match self {
+      Self::List => ROW_HEIGHT,
+      Self::Grid => GRID_TILE_HEIGHT,
+      Self::ImageList => IMAGE_TILE_HEIGHT,
+    }
+  }
+}
+
 #[derive(Clone)]
 pub enum SpotlightAction {
   Exec(String),
   Copy(String),
   Clip(String),
+  Expand(PathBuf),
   Custom(Arc<dyn Fn() + Send + Sync>),
+}
+
+#[derive(Clone)]
+pub struct SpotlightRequest {
+  pub mode: Ustr,
+  pub style: Option<DisplayStyle>,
 }
 
 #[derive(Clone)]
@@ -49,7 +114,7 @@ pub struct SpotlightActionDef {
 }
 
 pub struct SpotlightItem {
-  pub image_path: Option<PathBuf>,
+  pub image: Option<PathBuf>,
   pub image_bytes: Option<Vec<u8>>,
   pub image_icon: Option<String>,
   pub title: String,
@@ -68,9 +133,39 @@ impl SpotlightActionDef {
   }
 }
 
-pub enum SpotlightMode {
+pub enum SpotlightKind {
   Generate(Box<dyn Fn(&str, &Store) -> Vec<SpotlightItem> + Send + Sync>),
   SingleResult(Box<dyn Fn(&str, &Store) -> Option<SpotlightItem> + Send + Sync>),
+}
+
+pub struct SpotlightMode {
+  pub kind: SpotlightKind,
+  pub display: &'static [DisplayStyle],
+}
+
+impl SpotlightMode {
+  pub fn generate(
+    generate: impl Fn(&str, &Store) -> Vec<SpotlightItem> + Send + Sync + 'static,
+  ) -> Self {
+    Self {
+      kind: SpotlightKind::Generate(Box::new(generate)),
+      display: &[DisplayStyle::List],
+    }
+  }
+
+  pub fn single(
+    evaluate: impl Fn(&str, &Store) -> Option<SpotlightItem> + Send + Sync + 'static,
+  ) -> Self {
+    Self {
+      kind: SpotlightKind::SingleResult(Box::new(evaluate)),
+      display: &[DisplayStyle::List],
+    }
+  }
+
+  pub fn display(mut self, display: &'static [DisplayStyle]) -> Self {
+    self.display = display;
+    self
+  }
 }
 
 pub struct Trigger {
@@ -106,8 +201,9 @@ impl Default for SpotlightModes {
 
     modes.register_mode(
       "applications",
-      SpotlightMode::Generate(Box::new(apps::search_applications)),
-      false,
+      SpotlightMode::generate(apps::search_applications)
+        .display(&[DisplayStyle::List, DisplayStyle::Grid]),
+      true,
     );
     modes.register_version(
       "applications",
@@ -116,7 +212,7 @@ impl Default for SpotlightModes {
 
     modes.register_mode(
       "clipboard",
-      SpotlightMode::Generate(Box::new(clipboard::search_clipboard)),
+      SpotlightMode::generate(clipboard::search_clipboard),
       false,
     );
     modes.register_version("clipboard", clipboard::version);
@@ -124,11 +220,11 @@ impl Default for SpotlightModes {
     let calc_mode: Ustr = "calculator".into();
     modes.register_mode(
       calc_mode.clone(),
-      SpotlightMode::SingleResult(Box::new(|q, _| {
+      SpotlightMode::single(|q, _| {
         if let Ok(val) = calc::eval(q) {
           let formatted = calc::format_result(val);
           Some(SpotlightItem {
-            image_path: None,
+            image: None,
             image_bytes: None,
             image_icon: Some("accessories-calculator-symbolic".into()),
             title: format!("= {formatted}"),
@@ -143,8 +239,8 @@ impl Default for SpotlightModes {
         } else {
           None
         }
-      })),
-      true,
+      }),
+      false,
     );
 
     modes.triggers.push(Trigger {
@@ -178,7 +274,12 @@ impl SpotlightModes {
     for name in self
       .modes
       .keys()
-      .filter(|name| matches!(self.modes.get(*name), Some(SpotlightMode::Generate(_))))
+      .filter(|name| {
+        matches!(
+          self.modes.get(*name).map(|mode| &mode.kind),
+          Some(SpotlightKind::Generate(_))
+        )
+      })
       .cloned()
       .collect::<Vec<Ustr>>()
     {
@@ -210,9 +311,9 @@ impl SpotlightModes {
   }
 
   fn generate_inner(&self, name: &Ustr, query: &str, store: &Store) -> Vec<SpotlightItem> {
-    match self.modes.get(name) {
-      Some(SpotlightMode::Generate(generator)) => generator(query, store),
-      Some(SpotlightMode::SingleResult(evaluator)) => evaluator(query, store).into_iter().collect(),
+    match self.modes.get(name).map(|mode| &mode.kind) {
+      Some(SpotlightKind::Generate(generator)) => generator(query, store),
+      Some(SpotlightKind::SingleResult(evaluator)) => evaluator(query, store).into_iter().collect(),
       None => Vec::new(),
     }
   }
@@ -250,6 +351,9 @@ struct SpotlightInner {
   search: String,
   selected_index: usize,
   action_index: usize,
+  display_index: usize,
+  requested_style: Option<DisplayStyle>,
+  expanded: Option<PathBuf>,
   should_close: bool,
   current_mode: Ustr,
   base_mode: Ustr,
@@ -263,15 +367,14 @@ pub struct Spotlight {
   shown: bool,
 }
 
-fn scroll_target(selected: usize, start: usize, end: usize) -> Option<(usize, f32)> {
-  let ns = if selected < start {
-    selected
+fn scroll_target(selected: usize, start: usize, end: usize, page: usize) -> Option<usize> {
+  if selected < start {
+    Some(selected)
   } else if selected >= end {
-    selected + 1 - WINDOW_LEN
+    Some(selected + 1 - page.min(selected + 1))
   } else {
-    return None;
-  };
-  Some((ns, ns as f32 * ROW_HEIGHT))
+    None
+  }
 }
 
 impl Spotlight {
@@ -281,6 +384,9 @@ impl Spotlight {
         search: String::new(),
         selected_index: 0,
         action_index: 0,
+        display_index: 0,
+        requested_style: None,
+        expanded: None,
         should_close: false,
         current_mode: "applications".into(),
         base_mode: "applications".into(),
@@ -303,33 +409,39 @@ impl Spotlight {
       SpotlightAction::Clip(line) => {
         clipboard::copy(&line);
       }
+      SpotlightAction::Expand(_) => {}
       SpotlightAction::Custom(f) => {
         f();
       }
     }
   }
 
-  fn toggle(&mut self, payload: Option<&Ustr>) -> miette::Result<ItemEffect> {
+  fn toggle(&mut self, request: Option<&SpotlightRequest>) -> miette::Result<ItemEffect> {
     if self.shown {
       self.close();
       self.shown = false;
       Ok(ItemEffect::Hide)
     } else {
-      self.open(payload);
+      self.open(request);
       self.shown = true;
       Ok(ItemEffect::Show)
     }
   }
 
-  fn open(&self, payload: Option<&Ustr>) {
+  fn open(&self, request: Option<&SpotlightRequest>) {
     let mut inner = self.inner.lock().unwrap();
     inner.search.clear();
     inner.selected_index = 0;
     inner.action_index = 0;
+    inner.display_index = 0;
+    inner.requested_style = request.and_then(|request| request.style);
+    inner.expanded = None;
     inner.visible_start_idx = 0;
     inner.visible_end_idx = WINDOW_LEN;
     inner.should_close = false;
-    let mode = payload.cloned().unwrap_or_else(|| "applications".into());
+    let mode = request
+      .map(|request| request.mode.clone())
+      .unwrap_or_else(|| "applications".into());
     inner.current_mode = mode.clone();
     inner.base_mode = mode;
     inner.pending_action = None;
@@ -342,6 +454,9 @@ impl Spotlight {
     inner.search.clear();
     inner.selected_index = 0;
     inner.action_index = 0;
+    inner.display_index = 0;
+    inner.requested_style = None;
+    inner.expanded = None;
   }
 }
 
@@ -424,7 +539,7 @@ impl DesktopItem for Spotlight {
         Ok(ItemEffect::Redraw)
       }
       ListenerAction::Payload { name, payload } if name.as_ref() == "spotlight.toggle" => {
-        self.toggle(payload.transform::<Ustr>())
+        self.toggle(payload.transform::<SpotlightRequest>())
       }
       ListenerAction::Named(name) if name.as_ref() == "spotlight.toggle" => self.toggle(None),
       ListenerAction::Named(name) if name.as_ref() == "spotlight.close" => {
@@ -433,7 +548,7 @@ impl DesktopItem for Spotlight {
         Ok(ItemEffect::Hide)
       }
       ListenerAction::Payload { name, payload } if name.as_ref() == "spotlight.open" => {
-        self.open(payload.transform::<Ustr>());
+        self.open(payload.transform::<SpotlightRequest>());
         self.shown = true;
         Ok(ItemEffect::Show)
       }
@@ -486,19 +601,59 @@ impl DesktopItem for Spotlight {
     let style = config.style("spotlight");
     let theme = &config.theme;
 
-    let inner = self.inner.lock().unwrap();
-    let current_mode = inner.current_mode.clone();
-    let search = inner.search.clone();
-    let selected = inner.selected_index;
-    let action_index = inner.action_index;
-    let win_start = inner.visible_start_idx;
-    drop(inner);
+    let (
+      current_mode,
+      search,
+      selected,
+      action_index,
+      win_start,
+      mut display_index,
+      requested_style,
+      expanded,
+    ) = {
+      let mut inner = self.inner.lock().unwrap();
+      (
+        inner.current_mode.clone(),
+        inner.search.clone(),
+        inner.selected_index,
+        inner.action_index,
+        inner.visible_start_idx,
+        inner.display_index,
+        inner.requested_style.take(),
+        inner.expanded.clone(),
+      )
+    };
 
-    let mode_result = match modes.modes.get(&current_mode) {
-      Some(SpotlightMode::Generate(_)) => {
+    let allowed: &'static [DisplayStyle] = modes
+      .modes
+      .get(&current_mode)
+      .map(|mode| mode.display)
+      .unwrap_or(&[DisplayStyle::List]);
+
+    if let Some(style) = requested_style {
+      display_index = allowed.iter().position(|item| *item == style).unwrap_or(0);
+    }
+    if display_index >= allowed.len() {
+      display_index = 0;
+    }
+    if let Ok(mut inner) = self.inner.lock() {
+      inner.display_index = display_index;
+    }
+    let display = allowed
+      .get(display_index)
+      .copied()
+      .unwrap_or(DisplayStyle::List);
+    let page = display.page();
+
+    if let Some(path) = expanded {
+      return expanded_view(self.inner.clone(), id, path, &style, theme);
+    }
+
+    let mode_result = match modes.modes.get(&current_mode).map(|mode| &mode.kind) {
+      Some(SpotlightKind::Generate(_)) => {
         ModeResult::List(modes.generate(&current_mode, &search, store))
       }
-      Some(SpotlightMode::SingleResult(evaluator)) => ModeResult::Single(evaluator(&search, store)),
+      Some(SpotlightKind::SingleResult(evaluator)) => ModeResult::Single(evaluator(&search, store)),
       None => ModeResult::List(Arc::new(Vec::new())),
     };
 
@@ -606,126 +761,273 @@ impl DesktopItem for Spotlight {
           .into();
       }
       ModeResult::List(items) => {
-        let mut results_col = column![].spacing(spacing);
-
         let max_idx = items.len();
-        actions = items.iter().map(|item| item.actions.clone()).collect();
+        actions = items
+          .iter()
+          .map(|item| action_defs(item, display))
+          .collect();
+
         let mut render_start = win_start.min(max_idx);
         let render_end;
-        if max_idx <= WINDOW_LEN {
+        if max_idx <= page {
           render_start = 0;
           render_end = max_idx;
         } else {
-          if render_start >= max_idx || render_start + WINDOW_LEN > max_idx {
-            render_start = max_idx.saturating_sub(WINDOW_LEN);
+          if render_start >= max_idx || render_start + page > max_idx {
+            render_start = max_idx.saturating_sub(page);
           }
-          render_end = (render_start + WINDOW_LEN).min(max_idx);
+          render_end = (render_start + page).min(max_idx);
         }
         if let Ok(mut inner) = self.inner.lock() {
           inner.visible_start_idx = render_start;
           inner.visible_end_idx = render_end;
         }
 
-        for (j, item) in items[render_start..render_end].iter().enumerate() {
-          let i = render_start + j;
+        let row_border_width = style.number("row.border.width").unwrap_or(0.0);
+        let row_border_color = style.color(theme, "row.border.color", theme.overlay);
+        let mut results_col = column![].spacing(spacing);
 
-          let is_selected = i == selected;
-          let bg = if is_selected { selected_bg } else { result_bg };
+        match display {
+          DisplayStyle::List => {
+            for (j, item) in items[render_start..render_end].iter().enumerate() {
+              let i = render_start + j;
 
-          let icon_elem = if let Some(ref icon_name) = item.image_icon {
-            Icon::new(icon_name.clone()).size(24).into_element()
-          } else if let Some(ref raw_bytes) = item.image_bytes {
-            iced::widget::image(Icon::<ItemMessage>::from_bytes(i as i32, raw_bytes))
-              .width(Length::Fixed(24.0))
-              .height(Length::Fixed(24.0))
-              .into()
-          } else {
-            Icon::new("application-x-executable-symbolic")
-              .size(24)
-              .into_element()
-          };
+              let is_selected = i == selected;
+              let bg = if is_selected { selected_bg } else { result_bg };
 
-          let title_elem = text(item.title.clone())
-            .size(result_font)
-            .color(result_color);
+              let icon_elem = item_icon(item, i, 24);
 
-          let text_col = if let Some(subtitle) = &item.subtitle {
-            column![
-              title_elem,
-              text(subtitle.clone()).size(11.0).color(subtext_color)
-            ]
-            .spacing(2)
-          } else {
-            column![title_elem]
-          };
+              let title_elem = text(item.title.clone())
+                .size(result_font)
+                .color(result_color);
 
-          let mut row_content = row![icon_elem, text_col]
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .width(Length::Fill);
-
-          if let Some(tags) = &item.tags {
-            if let Some(tag) = tags.iter().next() {
-              row_content = row_content.push(
-                container(text(tag.clone()).size(10.0).color(tag_color))
-                  .padding([2.0, 6.0])
-                  .style(move |_t| container::Style {
-                    background: Some(mantle_bg.into()),
-                    border: iced::Border {
-                      radius: 4.0.into(),
-                      ..Default::default()
-                    },
-                    ..container::Style::default()
-                  }),
-              );
-            }
-          }
-
-          if is_selected {
-            let defs = &actions[i];
-            let action_label = defs
-              .get(action_index)
-              .map(|def| def.label(action_index))
-              .unwrap_or_default();
-            if !action_label.is_empty() {
-              let label = if defs.len() > 1 {
-                format!("{action_label}  [Tab]")
+              let text_col = if let Some(subtitle) = &item.subtitle {
+                column![
+                  title_elem,
+                  text(subtitle.clone()).size(11.0).color(subtext_color)
+                ]
+                .spacing(2)
               } else {
-                action_label
+                column![title_elem]
               };
-              row_content = row_content.push(
-                container(text(label).size(10.0).color(accent_color))
-                  .padding([2.0, 6.0])
+
+              let mut row_content = row![icon_elem, text_col]
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .width(Length::Fill);
+
+              if let Some(tags) = &item.tags {
+                if let Some(tag) = tags.iter().next() {
+                  let tag_border_width = style.number("tag.border.width").unwrap_or(0.0);
+                  let tag_border_color = style.color(theme, "tag.border.color", theme.overlay);
+                  row_content = row_content.push(
+                    container(text(tag.clone()).size(10.0).color(tag_color))
+                      .padding([2.0, 6.0])
+                      .style(move |_t| container::Style {
+                        background: Some(mantle_bg.into()),
+                        border: iced::Border {
+                          radius: 4.0.into(),
+                          width: tag_border_width,
+                          color: tag_border_color,
+                        },
+                        ..container::Style::default()
+                      }),
+                  );
+                }
+              }
+
+              if is_selected {
+                let defs = &actions[i];
+                let action_label = defs
+                  .get(action_index)
+                  .map(|def| def.label(action_index))
+                  .unwrap_or_default();
+                if !action_label.is_empty() {
+                  let label = if defs.len() > 1 {
+                    format!("{action_label}  [Tab]")
+                  } else {
+                    action_label
+                  };
+                  let action_border_width = style.number("action.border.width").unwrap_or(0.0);
+                  let action_border_color =
+                    style.color(theme, "action.border.color", theme.overlay);
+                  row_content = row_content.push(
+                    container(text(label).size(10.0).color(accent_color))
+                      .padding([2.0, 6.0])
+                      .style(move |_t| container::Style {
+                        background: Some(mantle_bg.into()),
+                        border: iced::Border {
+                          radius: 4.0.into(),
+                          width: action_border_width,
+                          color: action_border_color,
+                        },
+                        ..container::Style::default()
+                      }),
+                  );
+                }
+              }
+
+              let row_container = clickable(
+                container(row_content)
+                  .width(Length::Fill)
+                  .height(Length::Fixed(ROW_HEIGHT))
+                  .padding(row_padding)
                   .style(move |_t| container::Style {
-                    background: Some(mantle_bg.into()),
+                    background: Some(bg.into()),
                     border: iced::Border {
-                      radius: 4.0.into(),
-                      ..Default::default()
+                      radius: radius.into(),
+                      width: row_border_width,
+                      color: row_border_color,
                     },
                     ..container::Style::default()
-                  }),
+                  })
+                  .into(),
+                move |_, _, _| Some(ItemMessage::Effect(id, ItemEffect::Custom([2, i, 0, 0]))),
               );
+
+              results_col = results_col.push(row_container);
             }
           }
+          DisplayStyle::Grid => {
+            let mut rows: Vec<Element<'static, ItemMessage>> = Vec::new();
+            let mut current: Vec<Element<'static, ItemMessage>> = Vec::new();
 
-          let row_container = clickable(
-            container(row_content)
-              .width(Length::Fill)
-              .height(Length::Fixed(ROW_HEIGHT))
-              .padding(row_padding)
-              .style(move |_t| container::Style {
-                background: Some(bg.into()),
-                border: iced::Border {
-                  radius: radius.into(),
-                  ..Default::default()
-                },
-                ..container::Style::default()
-              })
-              .into(),
-            move |_, _, _| Some(ItemMessage::Effect(id, ItemEffect::Custom([2, i, 0, 0]))),
-          );
+            for (j, item) in items[render_start..render_end].iter().enumerate() {
+              let i = render_start + j;
 
-          results_col = results_col.push(row_container);
+              let is_selected = i == selected;
+              let bg = if is_selected { selected_bg } else { result_bg };
+
+              let icon: Element<'static, ItemMessage> = container(item_icon(item, i, 36))
+                .center_x(Length::Fill)
+                .into();
+              let title: Element<'static, ItemMessage> =
+                container(text(item.title.clone()).size(12.0).color(result_color))
+                  .center_x(Length::Fill)
+                  .into();
+
+              let mut tile_column = column![icon, title].spacing(8).align_x(Alignment::Center);
+
+              if is_selected {
+                let defs = &actions[i];
+                let action_label = defs
+                  .get(action_index)
+                  .map(|def| def.label(action_index))
+                  .unwrap_or_default();
+                if !action_label.is_empty() {
+                  tile_column = tile_column.push(
+                    container(
+                      text(format!("[{action_label}]"))
+                        .size(10.0)
+                        .color(accent_color),
+                    )
+                    .center_x(Length::Fill),
+                  );
+                }
+              }
+
+              let tile = container(tile_column)
+                .width(Length::FillPortion(1))
+                .height(Length::Fixed(GRID_TILE_HEIGHT))
+                .padding(row_padding)
+                .style(move |_t| container::Style {
+                  background: Some(bg.into()),
+                  border: iced::Border {
+                    radius: radius.into(),
+                    width: row_border_width,
+                    color: row_border_color,
+                  },
+                  ..container::Style::default()
+                });
+
+              current.push(clickable(tile.into(), move |_, _, _| {
+                Some(ItemMessage::Effect(id, ItemEffect::Custom([2, i, 0, 0])))
+              }));
+
+              if current.len() == GRID_COLUMNS {
+                rows.push(row(std::mem::take(&mut current)).spacing(spacing).into());
+              }
+            }
+
+            if !current.is_empty() {
+              while current.len() < GRID_COLUMNS {
+                current.push(space().width(Length::FillPortion(1)).into());
+              }
+              rows.push(row(current).spacing(spacing).into());
+            }
+
+            results_col = column(rows).spacing(spacing);
+          }
+          DisplayStyle::ImageList => {
+            let mut rows: Vec<Element<'static, ItemMessage>> = Vec::new();
+            let mut current: Vec<Element<'static, ItemMessage>> = Vec::new();
+
+            for (j, item) in items[render_start..render_end].iter().enumerate() {
+              let i = render_start + j;
+
+              let is_selected = i == selected;
+              let bg = if is_selected { selected_bg } else { result_bg };
+
+              let preview = match item_image(item, i) {
+                Some(image) => image,
+                None => container(item_icon(item, i, 36))
+                  .center_x(Length::Fill)
+                  .center_y(Length::Fixed(140.0))
+                  .into(),
+              };
+
+              let mut tile_content = column![preview].spacing(6);
+              tile_content = tile_content.push(
+                container(text(item.title.clone()).size(12.0).color(result_color))
+                  .center_x(Length::Fill),
+              );
+
+              if is_selected {
+                let defs = &actions[i];
+                let action_label = defs
+                  .get(action_index)
+                  .map(|def| def.label(action_index))
+                  .unwrap_or_default();
+                if !action_label.is_empty() {
+                  tile_content = tile_content.push(
+                    container(text(action_label).size(10.0).color(accent_color))
+                      .center_x(Length::Fill),
+                  );
+                }
+              }
+
+              let tile = container(tile_content)
+                .width(Length::FillPortion(1))
+                .height(Length::Fixed(IMAGE_TILE_HEIGHT))
+                .padding(row_padding)
+                .style(move |_t| container::Style {
+                  background: Some(bg.into()),
+                  border: iced::Border {
+                    radius: radius.into(),
+                    width: row_border_width,
+                    color: row_border_color,
+                  },
+                  ..container::Style::default()
+                });
+
+              current.push(clickable(tile.into(), move |_, _, _| {
+                Some(ItemMessage::Effect(id, ItemEffect::Custom([2, i, 0, 0])))
+              }));
+
+              if current.len() == IMAGE_COLUMNS {
+                rows.push(row(std::mem::take(&mut current)).spacing(spacing).into());
+              }
+            }
+
+            if !current.is_empty() {
+              while current.len() < IMAGE_COLUMNS {
+                current.push(space().width(Length::FillPortion(1)).into());
+              }
+              rows.push(row(current).spacing(spacing).into());
+            }
+
+            results_col = column(rows).spacing(spacing);
+          }
         }
 
         body = container(results_col)
@@ -758,26 +1060,39 @@ impl DesktopItem for Spotlight {
 
     {
       let mut s = inner_ref.lock().unwrap();
-      let mut triggered = None;
-      for trigger in &modes.triggers {
-        if (trigger.check)(&s.search) {
-          if modes.allow_triggers.contains(&trigger.target_mode) {
+      if modes.allow_triggers.contains(&s.current_mode) {
+        let mut triggered = None;
+
+        for trigger in &modes.triggers {
+          if (trigger.check)(&s.search) {
             triggered = Some(trigger.target_mode.clone());
             break;
           }
         }
-      }
-      if let Some(m) = triggered {
-        s.current_mode = m;
-      } else {
-        s.current_mode = s.base_mode.clone();
+
+        if let Some(triggered) = triggered {
+          if s.current_mode != triggered {
+            s.current_mode = triggered;
+            s.display_index = 0;
+            s.expanded = None;
+          }
+        } else if s.current_mode != s.base_mode {
+          s.current_mode = s.base_mode.clone();
+          s.display_index = 0;
+          s.expanded = None;
+        }
       }
     }
 
     EventWrapper::new(
       main_container.into(),
       move |event, layout, cursor| match event {
-        Event::Keyboard(keyboard::Event::KeyPressed { key, text, .. }) => {
+        Event::Keyboard(keyboard::Event::KeyPressed {
+          key,
+          text,
+          modifiers,
+          ..
+        }) => {
           match key.as_ref() {
             keyboard::Key::Named(keyboard::key::Named::Escape) => {
               let mut s = inner_ref.lock().unwrap();
@@ -788,6 +1103,9 @@ impl DesktopItem for Spotlight {
               s.search.clear();
               s.selected_index = 0;
               s.action_index = 0;
+              s.display_index = 0;
+              s.requested_style = None;
+              s.expanded = None;
               s.visible_start_idx = 0;
               s.visible_end_idx = WINDOW_LEN;
               return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
@@ -797,13 +1115,28 @@ impl DesktopItem for Spotlight {
               if s.selected_index < actions.len() {
                 let defs = &actions[s.selected_index];
                 if let Some(def) = defs.get(s.action_index) {
-                  s.pending_action = Some(def.action.clone());
+                  match &def.action {
+                    SpotlightAction::Expand(path) => {
+                      s.expanded = Some(path.clone());
+                      return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
+                    }
+                    action => {
+                      s.pending_action = Some(action.clone());
+                    }
+                  }
                 }
               }
               s.should_close = true;
               return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
             }
             keyboard::Key::Named(keyboard::key::Named::Tab) => {
+              if modifiers.control() && allowed.len() > 1 {
+                let mut s = inner_ref.lock().unwrap();
+                s.display_index = (s.display_index + 1) % allowed.len();
+                s.action_index = 0;
+                s.expanded = None;
+                return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
+              }
               let mut s = inner_ref.lock().unwrap();
               if s.selected_index < actions.len() {
                 let defs = &actions[s.selected_index];
@@ -820,11 +1153,14 @@ impl DesktopItem for Spotlight {
               }
               s.selected_index -= 1;
               s.action_index = 0;
-              if let Some((ns, _)) =
-                scroll_target(s.selected_index, s.visible_start_idx, s.visible_end_idx)
-              {
+              if let Some(ns) = scroll_target(
+                s.selected_index,
+                s.visible_start_idx,
+                s.visible_end_idx,
+                page,
+              ) {
                 s.visible_start_idx = ns;
-                s.visible_end_idx = (ns + WINDOW_LEN).min(result_count);
+                s.visible_end_idx = (ns + page).min(result_count);
               }
               return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
             }
@@ -835,11 +1171,14 @@ impl DesktopItem for Spotlight {
               }
               s.selected_index += 1;
               s.action_index = 0;
-              if let Some((ns, _)) =
-                scroll_target(s.selected_index, s.visible_start_idx, s.visible_end_idx)
-              {
+              if let Some(ns) = scroll_target(
+                s.selected_index,
+                s.visible_start_idx,
+                s.visible_end_idx,
+                page,
+              ) {
                 s.visible_start_idx = ns;
-                s.visible_end_idx = (ns + WINDOW_LEN).min(result_count);
+                s.visible_end_idx = (ns + page).min(result_count);
               }
               return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
             }
@@ -879,6 +1218,9 @@ impl DesktopItem for Spotlight {
                 s.search.clear();
                 s.selected_index = 0;
                 s.action_index = 0;
+                s.display_index = 0;
+                s.requested_style = None;
+                s.expanded = None;
                 s.visible_start_idx = 0;
                 s.visible_end_idx = WINDOW_LEN;
                 return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
@@ -887,26 +1229,33 @@ impl DesktopItem for Spotlight {
               let mut col_children = col_layout.children();
               let _ = col_children.next();
               if let Some(body_layout) = col_children.next() {
-                let (start, end) = {
+                let start = {
                   let s = inner_ref.lock().unwrap();
-                  (s.visible_start_idx, s.visible_end_idx)
+                  s.visible_start_idx
                 };
                 if let Some(pos) = cursor.position() {
                   let bounds = body_layout.bounds();
                   if cursor.is_over(bounds) {
-                    let row_top = bounds.y;
-                    let row_bottom = bounds.y + (end - start) as f32 * ROW_HEIGHT;
-                    if pos.y >= row_top && pos.y < row_bottom {
-                      let j = ((pos.y - row_top) / ROW_HEIGHT) as usize;
-                      let idx = start + j;
-                      if idx < actions.len() {
-                        let mut s = inner_ref.lock().unwrap();
-                        if let Some(def) = actions[idx].get(s.action_index) {
-                          s.pending_action = Some(def.action.clone());
+                    let columns = display.columns();
+                    let tile_width =
+                      ((bounds.width - spacing * (columns as f32 - 1.0)) / columns as f32).max(1.0);
+                    let step_x = tile_width + spacing;
+                    let step_y = display.tile_height() + spacing;
+                    let column = ((pos.x - bounds.x) / step_x).floor().max(0.0) as usize;
+                    let row = ((pos.y - bounds.y) / step_y).floor().max(0.0) as usize;
+                    let idx = start + row * columns + column;
+                    if column < columns && idx < actions.len() {
+                      let mut s = inner_ref.lock().unwrap();
+                      if let Some(def) = actions[idx].get(s.action_index) {
+                        match &def.action {
+                          SpotlightAction::Expand(path) => s.expanded = Some(path.clone()),
+                          action => {
+                            s.pending_action = Some(action.clone());
+                            s.should_close = true;
+                          }
                         }
-                        s.should_close = true;
-                        return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
                       }
+                      return Some(ItemMessage::Effect(id, ItemEffect::Redraw));
                     }
                   }
                 }
@@ -922,6 +1271,99 @@ impl DesktopItem for Spotlight {
   }
 }
 
+fn action_defs(item: &SpotlightItem, display: DisplayStyle) -> Vec<SpotlightActionDef> {
+  if display == DisplayStyle::ImageList {
+    if let Some(path) = &item.image {
+      let mut defs = Vec::with_capacity(item.actions.len() + 1);
+      defs.push(SpotlightActionDef {
+        title: Some("Expand".into()),
+        action: SpotlightAction::Expand(path.clone()),
+      });
+      defs.extend(item.actions.iter().cloned());
+      return defs;
+    }
+  }
+
+  item.actions.clone()
+}
+
+fn item_icon(item: &SpotlightItem, index: usize, size: u16) -> Element<'static, ItemMessage> {
+  if let Some(path) = &item.image {
+    iced::widget::image(iced::widget::image::Handle::from_path(path))
+      .width(Length::Fixed(size as f32))
+      .height(Length::Fixed(size as f32))
+      .into()
+  } else if let Some(raw_bytes) = &item.image_bytes {
+    iced::widget::image(Icon::<ItemMessage>::from_bytes(index as i32, raw_bytes))
+      .width(Length::Fixed(size as f32))
+      .height(Length::Fixed(size as f32))
+      .into()
+  } else if let Some(icon_name) = &item.image_icon {
+    Icon::new(icon_name.clone()).size(size).into_element()
+  } else {
+    Icon::new("application-x-executable-symbolic")
+      .size(size)
+      .into_element()
+  }
+}
+
+fn item_image(item: &SpotlightItem, index: usize) -> Option<Element<'static, ItemMessage>> {
+  let height = Length::Fixed(140.0);
+
+  if let Some(path) = &item.image {
+    Some(
+      iced::widget::image(iced::widget::image::Handle::from_path(path))
+        .width(Length::Fill)
+        .height(height)
+        .content_fit(iced::ContentFit::Cover)
+        .into(),
+    )
+  } else if let Some(raw_bytes) = &item.image_bytes {
+    Some(
+      iced::widget::image(Icon::<ItemMessage>::from_bytes(index as i32, raw_bytes))
+        .width(Length::Fill)
+        .height(height)
+        .content_fit(iced::ContentFit::Cover)
+        .into(),
+    )
+  } else {
+    None
+  }
+}
+
+fn expanded_view(
+  inner_ref: Arc<Mutex<SpotlightInner>>,
+  id: IcedId,
+  path: PathBuf,
+  style: &slowshell_config::style::Style,
+  theme: &slowshell_config::style::Theme,
+) -> Element<'static, ItemMessage> {
+  let backdrop_bg = style.color(theme, "backdrop", theme.base);
+  let image = iced::widget::image(iced::widget::image::Handle::from_path(&path))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .content_fit(iced::ContentFit::Contain);
+
+  let view = container(image)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(move |_t| container::Style {
+      background: Some(backdrop_bg.into()),
+      ..container::Style::default()
+    });
+
+  EventWrapper::new(view.into(), move |event, _, _| match event {
+    Event::Keyboard(keyboard::Event::KeyPressed { .. })
+    | Event::Mouse(iced::mouse::Event::ButtonPressed(_)) => {
+      let mut s = inner_ref.lock().unwrap();
+      s.expanded = None;
+      Some(ItemMessage::Effect(id, ItemEffect::Redraw))
+    }
+    _ => None,
+  })
+  .into()
+}
+
 #[derive(Default)]
 pub struct SpotlightConfig {
   pub cache: bool,
@@ -932,7 +1374,18 @@ slowshell_registry::register_resources!(
   payload: Unknown(PayloadBuilder {
     commands: &["spotlight.open", "spotlight.toggle"],
     build: |_, args| {
-      Some(PayloadBox::new(args.0.get(0)?.clone()))
+      let mode = args
+        .0
+        .iter()
+        .find(|arg| !arg.contains('='))
+        .cloned()
+        .unwrap_or_else(|| "applications".into());
+      let style = args
+        .as_map()
+        .get("style")
+        .copied()
+        .and_then(DisplayStyle::parse);
+      Some(PayloadBox::new(SpotlightRequest { mode, style }))
     }
   }.into_boxed()),
   config: Unknown(Box::new(ConfigParser {
@@ -971,8 +1424,17 @@ slowshell_registry::register_resources!(
       "row.padding" => 10,
       "row.background" => "mantle",
       "row.background.opacity" => 0.6,
+      "row.border.width" => 0,
+      "row.border.color" => "overlay",
+      "row.border.color.opacity" => 0.15,
       "row.selected" => "primary",
       "row.selected.opacity" => 0.7,
+      "tag.border.width" => 0,
+      "tag.border.color" => "overlay",
+      "tag.border.color.opacity" => 0.15,
+      "action.border.width" => 0,
+      "action.border.color" => "overlay",
+      "action.border.color.opacity" => 0.15,
       "search.background" => "mantle",
       "search.background.opacity" => 0.8,
       "search.color" => "text",
@@ -987,3 +1449,47 @@ slowshell_registry::register_resources!(
     }
   )
 );
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn item(image: Option<PathBuf>) -> SpotlightItem {
+    SpotlightItem {
+      image,
+      image_bytes: None,
+      image_icon: None,
+      title: "Item".into(),
+      subtitle: None,
+      subtext: None,
+      tags: None,
+      actions: vec![SpotlightActionDef {
+        title: Some("Copy".into()),
+        action: SpotlightAction::Copy("x".into()),
+      }],
+    }
+  }
+
+  #[test]
+  fn parses_display_style_names() {
+    assert_eq!(DisplayStyle::parse("list"), Some(DisplayStyle::List));
+    assert_eq!(DisplayStyle::parse("grid"), Some(DisplayStyle::Grid));
+    assert_eq!(
+      DisplayStyle::parse("image-list"),
+      Some(DisplayStyle::ImageList)
+    );
+    assert_eq!(DisplayStyle::parse("nope"), None);
+  }
+
+  #[test]
+  fn image_list_prepends_expand_action() {
+    let with_image = item(Some(PathBuf::from("/tmp/a.png")));
+
+    let defs = action_defs(&with_image, DisplayStyle::ImageList);
+    assert_eq!(defs.len(), 2);
+    assert!(matches!(defs[0].action, SpotlightAction::Expand(_)));
+
+    assert_eq!(action_defs(&with_image, DisplayStyle::List).len(), 1);
+    assert_eq!(action_defs(&item(None), DisplayStyle::ImageList).len(), 1);
+  }
+}

@@ -10,7 +10,7 @@ use slowshell_core::{Store, types::Ustr};
 
 use crate::{
   DeployDesktopItemAction, DeployableDesktopItem, DesktopItem, EventFilter, ItemEffect,
-  ItemMessage, MonitorScope, Visibility,
+  ItemMessage, MonitorScope, UpdateWhen, Visibility,
 };
 
 pub struct DesktopItems {
@@ -167,7 +167,12 @@ impl DesktopItems {
   pub fn register(&mut self, config: &Config, item: Box<dyn DesktopItem>) -> Task<Message> {
     let scope = item.monitor(config);
     let vis = item.visibility();
-    let events = item.init_events();
+    let mut events = item.init_events();
+
+    if item.update_strategy() == UpdateWhen::EveryFrame && !events.contains(&EventFilter::Frame) {
+      events.push(EventFilter::Frame);
+    }
+
     let index = self.items.len();
 
     let task = if matches!(vis, Visibility::Visible) {
@@ -354,6 +359,10 @@ impl DesktopItems {
     }
 
     self.uninitialized.clear();
+  }
+
+  pub fn wants_frames(&self) -> bool {
+    self.subscriptions.contains_key(&EventFilter::Frame)
   }
 
   pub fn update(

@@ -20,7 +20,7 @@ use slowshell_core::{
 use slowshell_desktop::{
   DesktopItem, EventFilter, ItemEffect, ItemMessage, MonitorScope, UpdateWhen, Visibility,
 };
-use slowshell_widgets::{Icon, clickable};
+use slowshell_widgets::{Icon, clickable, notification_icon};
 
 pub struct NotificationManager {
   max_visible: usize,
@@ -305,16 +305,12 @@ fn render_popup_item<'a>(
   theme: &Theme,
   id: IcedId,
 ) -> Element<'a, ItemMessage> {
-  let app_icon: Element<'a, ItemMessage> = Icon::any(
-    item
-      .app_icon
-      .iter()
-      .map(|s| s.as_str())
-      .chain(std::iter::once("application-x-executable-symbolic")),
-  )
-  .size(style.number("icon.size").unwrap_or(18.0) as u16)
-  .color(style.color(theme, "app.color", theme.overlay))
-  .into();
+  let app_icon: Element<'a, ItemMessage> = notification_icon(
+    item.image.as_ref(),
+    item.app_icon.as_deref(),
+    style.number("icon.size").unwrap_or(18.0) as u16,
+    style.color(theme, "app.color", theme.overlay),
+  );
 
   let app_font = style.number("app.font.size").unwrap_or(10.0);
   let app: Element<'a, ItemMessage> = text(item.app_name.clone())
@@ -435,37 +431,53 @@ fn render_popup_actions<'a>(
   theme: &Theme,
 ) -> Option<Element<'a, ItemMessage>> {
   let button_font = style.number("body.font.size").unwrap_or(11.0);
-  let mut buttons: Vec<Element<'a, ItemMessage>> = Vec::new();
+  let border_width = style.number("action.border.width").unwrap_or(0.0);
+  let border_color = style.color(theme, "action.border.color", theme.overlay);
+  let bg = style.color(theme, "action.background", theme.overlay);
 
-  for (key, label) in &item.actions {
-    if Some(key.as_str()) == reply_key {
-      continue;
-    }
+  let actions = item
+    .actions
+    .iter()
+    .filter(|(key, _)| Some(key.as_str()) != reply_key && cached.invoke.contains_key(key));
 
+  let mut rows = Vec::new();
+  let mut pending = None::<Element<'_, _>>;
+
+  for (key, label) in actions {
+    let invoke_msg = cached.invoke.get(key).unwrap().clone();
     let label = label.clone();
-    let bg = style.color(theme, "app.color", theme.overlay);
 
     let pill = container(text(label).size(button_font))
-      .padding([4.0, 10.0])
+      .width(Length::Fill)
+      .padding([7.0, 10.0])
       .style(move |_| container::Style {
         background: Some(bg.into()),
         border: iced::Border {
-          radius: 10.0.into(),
-          ..Default::default()
+          radius: 8.0.into(),
+          color: border_color,
+          width: border_width,
         },
         ..Default::default()
-      });
+      })
+      .width(Length::Fill);
 
-    if let Some(invoke_msg) = cached.invoke.get(key) {
-      let invoke_msg = invoke_msg.clone();
-      buttons.push(clickable(pill.into(), move |_, _, _| Some(invoke_msg.clone())).into());
+    let button = clickable(pill.into(), move |_, _, _| Some(invoke_msg.clone()));
+
+    if let Some(first) = pending.take() {
+      rows.push(row![first, button].spacing(6).width(Length::Fill).into());
+    } else {
+      pending = Some(button.into());
     }
   }
 
-  if buttons.is_empty() {
+  if let Some(button) = pending {
+    rows.push(row![button].width(Length::Fill).into());
+  }
+
+  if rows.is_empty() {
     None
   } else {
-    Some(row(buttons).spacing(6).into())
+    Some(column(rows).spacing(6).width(Length::Fill).into())
   }
 }
 
@@ -517,6 +529,8 @@ slowshell_registry::register_resources!(
       "app.font.size" => 10,
       "app.color" => "overlay",
       "icon.size" => 20,
+      "action.border.width" => 0,
+      "action.background" => "mantle"
     }
   )
 );

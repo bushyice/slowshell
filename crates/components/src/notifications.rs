@@ -2,7 +2,7 @@ use std::{
   os::fd::AsRawFd,
   sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
   },
 };
 
@@ -52,6 +52,7 @@ impl Notifications {
         ui: Mutex::new(Default::default()),
         revision: AtomicU64::new(0),
         cmd_tx,
+        notify_fd: AtomicI32::new(-1),
       }),
       last_revision: 0,
       shared_in_store: false,
@@ -102,6 +103,11 @@ impl Component for Notifications {
         },
       );
       self.signal_fd = Some(raw);
+
+      self
+        .shared
+        .notify_fd
+        .store(write_fd.as_raw_fd(), Ordering::Relaxed);
 
       Some(write_fd)
     });

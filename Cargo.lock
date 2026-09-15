@@ -4240,6 +4240,7 @@ dependencies = [
  "slowshell-menus",
  "slowshell-notifications",
  "slowshell-panels",
+ "slowshell-plugin-host",
  "slowshell-popups",
  "slowshell-registry",
  "slowshell-spotlight",
@@ -4267,6 +4268,7 @@ name = "slowshell-commons"
 version = "0.1.0"
 dependencies = [
  "freedesktop-desktop-entry",
+ "libc",
  "slowshell-core",
  "system-tray",
  "tokio",
@@ -4399,6 +4401,43 @@ dependencies = [
  "slowshell-core",
  "slowshell-desktop",
  "slowshell-registry",
+]
+
+[[package]]
+name = "slowshell-plugin"
+version = "0.1.0"
+
+[[package]]
+name = "slowshell-plugin-host"
+version = "0.1.0"
+dependencies = [
+ "futures-channel",
+ "iced",
+ "iced_layershell",
+ "image",
+ "kdl",
+ "libloading",
+ "miette",
+ "nix",
+ "slowshell-commons",
+ "slowshell-components",
+ "slowshell-compositor",
+ "slowshell-config",
+ "slowshell-core",
+ "slowshell-desktop",
+ "slowshell-plugin",
+ "slowshell-registry",
+ "slowshell-spotlight",
+ "slowshell-widgets",
+ "tokio",
+]
+
+[[package]]
+name = "slowshell-plugin-sdk"
+version = "0.1.0"
+dependencies = [
+ "kdl",
+ "slowshell-plugin",
 ]
 
 [[package]]

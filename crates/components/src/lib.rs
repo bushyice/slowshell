@@ -251,6 +251,20 @@ pub fn menu_trigger<'a>(
 pub type ComponentFactory = Box<dyn Fn() -> Box<dyn Component> + Send + Sync>;
 pub type Components = HashMap<Ustr, ComponentFactory>;
 
+pub struct ComponentRegistration {
+  pub name: Ustr,
+  pub factory: ComponentFactory,
+}
+
+impl ComponentRegistration {
+  pub fn new(name: impl Into<Ustr>, factory: ComponentFactory) -> Self {
+    Self {
+      name: name.into(),
+      factory,
+    }
+  }
+}
+
 pub fn register_all(components: &mut Components) {
   components.insert(
     "core/audio".into(),

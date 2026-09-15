@@ -16,3 +16,10 @@ popup:
 
 toggle:
   echo 'exec panel.main.toggle' | socat - UNIX-CONNECT:/tmp/slowshell.sock
+
+run:
+  pkill swaybg
+  cargo run daemon
+
+test:
+  cargo nextest r

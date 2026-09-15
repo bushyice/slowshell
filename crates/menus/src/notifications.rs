@@ -16,7 +16,7 @@ use slowshell_core::{
   types::{PayloadBox, ToUstr},
 };
 use slowshell_popups::PopupSettings;
-use slowshell_widgets::{Backdrop, Icon, Renderable, SizedPopup, clickable};
+use slowshell_widgets::{Backdrop, Icon, Renderable, SizedPopup, clickable, notification_icon};
 
 pub struct NotificationsRenderable;
 
@@ -291,16 +291,12 @@ fn render_notification_item<'a>(
   theme: &Theme,
   id: IcedId,
 ) -> Element<'a, ItemMessage> {
-  let app_icon: Element<'a, ItemMessage> = Icon::any(
-    item
-      .app_icon
-      .iter()
-      .map(|s| s.as_str())
-      .chain(std::iter::once("application-x-executable-symbolic")),
-  )
-  .size(style.number("icon.size").unwrap_or(13.0) as u16)
-  .color(style.color(theme, "color.faded", theme.subtext))
-  .into();
+  let app_icon: Element<'a, ItemMessage> = notification_icon(
+    item.image.as_ref(),
+    item.app_icon.as_deref(),
+    style.number("icon.size").unwrap_or(13.0) as u16,
+    style.color(theme, "color.faded", theme.subtext),
+  );
 
   let app_font = style.number("app.font.size").unwrap_or(11.0);
   let mut top_row_items: Vec<Element<'a, ItemMessage>> = vec![
@@ -404,6 +400,7 @@ fn render_action_buttons<'a>(
 ) -> Option<Element<'a, ItemMessage>> {
   let button_font = style.number("status.font.size").unwrap_or(11.0);
   let mut buttons: Vec<Element<'a, ItemMessage>> = Vec::new();
+  let from_plugin = item.plugin.is_some();
 
   for (key, label) in &item.actions {
     if Some(key.as_str()) == reply_key {
@@ -432,7 +429,18 @@ fn render_action_buttons<'a>(
 
     buttons.push(
       clickable(pill.into(), move |_, _, _| {
-        Some(NotifAction::Invoke(notif_id, key.clone()).message(id))
+        Some(if from_plugin {
+          ItemMessage::EffectAction(
+            id,
+            ItemEffect::Redraw,
+            ListenerAction::Payload {
+              name: key.clone().to_ustr(),
+              payload: None,
+            },
+          )
+        } else {
+          NotifAction::Invoke(notif_id, key.clone()).message(id)
+        })
       })
       .into(),
     );

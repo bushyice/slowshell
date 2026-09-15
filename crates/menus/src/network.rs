@@ -109,6 +109,8 @@ fn row_container<'a>(
   theme: &Theme,
 ) -> Element<'a, ItemMessage> {
   let row_radius = style.number("row.radius").unwrap_or(6.0);
+  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
+  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
   let bg = style.color(theme, "row.background", Color::TRANSPARENT);
   container(content)
     .padding(row_padding(style))
@@ -117,7 +119,8 @@ fn row_container<'a>(
       background: Some(bg.into()),
       border: iced::Border {
         radius: row_radius.into(),
-        ..Default::default()
+        width: row_border_width,
+        color: row_border_color,
       },
       ..container::Style::default()
     })
@@ -186,6 +189,8 @@ fn toggle_row<'a>(
   let row_spacing = style.number("row.spacing").unwrap_or(8.0);
   let bg = style.color(theme, "row.background", Color::TRANSPARENT);
   let row_radius = style.number("row.radius").unwrap_or(6.0);
+  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
+  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
 
   let content: Element<'a, ItemMessage> = container(
     row![
@@ -205,7 +210,8 @@ fn toggle_row<'a>(
     background: Some(bg.into()),
     border: iced::Border {
       radius: row_radius.into(),
-      ..Default::default()
+      width: row_border_width,
+      color: row_border_color,
     },
     ..container::Style::default()
   })
@@ -283,6 +289,8 @@ fn ap_row<'a>(
 
   let bg = style.color(theme, "row.background", Color::TRANSPARENT);
   let row_radius = style.number("row.radius").unwrap_or(6.0);
+  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
+  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
   let content: Element<'a, ItemMessage> = container(
     row![icon, name, Space::new().width(Length::Fill), trailing]
       .spacing(row_spacing)
@@ -294,7 +302,8 @@ fn ap_row<'a>(
     background: Some(bg.into()),
     border: iced::Border {
       radius: row_radius.into(),
-      ..Default::default()
+      width: row_border_width,
+      color: row_border_color,
     },
     ..container::Style::default()
   })

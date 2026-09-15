@@ -18,6 +18,7 @@ slowshell-components = { path = "../components" }
 slowshell-menus = { path = "../menus" }
 slowshell-popups = { path = "../popups" }
 slowshell-background = { path = "../background" }
+slowshell-plugin-host = { path = "../plugin-host" }
 
 nix.workspace = true
 libc.workspace = true

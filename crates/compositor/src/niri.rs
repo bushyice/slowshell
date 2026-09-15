@@ -1,4 +1,5 @@
 use std::{
+  collections::HashMap,
   io::{BufRead, BufReader, Write},
   os::{fd::AsRawFd, unix::net::UnixStream},
 };
@@ -218,6 +219,8 @@ impl NiriCompositor {
 
   #[inline]
   fn apply_compositor_state(&mut self) -> Result<Void> {
+    let geometry = self.output_geometry();
+
     self.state.active_window = self
       ._state
       .windows
@@ -262,11 +265,15 @@ impl NiriCompositor {
         if let Some(name) = &ws.output
           && ws.is_active
         {
+          let (width, height, scale) = geometry.get(name).copied().unwrap_or((0, 0, 1.0));
           Some((
             Ustr::from(name),
             Monitor {
               active_workspace: ws.id as u32,
               name: name.into(),
+              width,
+              height,
+              scale,
             },
           ))
         } else {
@@ -276,6 +283,27 @@ impl NiriCompositor {
       .collect();
 
     Ok(Void)
+  }
+
+  fn output_geometry(&mut self) -> HashMap<String, (u32, u32, f64)> {
+    let mut geometry = HashMap::new();
+
+    let Ok(socket) = self.get_or_connect_cmd_socket() else {
+      return geometry;
+    };
+
+    let Ok(Ok(niri_ipc::Response::Outputs(outputs))) = socket.send(niri_ipc::Request::Outputs)
+    else {
+      return geometry;
+    };
+
+    for (name, output) in outputs {
+      if let Some(logical) = output.logical {
+        geometry.insert(name, (logical.width, logical.height, logical.scale));
+      }
+    }
+
+    geometry
   }
 }
 

@@ -10,6 +10,23 @@ pub mod message;
 pub mod persistence;
 pub mod types;
 
+#[derive(Clone)]
+pub struct ActionDispatcher(pub futures_channel::mpsc::UnboundedSender<crate::message::Message>);
+
+impl ActionDispatcher {
+  pub fn dispatch(&self, command: &str) -> bool {
+    let action = crate::listeners::ListenerAction::Payload {
+      name: Ustr::from(command),
+      payload: None,
+    };
+
+    self
+      .0
+      .unbounded_send(crate::message::Message::FdUpdate(action))
+      .is_ok()
+  }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Workspace {
   pub id: u64,
@@ -25,6 +42,21 @@ pub struct Workspace {
 pub struct Monitor {
   pub name: Ustr,
   pub active_workspace: u32,
+  pub width: u32,
+  pub height: u32,
+  pub scale: f64,
+}
+
+impl Monitor {
+  pub fn named(name: impl Into<Ustr>) -> Self {
+    Self {
+      name: name.into(),
+      active_workspace: 0,
+      width: 0,
+      height: 0,
+      scale: 1.0,
+    }
+  }
 }
 
 #[derive(Debug, Clone)]

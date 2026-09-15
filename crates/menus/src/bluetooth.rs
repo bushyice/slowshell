@@ -236,6 +236,8 @@ fn render_toggle_row<'a>(
   let row_spacing = style.number("row.spacing").unwrap_or(10.0);
   let bg = style.color(theme, "row.background", Color::TRANSPARENT);
   let row_radius = style.number("row.radius").unwrap_or(10.0);
+  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
+  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
 
   let content: Element<'a, ItemMessage> = container(
     row![
@@ -255,7 +257,8 @@ fn render_toggle_row<'a>(
     background: Some(bg.into()),
     border: iced::Border {
       radius: row_radius.into(),
-      ..Default::default()
+      width: row_border_width,
+      color: row_border_color,
     },
     ..container::Style::default()
   })
@@ -300,6 +303,8 @@ fn scan_footer_row<'a>(
 
   let bg = style.color(theme, "row.background", Color::TRANSPARENT);
   let row_radius = style.number("row.radius").unwrap_or(10.0);
+  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
+  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
 
   let wrapped = container(content)
     .padding(style.padding([10.0, 12.0]))
@@ -308,7 +313,8 @@ fn scan_footer_row<'a>(
       background: Some(bg.into()),
       border: iced::Border {
         radius: row_radius.into(),
-        ..Default::default()
+        width: row_border_width,
+        color: row_border_color,
       },
       ..Default::default()
     });
@@ -478,6 +484,8 @@ fn render_device<'a>(
 
   let bg = style.color(theme, "row.background", Color::TRANSPARENT);
   let row_radius = style.number("row.radius").unwrap_or(6.0);
+  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
+  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
 
   container(full_row)
     .padding(style.padding([4.0, 8.0]))
@@ -486,7 +494,8 @@ fn render_device<'a>(
       background: Some(bg.into()),
       border: iced::Border {
         radius: row_radius.into(),
-        ..Default::default()
+        width: row_border_width,
+        color: row_border_color,
       },
       ..Default::default()
     })

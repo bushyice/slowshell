@@ -1,18 +1,17 @@
 use std::{
   collections::{HashMap, HashSet},
   path::{Path, PathBuf},
-  sync::{Mutex, OnceLock},
+  sync::{LazyLock, Mutex, OnceLock},
 };
 
 use iced::{
   Color, Element, Length,
-  widget::{image, svg, text},
+  widget::{image, svg},
 };
 use slowshell_core::types::Ustr;
 
-pub const DEFAULT_ICON_COLOR: Color = Color::from_rgb(0.57, 0.6, 0.7);
-
-static FALLBACK_GLYPH: &str = "\u{25CF}";
+static FALLBACK_IMAGE: LazyLock<svg::Handle> =
+  LazyLock::new(|| svg::Handle::from_memory(include_bytes!("../../../assets/fallback.svg")));
 static ICON_THEME: OnceLock<String> = OnceLock::new();
 static INSTALLED_THEMES: OnceLock<HashSet<String>> = OnceLock::new();
 
@@ -294,10 +293,10 @@ impl<Message> Icon<Message> {
       .names
       .iter()
       .find_map(|name| get_asset(name, self.size));
+    let size = Length::Fixed(self.size as f32);
 
-    match asset {
-      Some(IconAsset::Svg(handle)) => {
-        let size = Length::Fixed(self.size as f32);
+    match asset.unwrap_or_else(|| IconAsset::Svg(FALLBACK_IMAGE.clone())) {
+      IconAsset::Svg(handle) => {
         let mut widget = svg(handle).width(size).height(size);
 
         if let Some(color) = self.color {
@@ -307,17 +306,7 @@ impl<Message> Icon<Message> {
         widget.into()
       }
 
-      Some(IconAsset::Png(handle)) => {
-        let size = Length::Fixed(self.size as f32);
-        image(handle).width(size).height(size).into()
-      }
-
-      None => text(FALLBACK_GLYPH)
-        .size(self.size as f32)
-        .color(self.color.unwrap_or(DEFAULT_ICON_COLOR))
-        .width(Length::Fixed(self.size as f32))
-        .height(Length::Fixed(self.size as f32))
-        .into(),
+      IconAsset::Png(handle) => image(handle).width(size).height(size).into(),
     }
   }
 }

@@ -109,6 +109,10 @@ impl Style {
     self.map.get(key)
   }
 
+  pub fn entries(&self) -> impl Iterator<Item = (&str, &StyleValue)> {
+    self.map.iter().map(|(key, value)| (key.as_str(), value))
+  }
+
   pub fn extend(&mut self, other: Style) {
     self.map.extend(other.map);
   }

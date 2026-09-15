@@ -42,6 +42,22 @@ pub trait Compositor: Send + Sync {
   }
 }
 
+pub type CompositorFactory = Box<dyn Fn() -> Box<dyn Compositor> + Send + Sync>;
+
+pub struct CompositorRegistration {
+  pub name: Ustr,
+  pub factory: CompositorFactory,
+}
+
+impl CompositorRegistration {
+  pub fn new(name: impl Into<Ustr>, factory: CompositorFactory) -> Self {
+    Self {
+      name: name.into(),
+      factory,
+    }
+  }
+}
+
 #[derive(Default)]
 pub struct CompositorStore {
   inner: HashMap<Ustr, Box<dyn Compositor>>,
@@ -57,6 +73,12 @@ impl CompositorStore {
       .insert("niri".into(), Box::new(niri::NiriCompositor::new()));
 
     comps
+  }
+
+  pub fn register(&mut self, registration: CompositorRegistration) {
+    self
+      .inner
+      .insert(registration.name, (registration.factory)());
   }
 
   pub fn initialize(&mut self, config: &Config, listeners: &mut Listeners) -> miette::Result<Void> {

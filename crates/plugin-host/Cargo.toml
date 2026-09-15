@@ -1,0 +1,27 @@
+[package]
+name = "slowshell-plugin-host"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+slowshell-plugin = { path = "../plugin" }
+slowshell-registry = { path = "../registry" }
+slowshell-core = { path = "../core" }
+slowshell-config = { path = "../config" }
+slowshell-commons = { path = "../commons" }
+slowshell-components = { path = "../components" }
+slowshell-compositor = { path = "../compositor" }
+slowshell-desktop = { path = "../desktop" }
+slowshell-spotlight = { path = "../spotlight" }
+slowshell-widgets = { path = "../widgets" }
+iced.workspace = true
+iced_layershell.workspace = true
+kdl.workspace = true
+libloading.workspace = true
+miette.workspace = true
+futures-channel.workspace = true
+image.workspace = true
+nix.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
