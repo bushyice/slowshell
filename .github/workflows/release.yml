@@ -1,0 +1,60 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 4G
+
+      - name: Build and package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          pkg="slowshell-${version}"
+          mkdir -p dist
+
+          nix --extra-experimental-features 'nix-command flakes' build .# -o result
+
+          mkdir -p "dist/$pkg"
+
+          cp -rL result/. "dist/$pkg/"
+          for extra in assets themes example.kdl README.md; do
+            [ -e "$extra" ] && cp -r "$extra" "dist/$pkg/"
+          done
+
+          tar -czf "dist/$pkg.tar.gz" -C dist "$pkg"
+          sha256sum "dist/$pkg.tar.gz" > "dist/$pkg.tar.gz.sha256"
+          echo "packaged dist/$pkg.tar.gz"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+          echo "published $GITHUB_REF_NAME"
