@@ -3,17 +3,23 @@ name = "slowshell-compositor"
 version = "0.1.0"
 edition = "2024"
 
+
+[features]
+niri = ["dep:niri-ipc"]
+wlr = []
+
 [dependencies]
 slowshell-core = { path = "../core" }
 slowshell-config = { path = "../config" }
 
 nix.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 
 miette.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 
-niri-ipc.workspace = true
+niri-ipc = { workspace = true, optional = true }
 
 futures-channel.workspace = true

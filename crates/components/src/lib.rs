@@ -1,13 +1,20 @@
+#[cfg(feature = "audio")]
 pub mod audio;
+#[cfg(feature = "bluetooth")]
 pub mod bluetooth;
 pub mod clock;
 pub mod icon;
+#[cfg(feature = "network")]
 pub mod network;
+#[cfg(feature = "notifications")]
 pub mod notifications;
+#[cfg(feature = "audio")]
 pub mod nowplaying;
+#[cfg(feature = "power")]
 pub mod power;
 pub mod separator;
 pub mod sysmon;
+#[cfg(feature = "tray")]
 pub mod tray;
 pub mod window;
 pub mod workspaces;
@@ -266,10 +273,12 @@ impl ComponentRegistration {
 }
 
 pub fn register_all(components: &mut Components) {
+  #[cfg(feature = "audio")]
   components.insert(
     "core/audio".into(),
     Box::new(|| Box::new(audio::Audio::new())),
   );
+  #[cfg(feature = "audio")]
   components.insert(
     "core/sound".into(),
     Box::new(|| Box::new(audio::Audio::new())),
@@ -278,6 +287,7 @@ pub fn register_all(components: &mut Components) {
     "core/clock".into(),
     Box::new(|| Box::new(clock::Clock::new())),
   );
+  #[cfg(feature = "power")]
   components.insert(
     "core/power".into(),
     Box::new(|| Box::new(power::Power::new())),
@@ -286,14 +296,17 @@ pub fn register_all(components: &mut Components) {
     "core/system".into(),
     Box::new(|| Box::new(sysmon::SystemMon::new())),
   );
+  #[cfg(feature = "network")]
   components.insert(
     "core/network".into(),
     Box::new(|| Box::new(network::Network::new())),
   );
+  #[cfg(feature = "bluetooth")]
   components.insert(
     "core/bluetooth".into(),
     Box::new(|| Box::new(bluetooth::Bluetooth::new())),
   );
+  #[cfg(feature = "notifications")]
   components.insert(
     "core/notifications".into(),
     Box::new(|| Box::new(notifications::Notifications::new())),
@@ -302,6 +315,7 @@ pub fn register_all(components: &mut Components) {
     "core/icon".into(),
     Box::new(|| Box::new(icon::IconComp::default())),
   );
+  #[cfg(feature = "tray")]
   components.insert(
     "core/tray".into(),
     Box::new(|| Box::new(tray::SystemTray::new())),
@@ -315,6 +329,7 @@ pub fn register_all(components: &mut Components) {
     Box::new(|| Box::new(workspaces::Workspaces::default())),
   );
   components.insert("core/window".into(), Box::new(|| Box::new(window::Window)));
+  #[cfg(feature = "audio")]
   components.insert(
     "core/nowplaying".into(),
     Box::new(|| Box::new(nowplaying::NowPlaying::new())),

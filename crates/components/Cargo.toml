@@ -3,14 +3,23 @@ name = "slowshell-components"
 version = "0.1.0"
 edition = "2024"
 
+
+[features]
+audio = ["slowshell-services/audio"]
+notifications = ["slowshell-services/notifications"]
+bluetooth = ["slowshell-services/bluetooth"]
+network = ["slowshell-services/network"]
+power = ["slowshell-services/power"]
+tray = ["slowshell-services/tray"]
+
 [dependencies]
 slowshell-core = { path = "../core" }
 slowshell-widgets = { path = "../widgets" }
 slowshell-commons = { path = "../commons" }
 slowshell-config = { path = "../config" }
 slowshell-registry = { path = "../registry" }
-slowshell-compositor = { path = "../compositor" }
-slowshell-services = { path = "../services" }
+slowshell-compositor = { path = "../compositor", default-features = false }
+slowshell-services = { path = "../services", default-features = false }
 
 chrono.workspace = true
 miette.workspace = true

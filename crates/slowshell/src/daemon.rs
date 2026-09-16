@@ -23,6 +23,8 @@ pub fn pid_path() -> Option<std::path::PathBuf> {
 pub struct Loaded {
   pub registry: GlobalRegistry,
   pub config: Config,
+
+  #[cfg(feature = "plugins")]
   pub plugins: slowshell_plugin_host::PluginHost,
 }
 
@@ -30,20 +32,30 @@ pub fn load() -> Loaded {
   let mut registry = GlobalRegistry::default();
 
   slowshell_registry::include(&mut registry);
+  #[cfg(feature = "panels")]
   slowshell_components::include(&mut registry);
+  #[cfg(feature = "panels")]
   slowshell_components::register_vertical_style();
   slowshell_menus::include(&mut registry);
+  #[cfg(feature = "notifications")]
   slowshell_notifications::include(&mut registry);
+  #[cfg(feature = "panels")]
   slowshell_panels::include(&mut registry);
+  #[cfg(any(feature = "panels", feature = "popups"))]
   slowshell_popups::include(&mut registry);
+  #[cfg(feature = "spotlight")]
   slowshell_spotlight::include(&mut registry);
+  #[cfg(feature = "background")]
   slowshell_background::wallpaper::include(&mut registry);
+  #[cfg(feature = "background")]
   slowshell_background::widgets::include(&mut registry);
 
+  #[cfg(feature = "plugins")]
   let plugin_selection = {
     let config_path = Config::resolve_path(None::<&str>);
     slowshell_plugin_host::PluginSelection::from_path(config_path.as_deref())
   };
+  #[cfg(feature = "plugins")]
   let plugins = slowshell_plugin_host::PluginHost::load(&mut registry, &plugin_selection);
 
   let config_parsers = registry
@@ -61,6 +73,8 @@ pub fn load() -> Loaded {
   Loaded {
     registry,
     config,
+
+    #[cfg(feature = "plugins")]
     plugins,
   }
 }
@@ -71,6 +85,8 @@ pub fn daemon() -> miette::Result<()> {
   let Loaded {
     registry,
     config,
+
+    #[cfg(feature = "plugins")]
     plugins,
   } = load();
 
@@ -127,6 +143,7 @@ pub fn daemon() -> miette::Result<()> {
   .into_diagnostic()
   .wrap_err("Failed to run slowshell iced layer-shell daemon")?;
 
+  #[cfg(feature = "plugins")]
   drop(plugins);
 
   Ok(())

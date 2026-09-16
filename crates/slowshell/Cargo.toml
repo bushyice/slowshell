@@ -3,22 +3,73 @@ name = "slowshell"
 version = "0.0.1"
 edition = "2024"
 
+[features]
+default = [
+  "base",
+  "compositors",
+  "components",
+]
+
+base = [
+  "panels",
+  "background",
+  "plugins",
+  "spotlight",
+  "notifications",
+]
+
+compositors = [
+  "compositor-niri",
+  "compositor-wlr",
+]
+
+components = [
+  "components-audio",
+  "components-bluetooth",
+  "components-network",
+  "components-notifications",
+  "components-power",
+  "components-tray",
+]
+
+panels = [
+  "dep:slowshell-panels",
+  "dep:slowshell-popups",
+  "dep:slowshell-components",
+  "slowshell-plugin-host?/panels",
+]
+popups = ["dep:slowshell-popups"]
+background = ["dep:slowshell-background"]
+plugins = ["dep:slowshell-plugin-host"]
+spotlight = ["dep:slowshell-spotlight", "slowshell-plugin-host?/spotlight"]
+notifications = ["dep:slowshell-notifications"]
+
+compositor-niri = ["slowshell-compositor/niri"]
+compositor-wlr = ["slowshell-compositor/wlr"]
+
+components-audio = ["slowshell-components?/audio"]
+components-bluetooth = ["slowshell-components?/bluetooth"]
+components-network = ["slowshell-components?/network"]
+components-notifications = ["slowshell-components?/notifications"]
+components-power = ["slowshell-components?/power"]
+components-tray = ["slowshell-components?/tray"]
+
 [dependencies]
 slowshell-core = { path = "../core" }
 slowshell-config = { path = "../config" }
 slowshell-desktop = { path = "../desktop" }
 slowshell-registry = { path = "../registry" }
-slowshell-compositor = { path = "../compositor" }
-slowshell-notifications = { path = "../notifications" }
-slowshell-panels = { path = "../panels" }
-slowshell-spotlight = { path = "../spotlight" }
+slowshell-compositor = { path = "../compositor", default-features = false }
+slowshell-notifications = { path = "../notifications", optional = true }
+slowshell-panels = { path = "../panels", optional = true }
+slowshell-spotlight = { path = "../spotlight", optional = true }
 slowshell-ipc = { path = "../ipc" }
 slowshell-widgets = { path = "../widgets" }
-slowshell-components = { path = "../components" }
+slowshell-components = { path = "../components", optional = true, default-features = false }
 slowshell-menus = { path = "../menus" }
-slowshell-popups = { path = "../popups" }
-slowshell-background = { path = "../background" }
-slowshell-plugin-host = { path = "../plugin-host" }
+slowshell-popups = { path = "../popups", optional = true }
+slowshell-background = { path = "../background", optional = true }
+slowshell-plugin-host = { path = "../plugin-host", optional = true, default-features = false }
 
 nix.workspace = true
 libc.workspace = true

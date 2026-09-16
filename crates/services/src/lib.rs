@@ -1,9 +1,15 @@
+#[cfg(feature = "audio")]
 pub mod audio;
+#[cfg(feature = "bluetooth")]
 pub mod bluetooth;
+#[cfg(feature = "network")]
 pub mod network;
+#[cfg(feature = "notifications")]
 pub mod notifications;
+#[cfg(feature = "power")]
 pub mod power;
 pub mod system;
+#[cfg(feature = "tray")]
 pub mod tray;
 pub mod util;
 

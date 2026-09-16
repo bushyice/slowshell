@@ -3,13 +3,21 @@ name = "slowshell-services"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+audio = ["dep:zbus", "dep:futures-util"]
+notifications = ["dep:zbus"]
+bluetooth = ["dep:zbus", "dep:futures-util"]
+network = ["dep:zbus", "dep:futures-util"]
+power = ["dep:zbus", "dep:futures-util"]
+tray = ["dep:system-tray"]
+
 [dependencies]
 slowshell-commons = { path = "../commons" }
 
 miette.workspace = true
 libc.workspace = true
 tokio.workspace = true
-zbus.workspace = true
-futures-util.workspace = true
-system-tray.workspace = true
+zbus = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+system-tray = { workspace = true, optional = true }
 sysinfo = { version = "0.37", default-features = false, features = ["system", "component", "network"] }
