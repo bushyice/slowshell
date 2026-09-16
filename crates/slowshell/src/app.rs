@@ -5,6 +5,7 @@ use std::task::{Context, Poll};
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use iced::{Element, Task};
 use iced_layershell::reexport::IcedId;
+#[cfg(feature = "panels")]
 use slowshell_components::{ComponentRegistration, Components};
 use slowshell_compositor::{CompositorRegistration, CompositorStore};
 use slowshell_config::Config;
@@ -16,12 +17,15 @@ use slowshell_registry::{GlobalRegistry, ResourceRegistration};
 use slowshell_core::Store;
 use slowshell_core::message::Message;
 use slowshell_ipc::IpcListener;
+#[cfg(feature = "panels")]
 use slowshell_panels::{PanelDeloyer, PanelPositions};
+#[cfg(any(feature = "panels", feature = "popups"))]
 use slowshell_popups::Popup;
 use slowshell_widgets::Renderables;
 
 static EPOLL_RX: OnceLock<Mutex<Option<UnboundedReceiver<Message>>>> = OnceLock::new();
 
+#[cfg(feature = "panels")]
 pub(crate) fn register_plugin_components(
   registry: &mut GlobalRegistry,
   components: &mut Components,
@@ -121,6 +125,8 @@ impl App {
 
     // TODO: Move registration into a global registerar
     // start of registeration
+
+    #[cfg(feature = "panels")]
     store.insert(PanelPositions::default());
     let mut renderables = Renderables::default();
 
@@ -131,10 +137,14 @@ impl App {
     }
 
     store.insert(renderables);
-    let mut components = Components::default();
-    slowshell_components::register_all(&mut components);
-    register_plugin_components(registry, &mut components);
-    store.insert(components);
+
+    #[cfg(feature = "panels")]
+    {
+      let mut components = Components::default();
+      slowshell_components::register_all(&mut components);
+      register_plugin_components(registry, &mut components);
+      store.insert(components);
+    }
 
     let mut items = DesktopItems::new();
 
@@ -153,8 +163,10 @@ impl App {
       }
     }
 
+    #[cfg(feature = "panels")]
     items.deployable(Box::new(PanelDeloyer::new(&config)));
 
+    #[cfg(any(feature = "panels", feature = "popups"))]
     tasks.push(items.register(&config, Box::new(Popup::default())));
 
     // end of registration

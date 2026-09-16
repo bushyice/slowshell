@@ -52,14 +52,17 @@ enum Commands {
 enum ListResource {
   #[command(about = "List all styles")]
   Styles,
+  #[cfg(feature = "plugins")]
   #[command(about = "List loaded plugins")]
   Plugins,
   #[command(about = "List all renderables")]
   Renderables,
+  #[cfg(feature = "panels")]
   #[command(about = "List all components")]
   Components,
   #[command(about = "List all desktop items")]
   Items,
+  #[cfg(feature = "spotlight")]
   #[command(about = "List all spotlight modes")]
   Spotlights,
 }
@@ -150,10 +153,13 @@ pub fn cli() -> miette::Result<()> {
     }
     Commands::List { resource } => match resource {
       ListResource::Styles => crate::inspect::styles()?,
+      #[cfg(feature = "plugins")]
       ListResource::Plugins => crate::inspect::plugins()?,
       ListResource::Renderables => crate::inspect::renderables()?,
+      #[cfg(feature = "panels")]
       ListResource::Components => crate::inspect::components()?,
       ListResource::Items => crate::inspect::items()?,
+      #[cfg(feature = "spotlight")]
       ListResource::Spotlights => crate::inspect::spotlights()?,
     },
     Commands::Config {

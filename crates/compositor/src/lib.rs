@@ -1,4 +1,7 @@
+#[cfg(feature = "niri")]
 pub mod niri;
+#[cfg(feature = "wlr")]
+pub mod wlr;
 
 use futures_channel::mpsc::UnboundedSender;
 use slowshell_config::Config;
@@ -66,11 +69,18 @@ pub struct CompositorStore {
 
 impl CompositorStore {
   pub fn new() -> Self {
+    #[allow(unused_mut)]
     let mut comps = Self::default();
 
+    #[cfg(feature = "niri")]
     comps
       .inner
       .insert("niri".into(), Box::new(niri::NiriCompositor::new()));
+
+    #[cfg(feature = "wlr")]
+    comps
+      .inner
+      .insert("sway".into(), Box::new(wlr::WlrCompositor::new()));
 
     comps
   }

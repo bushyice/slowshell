@@ -20,6 +20,7 @@ where
   width: Length,
   height: Length,
   position: Point,
+  from_bottom: bool,
 }
 
 impl<'a, Message, Theme, Renderer> PopupPin<'a, Message, Theme, Renderer>
@@ -32,6 +33,7 @@ where
       width: Length::Fill,
       height: Length::Fill,
       position: Point::ORIGIN,
+      from_bottom: false,
     }
   }
 
@@ -42,6 +44,11 @@ where
 
   pub fn y(mut self, y: f32) -> Self {
     self.position.y = y;
+    self
+  }
+
+  pub fn anchor_bottom(mut self, from_bottom: bool) -> Self {
+    self.from_bottom = from_bottom;
     self
   }
 }
@@ -85,14 +92,16 @@ where
     let node = self.content.as_widget_mut().layout(tree, renderer, &limits);
 
     let max = limits.max();
-    let clamped_x = self
-      .position
-      .x
-      .clamp(0.0, (max.width - node.size().width).max(0.0));
-    let clamped_y = self
-      .position
-      .y
-      .clamp(0.0, (max.height - node.size().height).max(0.0));
+    let child = node.size();
+    let max_x = (max.width - child.width).max(0.0);
+    let max_y = (max.height - child.height).max(0.0);
+
+    let clamped_x = self.position.x.clamp(0.0, max_x);
+    let clamped_y = if self.from_bottom {
+      (max.height - self.position.y - child.height).clamp(0.0, max_y)
+    } else {
+      self.position.y.clamp(0.0, max_y)
+    };
 
     let node = node.move_to(Point::new(clamped_x, clamped_y));
 
@@ -250,6 +259,23 @@ impl Backdrop {
   }
 }
 
+fn resolve_position(
+  panel_edge: Option<PanelEdge>,
+  x: f32,
+  y: f32,
+  size: (f32, f32),
+  insets: Padding,
+) -> (f32, f32, bool) {
+  match panel_edge {
+    Some(PanelEdge::Top { .. }) => ((x + insets.left) - size.0, insets.top, false),
+    Some(PanelEdge::Bottom { .. }) => ((x + insets.left) - size.0, insets.bottom, true),
+    Some(PanelEdge::Left { .. }) => (x, (y + insets.top) - size.1, false),
+    Some(PanelEdge::Right { .. }) | None => {
+      ((x + insets.left) - size.0, (y + insets.top) - size.1, false)
+    }
+  }
+}
+
 pub struct SizedPopup<'a> {
   content: Element<'a, ItemMessage>,
   x: f32,
@@ -336,19 +362,18 @@ impl<'a> SizedPopup<'a> {
   }
 
   pub fn into_element(self) -> Element<'a, ItemMessage> {
-    let (x, y) = match self.panel_edge {
-      Some(PanelEdge::Left { .. }) => (self.x, (self.y + self.insets.top) - self.size.1),
-      _ => (
-        (self.x + self.insets.left) - self.size.0,
-        (self.y + self.insets.top) - self.size.1,
-      ),
-    };
+    let (x, y, from_bottom) =
+      resolve_position(self.panel_edge, self.x, self.y, self.size, self.insets);
 
     let content_box = container(self.content).padding(Padding {
       top: 0.0,
       left: 0.0,
       right: self.insets.right.max(0.0),
-      bottom: self.insets.bottom.max(0.0),
+      bottom: if from_bottom {
+        0.0
+      } else {
+        self.insets.bottom.max(0.0)
+      },
     });
 
     let shielded_content = mouse_area(content_box).on_press(ItemMessage::Noop);
@@ -358,6 +383,7 @@ impl<'a> SizedPopup<'a> {
       PopupPin::new(shielded_content)
         .x(x.max(0.0))
         .y(y.max(0.0))
+        .anchor_bottom(from_bottom)
         .into(),
       move |event, _, _| {
         if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
@@ -404,5 +430,68 @@ impl<'a> SizedPopup<'a> {
 impl<'a> From<SizedPopup<'a>> for Element<'a, ItemMessage> {
   fn from(popup: SizedPopup<'a>) -> Self {
     popup.into_element()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn top_panel_drops_below_the_bar() {
+    let insets = Padding {
+      top: 32.0,
+      bottom: 0.0,
+      left: 0.0,
+      right: 0.0,
+    };
+
+    let (x, y, from_bottom) = resolve_position(
+      Some(PanelEdge::Top { height: 32 }),
+      100.0,
+      32.0,
+      (280.0, 0.0),
+      insets,
+    );
+
+    assert!(!from_bottom);
+    assert_eq!(x, 100.0 - 280.0);
+    assert_eq!(y, 32.0);
+  }
+
+  #[test]
+  fn bottom_panel_anchors_from_the_bottom() {
+    let insets = Padding {
+      top: 0.0,
+      bottom: 48.0,
+      left: 0.0,
+      right: 0.0,
+    };
+
+    let (_, y, from_bottom) = resolve_position(
+      Some(PanelEdge::Bottom { height: 48 }),
+      100.0,
+      48.0,
+      (280.0, 0.0),
+      insets,
+    );
+
+    assert!(from_bottom);
+    assert_eq!(y, 48.0);
+  }
+
+  #[test]
+  fn fixed_popups_keep_the_old_offset() {
+    let insets = Padding {
+      top: 32.0,
+      bottom: 0.0,
+      left: 0.0,
+      right: 0.0,
+    };
+
+    let (_, y, from_bottom) = resolve_position(None, 10.0, 20.0, (0.0, 100.0), insets);
+
+    assert!(!from_bottom);
+    assert_eq!(y, 20.0 + 32.0 - 100.0);
   }
 }

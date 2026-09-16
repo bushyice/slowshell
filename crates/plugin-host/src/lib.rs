@@ -33,6 +33,7 @@ use slowshell_commons::popups::PopupSettings;
 use slowshell_commons::power::SharedPowerState;
 use slowshell_commons::system::SharedSystemState;
 use slowshell_commons::tray::SharedTrayState;
+#[cfg(feature = "panels")]
 use slowshell_components::{
   Component, ComponentContext, ComponentFactory, ComponentOptions, ComponentRegistration,
   spaced_component,
@@ -60,14 +61,16 @@ use slowshell_plugin::{
   SlDesktopSettings, SlEffect, SlEthernet, SlEvent, SlHostApi, SlItemMessage, SlLength, SlMonitor,
   SlMprisPlayer, SlNetworkState, SlNode, SlNodeList, SlNotification, SlPayloadArgs,
   SlPayloadVtable, SlPluginGetMetaFn, SlPluginInitFn, SlPowerState, SlProcessInfo,
-  SlRegistryNotifyFn, SlRenderableSettings, SlRenderableVtable, SlSpotlightList, SlSpotlightVtable,
-  SlStr, SlStyleSheet, SlStyleSheetEntry, SlSystemState, SlTheme, SlTrayItem, SlTrayState,
-  SlWindow, SlWorkspace, sl_align, sl_anchor, sl_display_style, sl_effect, sl_epoll, sl_event_kind,
-  sl_event_mask, sl_image_source, sl_keyboard_interactivity, sl_layer, sl_length_unit,
-  sl_message_kind, sl_node_kind, sl_style_color_kind, sl_style_value_kind, sl_update_when,
-  sl_visibility,
+  SlRegistryNotifyFn, SlRenderableSettings, SlRenderableVtable, SlSpotlightVtable, SlStr,
+  SlStyleSheet, SlStyleSheetEntry, SlSystemState, SlTheme, SlTrayItem, SlTrayState, SlWindow,
+  SlWorkspace, sl_align, sl_anchor, sl_effect, sl_epoll, sl_event_kind, sl_event_mask,
+  sl_image_source, sl_keyboard_interactivity, sl_layer, sl_length_unit, sl_message_kind,
+  sl_node_kind, sl_style_color_kind, sl_style_value_kind, sl_update_when, sl_visibility,
 };
+#[cfg(feature = "spotlight")]
+use slowshell_plugin::{SlSpotlightList, sl_display_style};
 use slowshell_registry::{GlobalRegistry, ResourceRegistration};
+#[cfg(feature = "spotlight")]
 use slowshell_spotlight::{
   DisplayStyle, SpotlightAction, SpotlightActionDef, SpotlightItem, SpotlightKind, SpotlightMode,
   SpotlightModes,
@@ -379,24 +382,29 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
   for item in pending {
     match item {
       Pending::Component { name, vtable } => {
-        let ctx = Box::into_raw(Box::new(PluginInstance::new(plugin_id))) as usize;
-        let vtable = vtable as usize;
+        #[cfg(not(feature = "panels"))]
+        let _ = (name, vtable);
+        #[cfg(feature = "panels")]
+        {
+          let ctx = Box::into_raw(Box::new(PluginInstance::new(plugin_id))) as usize;
+          let vtable = vtable as usize;
 
-        let factory: ComponentFactory = Box::new(move || {
-          let ctx = ctx as *mut c_void;
-          let vtable = vtable as *const SlComponentVtable;
-          let state = unsafe { ((*vtable).create.expect("component create"))(ctx) };
-          Box::new(PluginComponent::new(ctx, vtable, state)) as Box<dyn Component>
-        });
+          let factory: ComponentFactory = Box::new(move || {
+            let ctx = ctx as *mut c_void;
+            let vtable = vtable as *const SlComponentVtable;
+            let state = unsafe { ((*vtable).create.expect("component create"))(ctx) };
+            Box::new(PluginComponent::new(ctx, vtable, state)) as Box<dyn Component>
+          });
 
-        contribute(plugin_id, |contributions| {
-          contributions.components.push(name.clone());
-        });
+          contribute(plugin_id, |contributions| {
+            contributions.components.push(name.clone());
+          });
 
-        registry.include_in(
-          "components",
-          ResourceRegistration::Unknown(Box::new(ComponentRegistration::new(name, factory))),
-        );
+          registry.include_in(
+            "components",
+            ResourceRegistration::Unknown(Box::new(ComponentRegistration::new(name, factory))),
+          );
+        }
       }
 
       Pending::Compositor { name, vtable } => {
@@ -498,7 +506,9 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
 
 struct SpotlightEntry {
   name: String,
+  #[allow(unused)]
   ctx: *mut c_void,
+  #[allow(unused)]
   vtable: *const SlSpotlightVtable,
 }
 
@@ -919,6 +929,12 @@ fn register_plugin_renderables(_config: &Config, store: &mut Store) {
   }
 }
 
+#[cfg(not(feature = "spotlight"))]
+fn register_plugin_spotlights(config: &Config, store: &mut Store) {
+  let _ = (config, store);
+}
+
+#[cfg(feature = "spotlight")]
 fn register_plugin_spotlights(config: &Config, store: &mut Store) {
   let entries: Vec<(String, *mut c_void, *const SlSpotlightVtable)> = spotlights()
     .lock()
@@ -964,6 +980,7 @@ fn register_plugin_spotlights(config: &Config, store: &mut Store) {
   }
 }
 
+#[cfg(feature = "spotlight")]
 fn plugin_display_styles(bits: u32) -> &'static [DisplayStyle] {
   let mut styles = Vec::new();
 
@@ -983,6 +1000,7 @@ fn plugin_display_styles(bits: u32) -> &'static [DisplayStyle] {
   Box::leak(styles.into_boxed_slice())
 }
 
+#[cfg(feature = "spotlight")]
 fn make_trigger_fn(
   config: usize,
   ctx: usize,
@@ -992,6 +1010,7 @@ fn make_trigger_fn(
   Box::new(move |query: &str| plugin_spotlight_trigger_check(config, ctx, vtable, state, query))
 }
 
+#[cfg(feature = "spotlight")]
 fn plugin_spotlight_trigger_check(
   config: usize,
   ctx: usize,
@@ -1013,6 +1032,7 @@ fn plugin_spotlight_trigger_check(
   unsafe { trigger_check(ctx_ptr, state_ptr, query_sl) }
 }
 
+#[cfg(feature = "spotlight")]
 fn plugin_spotlight_generate(
   config: usize,
   ctx: usize,
@@ -2683,10 +2703,14 @@ unsafe extern "C" fn host_notify(ctx: *mut c_void, notification: *const SlNotifi
 }
 
 pub enum Bag<'a> {
+  #[cfg(feature = "panels")]
   Options(Option<&'a ComponentOptions>),
+  #[cfg(not(feature = "panels"))]
+  Options(Option<()>),
   Monitor(&'a str),
 }
 
+#[cfg(feature = "panels")]
 impl<'a> Bag<'a> {
   fn get_str(&self, key: &str) -> Option<&'a str> {
     match self {
@@ -2724,15 +2748,24 @@ unsafe extern "C" fn host_get_str(bag: *mut c_void, key: SlStr, out: *mut SlStr)
     return -1;
   }
 
+  #[cfg(not(feature = "panels"))]
+  let _ = key;
+
+  #[cfg(feature = "panels")]
   let bag = unsafe { &*(bag as *const Bag) };
+  #[cfg(feature = "panels")]
   let Some(key) = (unsafe { key.as_str() }) else {
     return -1;
   };
+  #[cfg(feature = "panels")]
   let Some(value) = bag.get_str(key) else {
     return -1;
   };
 
-  unsafe { *out = SlStr::from_str(value) };
+  #[cfg(feature = "panels")]
+  unsafe {
+    *out = SlStr::from_str(value)
+  };
   0
 }
 
@@ -2741,15 +2774,25 @@ unsafe extern "C" fn host_get_f64(bag: *mut c_void, key: SlStr, out: *mut f64) -
     return -1;
   }
 
+  #[cfg(not(feature = "panels"))]
+  let _ = key;
+
+  #[cfg(feature = "panels")]
   let bag = unsafe { &*(bag as *const Bag) };
+  #[cfg(feature = "panels")]
   let Some(key) = (unsafe { key.as_str() }) else {
     return -1;
   };
+
+  #[cfg(feature = "panels")]
   let Some(value) = bag.get_f64(key) else {
     return -1;
   };
 
-  unsafe { *out = value };
+  #[cfg(feature = "panels")]
+  unsafe {
+    *out = value
+  };
   0
 }
 
@@ -2758,15 +2801,24 @@ unsafe extern "C" fn host_get_i64(bag: *mut c_void, key: SlStr, out: *mut i64) -
     return -1;
   }
 
+  #[cfg(not(feature = "panels"))]
+  let _ = key;
+
+  #[cfg(feature = "panels")]
   let bag = unsafe { &*(bag as *const Bag) };
+  #[cfg(feature = "panels")]
   let Some(key) = (unsafe { key.as_str() }) else {
     return -1;
   };
+  #[cfg(feature = "panels")]
   let Some(value) = bag.get_i64(key) else {
     return -1;
   };
 
-  unsafe { *out = value };
+  #[cfg(feature = "panels")]
+  unsafe {
+    *out = value
+  };
   0
 }
 
@@ -2775,15 +2827,24 @@ unsafe extern "C" fn host_get_bool(bag: *mut c_void, key: SlStr, out: *mut bool)
     return -1;
   }
 
+  #[cfg(not(feature = "panels"))]
+  let _ = key;
+
+  #[cfg(feature = "panels")]
   let bag = unsafe { &*(bag as *const Bag) };
+  #[cfg(feature = "panels")]
   let Some(key) = (unsafe { key.as_str() }) else {
     return -1;
   };
+  #[cfg(feature = "panels")]
   let Some(value) = bag.get_bool(key) else {
     return -1;
   };
 
-  unsafe { *out = value };
+  #[cfg(feature = "panels")]
+  unsafe {
+    *out = value
+  };
   0
 }
 
@@ -3159,6 +3220,7 @@ fn with_plugin_calls<R>(f: impl FnOnce() -> R) -> (R, PluginCalls) {
 
 static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
+#[cfg(feature = "panels")]
 struct PluginComponent {
   ctx: *mut c_void,
   vtable: *const SlComponentVtable,
@@ -3168,8 +3230,10 @@ struct PluginComponent {
   fds: Vec<(i32, u32)>,
 }
 
+#[cfg(feature = "panels")]
 unsafe impl Send for PluginComponent {}
 
+#[cfg(feature = "panels")]
 impl PluginComponent {
   fn new(ctx: *mut c_void, vtable: *const SlComponentVtable, state: *mut c_void) -> Self {
     let id = NEXT_INSTANCE_ID.fetch_add(1, Ordering::Relaxed);
@@ -3248,6 +3312,7 @@ fn clear_plugin_calls(timers: &mut Vec<(i32, u32)>, fds: &mut Vec<(i32, u32)>, s
   }
 }
 
+#[cfg(feature = "panels")]
 impl Drop for PluginComponent {
   fn drop(&mut self) {
     if let Some(destroy) = unsafe { (*self.vtable).destroy } {
@@ -3256,6 +3321,7 @@ impl Drop for PluginComponent {
   }
 }
 
+#[cfg(feature = "panels")]
 impl Component for PluginComponent {
   fn events(&self) -> Vec<EventFilter> {
     let Some(events) = (unsafe { (*self.vtable).events }) else {
@@ -4688,6 +4754,7 @@ style "example/card" {
     assert_eq!(geometry.scale, 1.0);
   }
 
+  #[cfg(feature = "panels")]
   #[test]
   fn monitor_bag_exposes_the_monitor_name() {
     let bag = Bag::Monitor("DP-1");
@@ -4792,6 +4859,7 @@ style "example/card" {
     assert!(cmd_rx.try_recv().is_err());
   }
 
+  #[cfg(feature = "panels")]
   #[test]
   fn component_check_view_is_honored() {
     unsafe extern "C" fn deny(_ctx: *mut c_void, _state: *mut c_void, _opts: *mut c_void) -> bool {
@@ -4817,6 +4885,7 @@ style "example/card" {
     };
     let component = PluginComponent::new(core::ptr::null_mut(), &base, core::ptr::null_mut());
     let store = Store::new();
+    #[cfg(feature = "panels")]
     assert!(!component.check_view(&store, None));
 
     let plain = SlComponentVtable {

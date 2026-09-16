@@ -1,9 +1,11 @@
+#[cfg(feature = "panels")]
 use slowshell_components::{ComponentRegistration, Components};
 use slowshell_config::{
   Config,
   style::{ColorValue, StyleValue},
 };
 use slowshell_core::Store;
+#[cfg(feature = "panels")]
 use slowshell_panels::PanelPositions;
 use slowshell_registry::{GlobalRegistry, ResourceRegistration};
 use slowshell_widgets::Renderables;
@@ -27,6 +29,7 @@ pub fn styles() -> miette::Result<()> {
   Ok(())
 }
 
+#[cfg(feature = "plugins")]
 pub fn plugins() -> miette::Result<()> {
   let loaded = crate::daemon::load();
 
@@ -55,6 +58,7 @@ pub fn renderables() -> miette::Result<()> {
     })
     .collect();
 
+  #[cfg(feature = "plugins")]
   names.extend(slowshell_plugin_host::renderable_names());
   names.sort();
   names.dedup();
@@ -66,6 +70,7 @@ pub fn renderables() -> miette::Result<()> {
   Ok(())
 }
 
+#[cfg(feature = "panels")]
 pub fn components() -> miette::Result<()> {
   let mut loaded = crate::daemon::load();
 
@@ -107,6 +112,7 @@ pub fn items() -> miette::Result<()> {
   Ok(())
 }
 
+#[cfg(feature = "spotlight")]
 pub fn spotlights() -> miette::Result<()> {
   let loaded = crate::daemon::load();
 
@@ -116,6 +122,7 @@ pub fn spotlights() -> miette::Result<()> {
     .map(|key| key.to_string())
     .collect();
 
+  #[cfg(feature = "plugins")]
   names.extend(slowshell_plugin_host::spotlight_names());
   names.sort();
   names.dedup();
@@ -209,6 +216,8 @@ pub fn config_show() -> miette::Result<()> {
 
 fn context_store(registry: &mut GlobalRegistry, config: &Config) -> Store {
   let mut store = Store::new();
+
+  #[cfg(feature = "panels")]
   store.insert(PanelPositions::default());
 
   let mut renderables = Renderables::default();
@@ -219,10 +228,13 @@ fn context_store(registry: &mut GlobalRegistry, config: &Config) -> Store {
   }
   store.insert(renderables);
 
-  let mut components = Components::default();
-  slowshell_components::register_all(&mut components);
-  crate::app::register_plugin_components(registry, &mut components);
-  store.insert(components);
+  #[cfg(feature = "panels")]
+  {
+    let mut components = Components::default();
+    slowshell_components::register_all(&mut components);
+    crate::app::register_plugin_components(registry, &mut components);
+    store.insert(components);
+  }
 
   store
 }

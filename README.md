@@ -206,6 +206,19 @@ cargo build --release
 cargo run -- daemon
 ```
 
+You can also compile with only the features you prefer:
+
+```sh
+# only sway, panels without the service components
+cargo build --release --no-default-features --features compositor-wlr,panels
+
+# niri only, panels with just audio and the tray
+cargo build --release --no-default-features \
+  --features compositor-niri,panels,components-audio,components-tray
+```
+
+> Note: For a list of all components, check the cargo.toml
+
 ## Usage
 
 ```text
@@ -239,7 +252,7 @@ echo -n "exec spotlight.toggle" | socat - UNIX-CONNECT:/tmp/slowshell.sock
 
 Configuration is looked up in `$HOME/.config/slowshell/config.kdl` (falling back to
 `$HOME/.local/share/slowshell/config.kdl` and `/usr/share/slowshell/config.kdl`)
-and hot-reloads on change. A full example is in [`example.kdl`](example.kdl);
+and hot-reloads on change. Look at [`example.kdl`](https://tangled.org/bushyice.com/slowshell/blob/main/example.kdl) for a full example.
 
 ```kdl
 font "Lexend"
@@ -455,27 +468,37 @@ Include the header and export the three symbols. A minimal component:
 typedef struct { unsigned ticks; } Hello;
 
 static void *hello_create(void *ctx) { (void)ctx; return calloc(1, sizeof(Hello)); }
+
 static void  hello_destroy(void *ctx, void *s) { (void)ctx; free(s); }
+
 static uint32_t hello_events(void *ctx, void *s) { (void)ctx; (void)s; return SL_EVENT_MASK_TICK; }
+
 static void  hello_watch(void *ctx, void *s, void *o) { (void)ctx; (void)s; (void)o; }
+
 static SlEffect hello_update(void *ctx, void *s, const SlEvent *e) {
   (void)ctx;
   Hello *h = s;
   if (e->kind == SL_EVENT_TICK) h->ticks++;
   return (SlEffect){ .code = SL_EFFECT_NONE };
 }
+
 static bool hello_check_view(void *ctx, void *s, void *o) { (void)ctx; (void)s; (void)o; return true; }
+
 static void hello_stop(void *ctx, void *s) { (void)ctx; (void)s; }
 
 static void hello_view(void *ctx, void *s, void *o, SlNodeList *out) {
   (void)ctx; (void)o;
+
   static char buf[64];
   static SlNode node;
+
   memset(&node, 0, sizeof node);
   snprintf(buf, sizeof buf, "hello %u", ((Hello *)s)->ticks);
+
   node.kind = SL_NODE_TEXT;
   node.text = (SlStr){ (const uint8_t *)buf, strlen(buf) };
   node.size = 12.0f;
+
   out->nodes = &node;
   out->len = 1;
 }

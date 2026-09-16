@@ -3,16 +3,22 @@ name = "slowshell-plugin-host"
 version = "0.1.0"
 edition = "2024"
 
+
+[features]
+default = ["spotlight", "panels"]
+spotlight = ["slowshell-spotlight"]
+panels = ["slowshell-components"]
+
 [dependencies]
 slowshell-plugin = { path = "../plugin" }
 slowshell-registry = { path = "../registry" }
 slowshell-core = { path = "../core" }
 slowshell-config = { path = "../config" }
 slowshell-commons = { path = "../commons" }
-slowshell-components = { path = "../components" }
-slowshell-compositor = { path = "../compositor" }
+slowshell-components = { path = "../components", optional = true, default-features = false }
+slowshell-compositor = { path = "../compositor", default-features = false }
 slowshell-desktop = { path = "../desktop" }
-slowshell-spotlight = { path = "../spotlight" }
+slowshell-spotlight = { path = "../spotlight", optional = true }
 slowshell-widgets = { path = "../widgets" }
 iced.workspace = true
 iced_layershell.workspace = true
