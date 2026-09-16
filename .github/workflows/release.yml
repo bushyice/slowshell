@@ -26,18 +26,19 @@ jobs:
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 4G
 
-      - name: Build and package
+      - name: Bundle slowshell
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           pkg="slowshell-${version}"
           mkdir -p dist
 
-          nix --extra-experimental-features 'nix-command flakes' build .# -o result
+          nix --extra-experimental-features 'nix-command flakes' \
+            bundle --bundler github:NixOS/bundlers#toArx -o slowshell .#
 
           mkdir -p "dist/$pkg"
-
-          cp -rL result/. "dist/$pkg/"
+          cp -L slowshell "dist/$pkg/slowshell"
+          chmod +x "dist/$pkg/slowshell"
           for extra in assets themes example.kdl README.md; do
             [ -e "$extra" ] && cp -r "$extra" "dist/$pkg/"
           done
