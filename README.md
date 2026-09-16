@@ -137,7 +137,9 @@ slowshell ipc spotlight.toggle clipboard
 
 Note: Do `slowshell list spotlights` for all the modes.
 
-## Optional Requirements
+## Getting started
+
+### Optional Requirements
 - Audio: PipeWire / `wpctl`
 - Bluetooth: BlueZ
 - Networking: NetworkManager
@@ -146,7 +148,11 @@ Note: Do `slowshell list spotlights` for all the modes.
 - Wallpapers: `swaybg`, `swww`, or `hyprpaper`
 - Clipboard: `cliphist`
 
-## Building and running
+### Installing
+
+Coming soon
+
+### Building
 
 ### Nix
 
