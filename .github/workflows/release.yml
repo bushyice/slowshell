@@ -33,8 +33,10 @@ jobs:
           pkg="slowshell-${version}"
           mkdir -p dist
 
+          # Point at the package explicitly: `nix bundle .#` resolves
+          # `apps.<system>.default`, whose app attrset has no `pname`.
           nix --extra-experimental-features 'nix-command flakes' \
-            bundle --bundler github:NixOS/bundlers#toArx -o slowshell .#
+            bundle --bundler github:NixOS/bundlers#toArx -o slowshell .#slowshell
 
           mkdir -p "dist/$pkg"
           cp -L slowshell "dist/$pkg/slowshell"
