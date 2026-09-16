@@ -1,3 +1,4 @@
+
 name: release
 
 on:
@@ -15,32 +16,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
+      - uses: dtolnay/rust-toolchain@stable
 
-      - uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 4G
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Bundle slowshell
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libwayland-dev \
+            libwayland-bin \
+            libxkbcommon-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            libgles2-mesa-dev \
+            libvulkan-dev
+
+      - name: Build
+        run: cargo build --release --locked -p slowshell --bin slowshell
+
+      - name: Package
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           pkg="slowshell-${version}"
-          mkdir -p dist
-
-          # Point at the package explicitly: `nix bundle .#` resolves
-          # `apps.<system>.default`, whose app attrset has no `pname`.
-          nix --extra-experimental-features 'nix-command flakes' \
-            bundle --bundler github:NixOS/bundlers#toArx -o slowshell .#slowshell
-
           mkdir -p "dist/$pkg"
-          cp -L slowshell "dist/$pkg/slowshell"
-          chmod +x "dist/$pkg/slowshell"
+
+          cp target/release/slowshell "dist/$pkg/slowshell"
           for extra in assets themes example.kdl README.md; do
             [ -e "$extra" ] && cp -r "$extra" "dist/$pkg/"
           done
