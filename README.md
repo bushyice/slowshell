@@ -150,7 +150,42 @@ Note: Do `slowshell list spotlights` for all the modes.
 
 ### Installing
 
-Coming soon
+**Nix**
+
+Since slowshell has a flake, you could either run it or install it from github:
+
+```sh
+nix run github:bushyice/slowshell
+nix profile install github:bushyice/slowshell
+```
+
+Or as an input in your flake:
+
+```nix
+{
+  inputs.slowshell.url = "github:bushyice/slowshell";
+
+  outputs = { self, nixpkgs, slowshell, ... }: {
+    nixosConfigurations.machine = nixpkgs.lib.nixosSystem {
+      modules = [{
+        environment.systemPackages = [
+          slowshell.packages.${pkgs.system}.default
+        ];
+      }];
+    };
+  };
+}
+```
+
+**Other distros**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/bushyice/slowshell/main/install.sh | sh
+# or
+curl -fsSL .../install.sh | sh -s -- --version 0.0.1
+# or
+curl -fsSL .../install.sh | sh -s -- --path /usr/local/bin
+```
 
 ### Building
 
