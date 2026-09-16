@@ -57,7 +57,14 @@
         craneLib = crane.mkLib pkgs;
         libs = runtimeLibs pkgs;
 
-        src = craneLib.cleanCargoSource ./.;
+        src = lib.fileset.toSource {
+          root = ./.;
+          fileset = lib.fileset.unions [
+            (craneLib.fileset.commonCargoSources ./.)
+            ./assets
+            (lib.fileset.fileFilter (file: file.hasExt "kdl") ./.)
+          ];
+        };
 
         shellCrate = craneLib.crateNameFromCargoToml {
           cargoToml = ./crates/slowshell/Cargo.toml;
