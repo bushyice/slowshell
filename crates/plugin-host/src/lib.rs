@@ -374,6 +374,7 @@ enum Pending {
 thread_local! {
   static PENDING: RefCell<Vec<Pending>> = const { RefCell::new(Vec::new()) };
   static CURRENT_PLUGIN: RefCell<Option<String>> = const { RefCell::new(None) };
+  static PERSISTENCE_OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
@@ -603,6 +604,72 @@ unsafe extern "C" fn host_registry_subscribe(
   0
 }
 
+unsafe extern "C" fn host_persistence_get(ctx: *mut c_void, key: SlStr, out: *mut SlStr) -> i32 {
+  if out.is_null() {
+    return -1;
+  }
+  let Some(key) = (unsafe { key.as_str() }) else {
+    return -1;
+  };
+  let Some(plugin_id) = plugin_id_from_ctx(ctx) else {
+    return -1;
+  };
+
+  let value = with_plugin_persistence(&plugin_id, |map| map.get(key).cloned());
+  let Some(value) = value else {
+    return -1;
+  };
+
+  PERSISTENCE_OUT.with(|scratch| {
+    let mut scratch = scratch.borrow_mut();
+    scratch.clear();
+    scratch.extend_from_slice(value.as_bytes());
+    let bytes = scratch.as_slice();
+    unsafe {
+      *out = SlStr {
+        ptr: bytes.as_ptr(),
+        len: bytes.len(),
+      };
+    }
+  });
+
+  0
+}
+
+unsafe extern "C" fn host_persistence_set(ctx: *mut c_void, key: SlStr, value: SlStr) -> i32 {
+  let (Some(key), Some(value)) = (unsafe { key.as_str() }, unsafe { value.as_str() }) else {
+    return -1;
+  };
+  let Some(plugin_id) = plugin_id_from_ctx(ctx) else {
+    return -1;
+  };
+
+  let snapshot = with_plugin_persistence(&plugin_id, |map| {
+    map.insert(key.to_owned(), value.to_owned());
+    map.clone()
+  });
+  flush_plugin_persistence(&plugin_id, &snapshot);
+
+  0
+}
+
+unsafe extern "C" fn host_persistence_remove(ctx: *mut c_void, key: SlStr) -> i32 {
+  let Some(key) = (unsafe { key.as_str() }) else {
+    return -1;
+  };
+  let Some(plugin_id) = plugin_id_from_ctx(ctx) else {
+    return -1;
+  };
+
+  let snapshot = with_plugin_persistence(&plugin_id, |map| {
+    map.remove(key);
+    map.clone()
+  });
+  flush_plugin_persistence(&plugin_id, &snapshot);
+
+  0
+}
+
 struct PluginInstance {
   plugin_id: String,
   compositor_state: CompositorState,
@@ -614,6 +681,55 @@ impl PluginInstance {
       plugin_id: plugin_id.to_owned(),
       compositor_state: CompositorState::default(),
     }
+  }
+}
+
+fn plugin_persistence() -> &'static Mutex<HashMap<String, HashMap<String, String>>> {
+  static STORE: OnceLock<Mutex<HashMap<String, HashMap<String, String>>>> = OnceLock::new();
+  STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn persistence_file(plugin_id: &str) -> String {
+  let sanitized: String = plugin_id
+    .chars()
+    .map(|c| {
+      if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') {
+        c
+      } else {
+        '_'
+      }
+    })
+    .collect();
+
+  format!("plugin-{sanitized}")
+}
+
+fn plugin_id_from_ctx(ctx: *mut c_void) -> Option<String> {
+  if ctx.is_null() {
+    return None;
+  }
+  Some(
+    unsafe { &*(ctx as *const PluginInstance) }
+      .plugin_id
+      .clone(),
+  )
+}
+
+fn with_plugin_persistence<R>(
+  plugin_id: &str,
+  f: impl FnOnce(&mut HashMap<String, String>) -> R,
+) -> R {
+  let mut store = plugin_persistence().lock().unwrap();
+  let map = store.entry(plugin_id.to_owned()).or_insert_with(|| {
+    slowshell_core::persistence::load(persistence_file(plugin_id)).unwrap_or_default()
+  });
+
+  f(map)
+}
+
+fn flush_plugin_persistence(plugin_id: &str, map: &HashMap<String, String>) {
+  if let Err(e) = slowshell_core::persistence::save(persistence_file(plugin_id), map) {
+    eprintln!("[plugin:{plugin_id}] failed to persist state: {e}");
   }
 }
 
@@ -2289,6 +2405,7 @@ impl StagedCompositor {
     }
 
     let window = state.active_window.as_ref().map(|window| SlWindow {
+      id: window.id,
       title: stage_str(&mut strings, Some(&window.title)),
       wclass: stage_str(&mut strings, Some(&window.class)),
     });
@@ -2460,6 +2577,9 @@ static HOST_API: SlHostApi = SlHostApi {
   system_state_get: Some(host_system_state_get),
   tray_state_get: Some(host_tray_state_get),
   power_state_get: Some(host_power_state_get),
+  persistence_get: Some(host_persistence_get),
+  persistence_set: Some(host_persistence_set),
+  persistence_remove: Some(host_persistence_remove),
 };
 
 unsafe extern "C" fn host_register_component(
@@ -3082,12 +3202,14 @@ unsafe fn convert_compositor_state(state: &SlCompositorState) -> CompositorState
   } else {
     let window = unsafe { &*state.active_window };
     Some(Window {
+      id: window.id,
       title: unsafe { window.title.as_str() }
         .unwrap_or_default()
         .to_owned(),
       class: unsafe { window.wclass.as_str() }
         .unwrap_or_default()
         .to_owned(),
+      is_active: true,
       metadata: HashMap::new(),
     })
   };
@@ -3095,6 +3217,7 @@ unsafe fn convert_compositor_state(state: &SlCompositorState) -> CompositorState
   CompositorState {
     monitors,
     active_window,
+    active_windows: Vec::new(),
     workspaces,
     overview_active: state.overview_active,
   }
@@ -3954,6 +4077,10 @@ impl Compositor for PluginCompositor {
         slowshell_plugin::sl_compositor_command::FOCUS_WORKSPACE,
         index,
       ),
+      CompositorCommand::FocusWindow(id) => (
+        slowshell_plugin::sl_compositor_command::FOCUS_WINDOW,
+        id as i32,
+      ),
     };
 
     if let Some(send) = unsafe { (*self.vtable).send_command } {
@@ -4706,10 +4833,13 @@ style "example/card" {
     let state = CompositorState {
       monitors,
       active_window: Some(Window {
+        id: 1,
         title: "terminal".into(),
         class: "kitty".into(),
+        is_active: true,
         metadata: HashMap::new(),
       }),
+      active_windows: Vec::new(),
       workspaces: vec![Workspace {
         id: 7,
         idx: 3,

@@ -216,6 +216,24 @@ panels {
           name #true
           title #true
         }
+
+        // core/windows - active windows dock, one icon per app_id/class
+        //   icon-size     icon size in px, overrides the style (default: the style)
+        //   pinned        app ids that are always shown, even when closed
+        //   show-titles   app name under each icon (default: #false)
+        //   title-length  characters before the ellipsis (default: 8)
+        //
+        //   left click   focus the app's window, cycle through its instances, or
+        //                launch it when a pinned app has no open window
+        //   shift+click  cycle to the previous instance
+        //   right click  pin / unpin the app (persisted between sessions)
+        component "core/windows" {
+          label "Windows"
+          "icon-size" 22.0
+          pinned "firefox" "kitty"
+          "show-titles" #false
+          "title-length" 8
+        }
       }
 
       center {

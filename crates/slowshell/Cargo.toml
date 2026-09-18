@@ -1,6 +1,6 @@
 [package]
 name = "slowshell"
-version = "0.0.1"
+version.workspace = true
 edition = "2024"
 
 [features]
@@ -20,7 +20,7 @@ base = [
 
 compositors = [
   "compositor-niri",
-  "compositor-wlr",
+  "compositor-sway",
 ]
 
 components = [
@@ -45,7 +45,7 @@ spotlight = ["dep:slowshell-spotlight", "slowshell-plugin-host?/spotlight"]
 notifications = ["dep:slowshell-notifications"]
 
 compositor-niri = ["slowshell-compositor/niri"]
-compositor-wlr = ["slowshell-compositor/wlr"]
+compositor-sway = ["slowshell-compositor/sway"]
 
 components-audio = ["slowshell-components?/audio"]
 components-bluetooth = ["slowshell-components?/bluetooth"]

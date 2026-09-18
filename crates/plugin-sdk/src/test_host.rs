@@ -43,6 +43,7 @@ struct State {
   system: Option<SystemState>,
   tray: Option<TrayState>,
   power: Option<PowerState>,
+  persistence: HashMap<String, String>,
 }
 
 thread_local! {
@@ -1008,6 +1009,36 @@ unsafe extern "C" fn mock_power_state_get(_host: *mut c_void, out: *mut SlPowerS
   0
 }
 
+unsafe extern "C" fn mock_persistence_get(_host: *mut c_void, key: SlStr, out: *mut SlStr) -> i32 {
+  if out.is_null() {
+    return -1;
+  }
+  let Some(key) = (unsafe { key.as_str() }) else {
+    return -1;
+  };
+  let Some(value) = with_state(|state| state.persistence.get(key).cloned()) else {
+    return -1;
+  };
+  unsafe { *out = stage_text(&value) };
+  0
+}
+
+unsafe extern "C" fn mock_persistence_set(_host: *mut c_void, key: SlStr, value: SlStr) -> i32 {
+  let (Some(key), Some(value)) = (unsafe { key.as_str() }, unsafe { value.as_str() }) else {
+    return -1;
+  };
+  with_state(|state| state.persistence.insert(key.to_owned(), value.to_owned()));
+  0
+}
+
+unsafe extern "C" fn mock_persistence_remove(_host: *mut c_void, key: SlStr) -> i32 {
+  let Some(key) = (unsafe { key.as_str() }) else {
+    return -1;
+  };
+  with_state(|state| state.persistence.remove(key));
+  0
+}
+
 static MOCK_API: SlHostApi = SlHostApi {
   size: core::mem::size_of::<SlHostApi>() as u32,
   register_component: Some(mock_register_component),
@@ -1049,6 +1080,9 @@ static MOCK_API: SlHostApi = SlHostApi {
   system_state_get: Some(mock_system_state_get),
   tray_state_get: Some(mock_tray_state_get),
   power_state_get: Some(mock_power_state_get),
+  persistence_get: Some(mock_persistence_get),
+  persistence_set: Some(mock_persistence_set),
+  persistence_remove: Some(mock_persistence_remove),
 };
 
 fn install() {
@@ -2284,5 +2318,27 @@ mod tests {
     let other = Context::new(&MOCK_API, CTX);
     assert!(other.register_registry::<u32>(key, 9));
     assert_eq!(*seen.lock().unwrap(), vec![Some(7), None, Some(9)]);
+  }
+
+  #[test]
+  fn persistence_round_trips_typed_values() {
+    let ctx = Context::new(&MOCK_API, CTX);
+
+    assert_eq!(ctx.persistence_get::<u32>("count"), None);
+    assert!(!ctx.persistence_has("count"));
+
+    assert_eq!(ctx.persistence_open_or_get("count", 3u32), 3);
+    assert_eq!(ctx.persistence_get::<u32>("count"), Some(3));
+    assert!(ctx.persistence_has("count"));
+
+    assert!(ctx.persistence_set("name", &"dock".to_string()));
+    assert_eq!(
+      ctx.persistence_get::<String>("name").as_deref(),
+      Some("dock")
+    );
+
+    assert!(ctx.persistence_remove("name"));
+    assert_eq!(ctx.persistence_get::<String>("name"), None);
+    assert!(!ctx.persistence_has("name"));
   }
 }

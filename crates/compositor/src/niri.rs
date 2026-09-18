@@ -51,6 +51,22 @@ impl Compositor for NiriCompositor {
           }
         }
       }
+      crate::CompositorCommand::FocusWindow(id) => {
+        let socket = self.get_or_connect_cmd_socket()?;
+
+        let reply = socket.send(niri_ipc::Request::Action(niri_ipc::Action::FocusWindow {
+          id,
+        }));
+
+        match reply {
+          Ok(Err(e)) => Err(miette::miette!("niri failed to focus window: {e}")),
+          Ok(Ok(_)) => Ok(Void),
+          Err(e) => {
+            self.cmd_socket = None;
+            Err(e).into_diagnostic()
+          }
+        }
+      }
     }
   }
 
@@ -228,10 +244,30 @@ impl NiriCompositor {
       .values()
       .find(|w| w.is_focused)
       .map(|w| Window {
+        id: w.id,
         title: w.title.clone().unwrap_or_default(),
         class: w.app_id.clone().unwrap_or_default(),
+        is_active: true,
         metadata: Default::default(),
       });
+
+    self.state.active_windows = self
+      ._state
+      .windows
+      .windows
+      .values()
+      .filter_map(|win| {
+        Some(Window {
+          id: win.id,
+          title: win.title.clone()?,
+          class: win.app_id.clone()?,
+          is_active: win.is_focused,
+          metadata: Default::default(),
+        })
+      })
+      .collect();
+
+    self.state.active_windows.sort_unstable_by_key(|w| w.id);
 
     self.state.overview_active = self._state.overview.is_open;
 

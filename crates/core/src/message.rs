@@ -116,6 +116,7 @@ impl Into<EventFilter> for &ListenerAction {
       ListenerAction::None => EventFilter::Tick,
       ListenerAction::StartUp => EventFilter::StartUp,
       ListenerAction::FocusWorkspace(_) => EventFilter::Tick,
+      ListenerAction::FocusWindow(_) => EventFilter::Tick,
       ListenerAction::Ipc(cmd) => EventFilter::Ipc(cmd.clone()),
       ListenerAction::Payload { name, .. } => EventFilter::Payload(name.clone()),
     }

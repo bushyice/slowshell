@@ -751,6 +751,87 @@ impl Context {
     (unsafe { dispatch(self.ctx, SlStr::from_str(command)) }) == 0
   }
 
+  pub fn persistence_get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+    let raw = self.persistence_raw(key)?;
+
+    match ron::from_str::<T>(&raw) {
+      Ok(value) => Some(value),
+      Err(e) => {
+        self.log(
+          sl_log_level::WARN,
+          &format!("[persistence] failed to decode {key:?}: {e}"),
+        );
+        None
+      }
+    }
+  }
+
+  pub fn persistence_open_or_get<T>(&self, key: &str, default: T) -> T
+  where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+  {
+    match self.persistence_get(key) {
+      Some(value) => value,
+      None => {
+        self.persistence_set(key, &default);
+        default
+      }
+    }
+  }
+
+  pub fn persistence_set<T: serde::Serialize>(&self, key: &str, value: &T) -> bool {
+    if self.api.is_null() {
+      return false;
+    }
+    let Some(set) = (unsafe { (*self.api).persistence_set }) else {
+      return false;
+    };
+    let Ok(raw) = ron::ser::to_string(value) else {
+      return false;
+    };
+    (unsafe { set(self.ctx, SlStr::from_str(key), SlStr::from_str(&raw)) }) == 0
+  }
+
+  pub fn persistence_remove(&self, key: &str) -> bool {
+    if self.api.is_null() {
+      return false;
+    }
+    let Some(remove) = (unsafe { (*self.api).persistence_remove }) else {
+      return false;
+    };
+    (unsafe { remove(self.ctx, SlStr::from_str(key)) }) == 0
+  }
+
+  pub fn persistence_has(&self, key: &str) -> bool {
+    self.persistence_raw(key).is_some()
+  }
+
+  pub fn persistence_get_raw(&self, key: &str) -> Option<String> {
+    self.persistence_raw(key)
+  }
+
+  pub fn persistence_set_raw(&self, key: &str, value: &str) -> bool {
+    if self.api.is_null() {
+      return false;
+    }
+    let Some(set) = (unsafe { (*self.api).persistence_set }) else {
+      return false;
+    };
+    (unsafe { set(self.ctx, SlStr::from_str(key), SlStr::from_str(value)) }) == 0
+  }
+
+  fn persistence_raw(&self, key: &str) -> Option<String> {
+    if self.api.is_null() {
+      return None;
+    }
+    let get = unsafe { (*self.api).persistence_get }?;
+    let mut out = SlStr::EMPTY;
+    if unsafe { get(self.ctx, SlStr::from_str(key), &mut out) } != 0 {
+      return None;
+    }
+    unsafe { out.as_str() }.map(str::to_owned)
+  }
+
   pub fn audio_state(&self) -> Option<AudioState> {
     if self.api.is_null() {
       return None;
@@ -1029,6 +1110,7 @@ pub struct Workspace {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Window {
+  pub id: u64,
   pub title: String,
   pub class: String,
 }
@@ -1085,6 +1167,7 @@ impl CompositorState {
     } else {
       let window = unsafe { &*state.active_window };
       Some(Window {
+        id: window.id,
         title: unsafe { window.title.as_str() }
           .unwrap_or_default()
           .to_owned(),
@@ -1160,6 +1243,7 @@ fn compositor_state_abi(state: &CompositorState) -> SlCompositorStateAbi {
   }
 
   let window = state.active_window.as_ref().map(|window| SlWindow {
+    id: window.id,
     title: intern(&mut strings, Some(&window.title)),
     wclass: intern(&mut strings, Some(&window.class)),
   });
@@ -4139,6 +4223,7 @@ mod tests {
       is_urgent: false,
     };
     let window = SlWindow {
+      id: 0,
       title: SlStr::from_str("terminal"),
       wclass: SlStr::from_str("kitty"),
     };
@@ -4168,6 +4253,7 @@ mod tests {
     assert_eq!(
       copied.active_window,
       Some(Window {
+        id: 0,
         title: "terminal".into(),
         class: "kitty".into(),
       })

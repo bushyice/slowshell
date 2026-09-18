@@ -1,12 +1,9 @@
-use std::{
-  os::unix::process::CommandExt,
-  process::{Command, Stdio},
-};
-
 use slowshell_commons::desktop::DesktopEntries;
 use slowshell_core::Store;
 
 use crate::{SpotlightAction, SpotlightActionDef, SpotlightItem};
+
+pub use slowshell_commons::desktop::spawn_exec as spawn_app;
 
 pub fn search_applications(query: &str, store: &Store) -> Vec<SpotlightItem> {
   let Some(entries) = store.borrow::<DesktopEntries>() else {
@@ -81,80 +78,4 @@ pub fn search_applications(query: &str, store: &Store) -> Vec<SpotlightItem> {
 
   scored_matches.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.title.cmp(&b.1.title)));
   scored_matches.into_iter().map(|(_, item)| item).collect()
-}
-
-pub fn spawn_app(exec_line: &str) {
-  let clean_cmd = clean_exec(exec_line);
-  if clean_cmd.is_empty() {
-    return;
-  }
-
-  let mut parts = shlex_split(&clean_cmd);
-  if parts.is_empty() {
-    return;
-  }
-
-  let program = parts.remove(0);
-
-  let mut cmd = Command::new(program);
-
-  cmd
-    .args(parts)
-    .stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::null());
-
-  unsafe {
-    cmd.pre_exec(|| {
-      libc::setsid();
-      Ok(())
-    });
-  }
-
-  let _ = cmd.spawn();
-}
-
-fn clean_exec(exec: &str) -> String {
-  let mut result = Vec::new();
-  for word in exec.split_whitespace() {
-    if word.starts_with('%') {
-      continue;
-    }
-    result.push(word);
-  }
-  result.join(" ")
-}
-
-fn shlex_split(cmd: &str) -> Vec<String> {
-  let mut args = Vec::new();
-  let mut current = String::new();
-  let mut in_quotes = false;
-  let mut quote_char = ' ';
-
-  for c in cmd.chars() {
-    match c {
-      '"' | '\'' if !in_quotes => {
-        in_quotes = true;
-        quote_char = c;
-      }
-      c if in_quotes && c == quote_char => {
-        in_quotes = false;
-      }
-      c if c.is_whitespace() && !in_quotes => {
-        if !current.is_empty() {
-          args.push(current);
-          current = String::new();
-        }
-      }
-      _ => {
-        current.push(c);
-      }
-    }
-  }
-
-  if !current.is_empty() {
-    args.push(current);
-  }
-
-  args
 }

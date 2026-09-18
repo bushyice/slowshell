@@ -25,6 +25,9 @@ members = [
 default-members = ["crates/*"]
 resolver = "2"
 
+[workspace.package]
+version = "0.0.2"
+
 [workspace.dependencies]
 iced = { version = "0.14.0", features = ["image", "tokio", "svg", "lazy", "wgpu", "advanced"] }
 iced_layershell = "0.19.1"

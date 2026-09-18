@@ -1,6 +1,6 @@
 [package]
 name = "slowshell-components"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 
 
@@ -27,4 +27,5 @@ iced.workspace = true
 iced_layershell.workspace = true
 nix.workspace = true
 tokio.workspace = true
+serde.workspace = true
 freedesktop-desktop-entry.workspace = true

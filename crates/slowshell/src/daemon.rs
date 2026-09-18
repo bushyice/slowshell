@@ -36,6 +36,8 @@ pub fn load() -> Loaded {
   slowshell_components::include(&mut registry);
   #[cfg(feature = "panels")]
   slowshell_components::register_vertical_style();
+  #[cfg(feature = "panels")]
+  slowshell_components::register_windows_style();
   slowshell_menus::include(&mut registry);
   #[cfg(feature = "notifications")]
   slowshell_notifications::include(&mut registry);

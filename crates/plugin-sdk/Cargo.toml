@@ -1,11 +1,13 @@
 [package]
 name = "slowshell-plugin-sdk"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 
 [dependencies]
 slowshell-plugin = { path = "../plugin" }
 kdl.workspace = true
+serde.workspace = true
+ron.workspace = true
 
 [features]
 test-host = []

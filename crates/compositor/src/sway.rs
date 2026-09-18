@@ -1,4 +1,5 @@
 use std::{
+  fmt::Debug,
   io::{Read, Write},
   os::{fd::AsRawFd, unix::net::UnixStream},
   path::PathBuf,
@@ -78,6 +79,8 @@ struct SwayWindowProps {
 #[derive(Debug, Deserialize)]
 struct SwayNode {
   #[serde(default)]
+  id: i64,
+  #[serde(default)]
   name: Option<String>,
   #[serde(default)]
   app_id: Option<String>,
@@ -89,6 +92,31 @@ struct SwayNode {
   nodes: Vec<SwayNode>,
   #[serde(default)]
   floating_nodes: Vec<SwayNode>,
+}
+
+impl SwayNode {
+  fn class(&self) -> Option<String> {
+    self.app_id.clone().or_else(|| {
+      self
+        .window_properties
+        .as_ref()
+        .and_then(|p| p.class.clone())
+    })
+  }
+
+  fn is_window(&self) -> bool {
+    self.app_id.is_some() || self.window_properties.is_some()
+  }
+}
+
+fn collect_windows<'a>(node: &'a SwayNode, out: &mut Vec<&'a SwayNode>) {
+  if node.is_window() {
+    out.push(node);
+  }
+
+  for child in node.nodes.iter().chain(node.floating_nodes.iter()) {
+    collect_windows(child, out);
+  }
 }
 
 #[derive(Default)]
@@ -132,38 +160,38 @@ impl WlrCompositor {
   }
 
   fn send_cmd_inner(&mut self, cmd: CompositorCommand) -> Result<Void> {
-    match cmd {
-      CompositorCommand::FocusWorkspace(idx) => {
-        let stream = self.get_or_connect_cmd_socket()?;
-        let command = format!("workspace number {idx}");
-        let payload = serde_json::to_vec(&command).into_diagnostic()?;
+    let command = match cmd {
+      CompositorCommand::FocusWorkspace(idx) => format!("workspace number {idx}"),
+      CompositorCommand::FocusWindow(id) => format!("[con_id={id}] focus"),
+    };
 
-        write_frame(stream, RUN_COMMAND, &payload)?;
+    let stream = self.get_or_connect_cmd_socket()?;
+    let payload = serde_json::to_vec(&command).into_diagnostic()?;
 
-        let (_, reply) = read_frame(stream)?;
-        let reply: serde_json::Value = serde_json::from_slice(&reply).into_diagnostic()?;
+    write_frame(stream, RUN_COMMAND, &payload)?;
 
-        let results = match &reply {
-          serde_json::Value::Array(results) => results.as_slice(),
-          other => std::slice::from_ref(other),
-        };
+    let (_, reply) = read_frame(stream)?;
+    let reply: serde_json::Value = serde_json::from_slice(&reply).into_diagnostic()?;
 
-        if let Some(failure) = results
-          .iter()
-          .find(|result| result.get("success").and_then(serde_json::Value::as_bool) == Some(false))
-        {
-          return Err(miette::miette!(
-            "sway rejected `{command}`: {}",
-            failure
-              .get("error")
-              .and_then(serde_json::Value::as_str)
-              .unwrap_or("unknown error")
-          ));
-        }
+    let results = match &reply {
+      serde_json::Value::Array(results) => results.as_slice(),
+      other => std::slice::from_ref(other),
+    };
 
-        Ok(Void)
-      }
+    if let Some(failure) = results
+      .iter()
+      .find(|result| result.get("success").and_then(serde_json::Value::as_bool) == Some(false))
+    {
+      return Err(miette::miette!(
+        "sway rejected `{command}`: {}",
+        failure
+          .get("error")
+          .and_then(serde_json::Value::as_str)
+          .unwrap_or("unknown error")
+      ));
     }
+
+    Ok(Void)
   }
 
   fn apply_compositor_state(&mut self) -> Result<Void> {
@@ -172,19 +200,26 @@ impl WlrCompositor {
     let tree: SwayNode = self.query(GET_TREE)?;
 
     self.state.active_window = focused_window(&tree).map(|node| Window {
+      id: node.id.max(0) as u64,
       title: node.name.clone().unwrap_or_default(),
-      class: node
-        .app_id
-        .clone()
-        .or_else(|| {
-          node
-            .window_properties
-            .as_ref()
-            .and_then(|props| props.class.clone())
-        })
-        .unwrap_or_default(),
+      class: node.class().unwrap_or_default(),
+      is_active: true,
       metadata: Default::default(),
     });
+
+    let mut windows = Vec::new();
+    collect_windows(&tree, &mut windows);
+
+    self.state.active_windows = windows
+      .into_iter()
+      .map(|win| Window {
+        id: win.id.max(0) as u64,
+        title: win.name.clone().unwrap_or_default(),
+        class: win.class().unwrap_or_default(),
+        is_active: win.focused,
+        metadata: Default::default(),
+      })
+      .collect();
 
     self.state.overview_active = false;
 

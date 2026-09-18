@@ -17,6 +17,7 @@ pub mod sysmon;
 #[cfg(feature = "tray")]
 pub mod tray;
 pub mod window;
+pub mod windows;
 pub mod workspaces;
 
 use std::collections::HashMap;
@@ -329,6 +330,10 @@ pub fn register_all(components: &mut Components) {
     Box::new(|| Box::new(workspaces::Workspaces::default())),
   );
   components.insert("core/window".into(), Box::new(|| Box::new(window::Window)));
+  components.insert(
+    "core/windows".into(),
+    Box::new(|| Box::new(windows::Windows::default())),
+  );
   #[cfg(feature = "audio")]
   components.insert(
     "core/nowplaying".into(),
@@ -349,7 +354,10 @@ slowshell_registry::register_resources!(
       "padding.x" => 9,
       "padding.y" => 5,
     }
-  )
+  ),
+  app: Custom(|store| {
+    slowshell_commons::desktop::DesktopEntries::initialize_unless(store);
+  }),
 );
 
 pub fn register_vertical_style() {
@@ -365,6 +373,24 @@ pub fn register_vertical_style() {
       "spacing" => 8,
       "padding.x" => 5,
       "padding.y" => 4,
+    },
+  );
+}
+
+pub fn register_windows_style() {
+  slowshell_config::style::new_default_style(
+    "windows".into(),
+    slowshell_config::style! {
+      "color" => "text",
+      "color.faded" => "subtext",
+      "color.active" => "primary",
+      "background.active" => "primary/0.18",
+      "font.size" => 11,
+      "icon.size" => 22,
+      "spacing" => 3,
+      "radius" => 6,
+      "padding.x" => 4,
+      "padding.y" => 2,
     },
   );
 }

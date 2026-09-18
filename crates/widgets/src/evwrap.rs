@@ -1,11 +1,31 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use iced::{
   Element, Event, Length,
   advanced::{
     Clipboard, Layout, Shell, layout, mouse, renderer,
     widget::{Tree, Widget},
   },
+  keyboard,
 };
 use slowshell_core::message::ItemMessage;
+
+static SHIFT_DOWN: AtomicBool = AtomicBool::new(false);
+
+pub fn shift_down() -> bool {
+  SHIFT_DOWN.load(Ordering::Relaxed)
+}
+
+pub fn track_modifiers<'a>(content: Element<'a, ItemMessage>) -> Element<'a, ItemMessage> {
+  EventWrapper::new(content, move |event, _layout, _cursor| {
+    if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+      SHIFT_DOWN.store(modifiers.shift(), Ordering::Relaxed);
+    }
+
+    None
+  })
+  .into()
+}
 
 pub struct EventWrapper<'a, Message> {
   content: Element<'a, Message>,

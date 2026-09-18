@@ -1,12 +1,12 @@
 [package]
 name = "slowshell-compositor"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 
 
 [features]
 niri = ["dep:niri-ipc"]
-wlr = []
+sway = []
 
 [dependencies]
 slowshell-core = { path = "../core" }
