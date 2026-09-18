@@ -2,7 +2,7 @@
 
 use core::ffi::c_void;
 
-pub const SL_PLUGIN_ABI_VERSION: u32 = 1;
+pub const SL_PLUGIN_ABI_VERSION: u32 = 2;
 
 pub const SL_PLUGIN_INIT_SYMBOL: &str = "slowshell_plugin_init";
 pub const SL_PLUGIN_META_SYMBOL: &str = "slowshell_plugin_meta";
@@ -322,6 +322,7 @@ pub struct SlWorkspace {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SlWindow {
+  pub id: u64,
   pub title: SlStr,
   pub wclass: SlStr,
 }
@@ -416,6 +417,7 @@ pub struct SlCompositorVtable {
 
 pub mod sl_compositor_command {
   pub const FOCUS_WORKSPACE: u32 = 0;
+  pub const FOCUS_WINDOW: u32 = 1;
 }
 
 pub mod sl_epoll {
@@ -946,6 +948,12 @@ pub type SlConfigParserFn =
 pub type SlConfigParserRegisterFn =
   unsafe extern "C" fn(host: *mut c_void, name: SlStr, callback: SlConfigParserFn) -> i32;
 
+pub type SlPersistenceGetFn =
+  unsafe extern "C" fn(ctx: *mut c_void, key: SlStr, out: *mut SlStr) -> i32;
+pub type SlPersistenceSetFn =
+  unsafe extern "C" fn(ctx: *mut c_void, key: SlStr, value: SlStr) -> i32;
+pub type SlPersistenceRemoveFn = unsafe extern "C" fn(ctx: *mut c_void, key: SlStr) -> i32;
+
 pub type SlPluginErrorFn = unsafe extern "C" fn(ctx: *mut c_void, code: u32, message: SlStr);
 
 pub type SlNotifyFn =
@@ -994,6 +1002,9 @@ pub struct SlHostApi {
   pub system_state_get: Option<SlSystemStateGetFn>,
   pub tray_state_get: Option<SlTrayStateGetFn>,
   pub power_state_get: Option<SlPowerStateGetFn>,
+  pub persistence_get: Option<SlPersistenceGetFn>,
+  pub persistence_set: Option<SlPersistenceSetFn>,
+  pub persistence_remove: Option<SlPersistenceRemoveFn>,
 }
 
 #[repr(C)]

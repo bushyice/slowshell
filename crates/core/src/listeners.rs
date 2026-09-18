@@ -46,6 +46,7 @@ pub enum ListenerAction {
   StartUp,
   Frame,
   FocusWorkspace(u8),
+  FocusWindow(u64),
   None,
 }
 

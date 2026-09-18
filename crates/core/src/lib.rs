@@ -61,8 +61,10 @@ impl Monitor {
 
 #[derive(Debug, Clone)]
 pub struct Window {
+  pub id: u64,
   pub title: String,
   pub class: String,
+  pub is_active: bool,
   // TODO: Make metadata into a proper map
   pub metadata: HashMap<String, String>,
 }

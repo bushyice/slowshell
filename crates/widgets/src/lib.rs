@@ -8,7 +8,7 @@ use slowshell_core::{
 use std::collections::HashMap;
 
 mod evwrap;
-pub use evwrap::{EventWrapper, clickable};
+pub use evwrap::{EventWrapper, clickable, shift_down, track_modifiers};
 
 mod popup;
 pub use popup::{Backdrop, SizedPopup};

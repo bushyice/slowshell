@@ -194,7 +194,9 @@ pub mod desktop {
   use std::{
     cell::RefCell,
     collections::HashMap,
+    os::unix::process::CommandExt,
     path::PathBuf,
+    process::{Command, Stdio},
     sync::{
       Arc, RwLock,
       atomic::{AtomicU64, Ordering},
@@ -231,6 +233,7 @@ pub mod desktop {
     pub all_entries: Vec<PathBuf>,
     pub apps: Arc<Vec<AppEntry>>,
     pub app_id_to_name: Arc<HashMap<String, String>>,
+    pub app_id_to_exec: Arc<HashMap<String, String>>,
   }
 
   #[derive(Clone)]
@@ -243,6 +246,7 @@ pub mod desktop {
     let mut apps = Vec::new();
     let mut seen_execs = std::collections::HashSet::new();
     let mut app_id_to_name = HashMap::new();
+    let mut app_id_to_exec = HashMap::new();
     let mut all_entries = Vec::new();
 
     for path in Iter::new(default_paths()) {
@@ -250,15 +254,23 @@ pub mod desktop {
 
       if let Ok(entry) = DesktopEntry::from_path::<&str>(&path, None) {
         if let Some(name) = entry.name::<&str>(&[]).map(|n| n.to_string()) {
+          let mut keys = Vec::new();
+
           if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
-            app_id_to_name.insert(file_stem.to_lowercase(), name.clone());
+            let key = file_stem.to_lowercase();
+            app_id_to_name.insert(key.clone(), name.clone());
+            keys.push(key);
           }
 
           if let Some(wm_class) = entry.startup_wm_class() {
-            app_id_to_name.insert(wm_class.to_string().to_lowercase(), name.clone());
+            let key = wm_class.to_string().to_lowercase();
+            app_id_to_name.insert(key.clone(), name.clone());
+            keys.push(key);
           }
 
-          app_id_to_name.insert(name.to_lowercase(), name.clone());
+          let key = name.to_lowercase();
+          app_id_to_name.insert(key.clone(), name.clone());
+          keys.push(key);
 
           if let Some(t) = entry.type_() {
             if !t.eq_ignore_ascii_case("Application") {
@@ -269,6 +281,10 @@ pub mod desktop {
           let Some(exec) = entry.exec().map(|s| s.to_string()) else {
             continue;
           };
+
+          for key in &keys {
+            app_id_to_exec.insert(key.clone(), exec.clone());
+          }
 
           let name = entry
             .name::<&str>(&[])
@@ -347,6 +363,7 @@ pub mod desktop {
       all_entries,
       apps: Arc::new(apps),
       app_id_to_name: Arc::new(app_id_to_name),
+      app_id_to_exec: Arc::new(app_id_to_exec),
     }
   }
 
@@ -430,5 +447,99 @@ pub mod desktop {
 
       final_name
     }
+
+    pub fn resolve_exec(&self, app_id: &str) -> Option<String> {
+      let target_id = app_id
+        .split(',')
+        .last()
+        .unwrap_or(app_id)
+        .trim()
+        .to_lowercase();
+
+      let data = self.data.read().unwrap();
+
+      data.app_id_to_exec.get(&target_id).cloned().or_else(|| {
+        target_id
+          .split('.')
+          .last()
+          .and_then(|last_segment| data.app_id_to_exec.get(last_segment).cloned())
+      })
+    }
+  }
+
+  pub fn spawn_exec(exec_line: &str) {
+    let clean_cmd = clean_exec(exec_line);
+    if clean_cmd.is_empty() {
+      return;
+    }
+
+    let mut parts = shlex_split(&clean_cmd);
+    if parts.is_empty() {
+      return;
+    }
+
+    let program = parts.remove(0);
+
+    let mut cmd = Command::new(program);
+
+    cmd
+      .args(parts)
+      .stdin(Stdio::null())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null());
+
+    unsafe {
+      cmd.pre_exec(|| {
+        libc::setsid();
+        Ok(())
+      });
+    }
+
+    let _ = cmd.spawn();
+  }
+
+  fn clean_exec(exec: &str) -> String {
+    let mut result = Vec::new();
+    for word in exec.split_whitespace() {
+      if word.starts_with('%') {
+        continue;
+      }
+      result.push(word);
+    }
+    result.join(" ")
+  }
+
+  fn shlex_split(cmd: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = ' ';
+
+    for c in cmd.chars() {
+      match c {
+        '"' | '\'' if !in_quotes => {
+          in_quotes = true;
+          quote_char = c;
+        }
+        c if in_quotes && c == quote_char => {
+          in_quotes = false;
+        }
+        c if c.is_whitespace() && !in_quotes => {
+          if !current.is_empty() {
+            args.push(current);
+            current = String::new();
+          }
+        }
+        _ => {
+          current.push(c);
+        }
+      }
+    }
+
+    if !current.is_empty() {
+      args.push(current);
+    }
+
+    args
   }
 }

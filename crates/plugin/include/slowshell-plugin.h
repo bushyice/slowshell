@@ -229,6 +229,7 @@ typedef struct {
 } SlWorkspace;
 
 typedef struct {
+  uint64_t id;
   SlStr title;
   SlStr wclass;
 } SlWindow;
@@ -291,6 +292,7 @@ typedef void (*SlCompositorUpdateFn)(void *ctx, void *state);
 typedef void (*SlCompositorCommandFn)(void *ctx, void *state, uint32_t command, int32_t arg);
 
 #define SL_COMPOSITOR_FOCUS_WORKSPACE 0
+#define SL_COMPOSITOR_FOCUS_WINDOW 1
 
 
 #define SL_EPOLL_IN (1u << 0)
@@ -632,14 +634,15 @@ typedef int32_t (*SlStyleGetFn)(void *ctx, SlStr name, SlStyleSheet *out);
 typedef int32_t (*SlThemeGetFn)(void *ctx, SlTheme *out);
 typedef int32_t (*SlStyleRegisterFn)(void *ctx, SlStr name, const SlStyleSheet *sheet);
 typedef int32_t (*SlCompositorStateGetFn)(void *ctx, SlCompositorState *out);
-/* block.ptr is NULL when the named top-level config entry is absent; return
- * nonzero to report that the entry was rejected. */
 typedef int32_t (*SlConfigParserFn)(void *ctx, SlStr name, SlStr block);
 typedef int32_t (*SlConfigParserRegisterFn)(void *host, SlStr name,
                                             SlConfigParserFn callback);
 typedef void (*SlPluginErrorFn)(void *ctx, uint32_t code, SlStr message);
 typedef int32_t (*SlNotifyFn)(void *ctx, const SlNotification *notification);
 typedef int32_t (*SlCompositorRegisterFdFn)(void *ctx, int32_t fd, uint32_t flags);
+typedef int32_t (*SlPersistenceGetFn)(void *ctx, SlStr key, SlStr *out);
+typedef int32_t (*SlPersistenceSetFn)(void *ctx, SlStr key, SlStr value);
+typedef int32_t (*SlPersistenceRemoveFn)(void *ctx, SlStr key);
 
 typedef struct {
   uint32_t size;
@@ -682,6 +685,9 @@ typedef struct {
   SlSystemStateGetFn system_state_get;
   SlTrayStateGetFn tray_state_get;
   SlPowerStateGetFn power_state_get;
+  SlPersistenceGetFn persistence_get;
+  SlPersistenceSetFn persistence_set;
+  SlPersistenceRemoveFn persistence_remove;
 } SlHostApi;
 
 

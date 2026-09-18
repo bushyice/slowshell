@@ -1,7 +1,7 @@
 #[cfg(feature = "niri")]
 pub mod niri;
-#[cfg(feature = "wlr")]
-pub mod wlr;
+#[cfg(feature = "sway")]
+pub mod sway;
 
 use futures_channel::mpsc::UnboundedSender;
 use slowshell_config::Config;
@@ -16,12 +16,14 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub enum CompositorCommand {
   FocusWorkspace(i32),
+  FocusWindow(u64),
 }
 
 #[derive(Debug, Default)]
 pub struct CompositorState {
   pub monitors: HashMap<Ustr, Monitor>,
   pub active_window: Option<Window>,
+  pub active_windows: Vec<Window>,
   pub workspaces: Vec<Workspace>,
   pub overview_active: bool,
 }
@@ -77,10 +79,10 @@ impl CompositorStore {
       .inner
       .insert("niri".into(), Box::new(niri::NiriCompositor::new()));
 
-    #[cfg(feature = "wlr")]
+    #[cfg(feature = "sway")]
     comps
       .inner
-      .insert("sway".into(), Box::new(wlr::WlrCompositor::new()));
+      .insert("sway".into(), Box::new(sway::WlrCompositor::new()));
 
     comps
   }
