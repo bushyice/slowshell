@@ -282,7 +282,7 @@ impl Component for Windows {
         .into()
     };
 
-    track_modifiers(spaced_component(config, ctx, content))
+    track_modifiers(spaced_component(config, ctx, content, false))
   }
 }
 

@@ -620,8 +620,28 @@ impl Default for Config {
 
 pub const FONT: &[u8] = include_bytes!("../../../assets/lexend.ttf");
 
+#[derive(Debug, Clone, Copy)]
+pub struct AnimationsConfig {
+  pub enabled: bool,
+}
+
 #[derive(Clone, Copy)]
 pub struct ConfigParser {
   pub type_id: TypeId,
   pub de: fn(&[KdlNode]) -> miette::Result<Option<Box<dyn Any + Send + Sync>>>,
+}
+
+pub fn animations_parser() -> ConfigParser {
+  ConfigParser {
+    type_id: TypeId::of::<AnimationsConfig>(),
+    de: |nodes| {
+      let Some(node) = find_node(nodes, "animations") else {
+        return Ok(None);
+      };
+
+      Ok(Some(Box::new(AnimationsConfig {
+        enabled: child_bool(node, "enabled").unwrap_or(true),
+      })))
+    },
+  }
 }

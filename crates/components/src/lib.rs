@@ -34,7 +34,7 @@ use slowshell_core::{
   message::{EventFilter, ItemEffect, ItemMessage},
   types::{PayloadBox, ToUstr, Ustr},
 };
-use slowshell_widgets::EventWrapper;
+use slowshell_widgets::{EventWrapper, HoverBackground};
 
 pub trait Component: Send {
   fn events(&self) -> Vec<EventFilter> {
@@ -208,6 +208,7 @@ pub fn spaced_component<'a>(
   config: &Config,
   ctx: &ComponentContext,
   content: Element<'a, ItemMessage>,
+  hoverable: bool,
 ) -> Element<'a, ItemMessage> {
   let style = config.style("item");
   let spacing = style.number("spacing").unwrap_or(4.0);
@@ -218,9 +219,19 @@ pub fn spaced_component<'a>(
     [y, spacing / 2.]
   };
 
-  iced::widget::container(fill_cross(content, ctx.orientation))
-    .padding(padding)
-    .into()
+  let body = iced::widget::container(fill_cross(content, ctx.orientation)).padding(padding);
+
+  if !hoverable {
+    return body.into();
+  }
+
+  let component_style = ctx.resolve_style(config);
+  let radius = component_style.number("hover.radius").unwrap_or(4.0);
+
+  match component_style.get_color(&config.theme, "hover.background") {
+    Some(color) => HoverBackground::new(body, color, radius).into(),
+    None => body.into(),
+  }
 }
 
 pub fn menu_trigger<'a>(
@@ -231,7 +242,7 @@ pub fn menu_trigger<'a>(
   wrapper: bool,
 ) -> Element<'a, ItemMessage> {
   let body = if wrapper {
-    spaced_component(app_config, ctx, content)
+    spaced_component(app_config, ctx, content, true)
   } else {
     fill_cross(content, ctx.orientation)
   };
@@ -353,6 +364,9 @@ slowshell_registry::register_resources!(
       "spacing" => 5,
       "padding.x" => 9,
       "padding.y" => 5,
+      "hover.background" => "primary",
+      "hover.background.opacity" => 0.18,
+      "hover.radius" => 4,
     }
   ),
   app: Custom(|store| {
@@ -373,6 +387,9 @@ pub fn register_vertical_style() {
       "spacing" => 8,
       "padding.x" => 5,
       "padding.y" => 4,
+      "hover.background" => "primary",
+      "hover.background.opacity" => 0.18,
+      "hover.radius" => 4,
     },
   );
 }

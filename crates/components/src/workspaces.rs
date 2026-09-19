@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use iced::{
   Alignment, Element, Length,
-  widget::{Space, column, container, row},
+  widget::{Space, column, container, row, text},
 };
 use slowshell_commons::panels::PanelOrientation;
 use slowshell_compositor::CompositorStore;
@@ -12,7 +12,7 @@ use slowshell_core::{
   listeners::ListenerAction,
   message::{EventFilter, ItemMessage},
 };
-use slowshell_widgets::clickable;
+use slowshell_widgets::{Animated, clickable};
 
 use crate::{Component, ComponentContext, ComponentOptions, spaced_component};
 
@@ -91,6 +91,8 @@ impl Component for Workspaces {
     let radius = style.number("radius").unwrap_or(999.0);
     let border_width = style.number("border.width").unwrap_or(0.0);
     let border_color = style.color(&config.theme, "border.color", config.theme.overlay);
+    let horizontal = ctx.orientation == PanelOrientation::Horizontal;
+    let padding = style.padding([0., 4.]);
 
     let workspaces: Vec<Element<'a, ItemMessage>> = state
       .workspaces
@@ -110,47 +112,49 @@ impl Component for Workspaces {
         let width = if active { active_width } else { inactive_width };
         let idx = workspace.idx;
 
-        let widget = if show_text {
-          container(
-            iced::widget::text(
-              self
-                .override_text
-                .as_ref()
-                .and_then(|t| t.get(&workspace.idx.to_string()).and_then(|v| v.as_str()))
-                .map(|s| s.to_string())
-                .unwrap_or(workspace.name.clone().unwrap_or(workspace.idx.to_string())),
-            )
-            .color(if active {
-              text_color
-            } else {
-              text_color_inactive
-            })
-            .size(font_size),
-          )
-          .padding(style.padding([0., 4.]))
-          .align_x(Alignment::Center)
-          .align_y(Alignment::Center)
-          .width(width)
+        let label = self
+          .override_text
+          .as_ref()
+          .and_then(|t| t.get(&workspace.idx.to_string()).and_then(|v| v.as_str()))
+          .map(|s| s.to_string())
+          .unwrap_or(workspace.name.clone().unwrap_or(workspace.idx.to_string()));
+
+        let background = if active { color } else { color_inactive };
+        let text_color = if active {
+          text_color
         } else {
-          container(if ctx.orientation == PanelOrientation::Horizontal {
-            Space::new().height(Length::Fill).width(width)
+          text_color_inactive
+        };
+
+        let widget = Animated::new(width, move |width| {
+          let width = *width;
+
+          let content: Element<'_, ItemMessage> = if show_text {
+            container(text(label.clone()).color(text_color).size(font_size))
+              .padding(padding)
+              .align_x(Alignment::Center)
+              .align_y(Alignment::Center)
+              .width(width)
+              .into()
+          } else if horizontal {
+            container(Space::new().height(Length::Fill).width(width)).into()
           } else {
-            Space::new().width(Length::Fill).height(width)
-          })
-        }
-        .style(move |_t: &iced::Theme| container::Style {
-          background: if active {
-            Some(color.into())
-          } else {
-            Some(color_inactive.into())
-          },
-          border: iced::Border {
-            radius: radius.into(),
-            width: border_width,
-            color: border_color,
-          },
-          ..Default::default()
-        });
+            container(Space::new().width(Length::Fill).height(width)).into()
+          };
+
+          container(content)
+            .style(move |_t: &iced::Theme| container::Style {
+              background: Some(background.into()),
+              border: iced::Border {
+                radius: radius.into(),
+                width: border_width,
+                color: border_color,
+              },
+              ..Default::default()
+            })
+            .into()
+        })
+        .animates_layout(true);
 
         Some(clickable(widget.into(), move |_, _, _| {
           Some(ItemMessage::Action(ListenerAction::FocusWorkspace(idx)))
@@ -158,12 +162,12 @@ impl Component for Workspaces {
       })
       .collect();
 
-    let content: Element<'a, ItemMessage> = if ctx.orientation == PanelOrientation::Horizontal {
+    let content: Element<'a, ItemMessage> = if horizontal {
       row(workspaces).spacing(spacing).into()
     } else {
       column(workspaces).spacing(spacing).into()
     };
 
-    spaced_component(config, ctx, content)
+    spaced_component(config, ctx, content, false)
   }
 }

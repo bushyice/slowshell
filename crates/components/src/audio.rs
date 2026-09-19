@@ -316,6 +316,6 @@ impl Component for Audio {
         }
       };
 
-    EventWrapper::new(spaced_component(config, ctx, content.into()), action).into()
+    EventWrapper::new(spaced_component(config, ctx, content.into(), true), action).into()
   }
 }

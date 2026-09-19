@@ -1,6 +1,7 @@
 pub mod apps;
 pub mod calc;
 pub mod clipboard;
+pub mod commands;
 
 use std::{
   any::TypeId,
@@ -13,7 +14,7 @@ use std::{
 
 use iced::{
   Alignment, Element, Event, Length, keyboard,
-  widget::{center, column, container, row, space, text},
+  widget::{center, column, container, row, space, text, text::Wrapping},
 };
 use iced_layershell::reexport::{
   Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings,
@@ -21,9 +22,9 @@ use iced_layershell::reexport::{
 use slowshell_commons::desktop::DesktopEntries;
 use slowshell_config::{Config, ConfigParser};
 use slowshell_core::{
-  Store,
+  ActionDispatcher, Store,
   listeners::ListenerAction,
-  types::{OptionalPayloadBox, PayloadBox, PayloadBuilder, Ustr},
+  types::{OptionalPayloadBox, PayloadBox, PayloadBuilder, PayloadBuilderRegistry, Ustr},
 };
 use slowshell_desktop::{
   DesktopItem, EventFilter, ItemEffect, ItemMessage, MonitorScope, UpdateWhen, Visibility,
@@ -99,6 +100,7 @@ pub enum SpotlightAction {
   Clip(String),
   Expand(PathBuf),
   Custom(Arc<dyn Fn() + Send + Sync>),
+  Execute(Ustr),
 }
 
 #[derive(Clone)]
@@ -217,6 +219,12 @@ impl Default for SpotlightModes {
     );
     modes.register_version("clipboard", clipboard::version);
 
+    modes.register_mode(
+      "commands",
+      SpotlightMode::generate(commands::search_commands),
+      false,
+    );
+
     let calc_mode: Ustr = "calculator".into();
     modes.register_mode(
       calc_mode.clone(),
@@ -246,6 +254,11 @@ impl Default for SpotlightModes {
     modes.triggers.push(Trigger {
       target_mode: calc_mode,
       check: Box::new(|q| calc::is_math_expression(q)),
+    });
+
+    modes.triggers.push(Trigger {
+      target_mode: "commands".into(),
+      check: Box::new(|q| q.starts_with("/") || q == "/"),
     });
 
     modes
@@ -398,7 +411,7 @@ impl Spotlight {
     }
   }
 
-  fn execute_action(action: SpotlightAction) {
+  fn execute_action(store: Option<&Store>, query: &str, action: SpotlightAction) {
     match action {
       SpotlightAction::Exec(cmd) => {
         apps::spawn_app(&cmd);
@@ -413,6 +426,33 @@ impl Spotlight {
       SpotlightAction::Custom(f) => {
         f();
       }
+      SpotlightAction::Execute(name) => {
+        Self::execute_command(store, query, &name);
+      }
+    }
+  }
+
+  fn execute_command(store: Option<&Store>, query: &str, name: &str) {
+    let Some(store) = store else {
+      return;
+    };
+    let Some(dispatcher) = store.borrow::<ActionDispatcher>() else {
+      return;
+    };
+
+    let args = commands::command_args(query, name);
+    let payload = store
+      .borrow::<Arc<PayloadBuilderRegistry>>()
+      .and_then(|builders| builders.build(name, &args));
+
+    if payload.is_some() {
+      dispatcher.dispatch_payload(name, payload);
+    } else {
+      let action = slowshell_core::commands::commands()
+        .get(name)
+        .map(|command| command.action)
+        .unwrap_or_else(|| ListenerAction::Named(name.into()));
+      dispatcher.dispatch_action(action);
     }
   }
 
@@ -556,15 +596,22 @@ impl DesktopItem for Spotlight {
     }
   }
 
-  fn handle_message(&mut self, _store: Option<&mut Store>, message: &ItemMessage) -> ItemEffect {
+  fn handle_message(&mut self, store: Option<&mut Store>, message: &ItemMessage) -> ItemEffect {
     match message {
       ItemMessage::Effect(_, ItemEffect::Redraw) => {
-        let mut inner = self.inner.lock().unwrap();
-        if inner.should_close {
-          if let Some(action) = inner.pending_action.take() {
-            Self::execute_action(action);
+        let (should_close, query, action) = {
+          let mut inner = self.inner.lock().unwrap();
+          (
+            inner.should_close,
+            inner.search.clone(),
+            inner.pending_action.take(),
+          )
+        };
+
+        if should_close {
+          if let Some(action) = action {
+            Self::execute_action(store.as_deref(), &query, action);
           }
-          drop(inner);
           self.close();
           self.shown = false;
           return ItemEffect::Hide;
@@ -659,16 +706,18 @@ impl DesktopItem for Spotlight {
 
     let search_font = style.number("search.font.size").unwrap_or(22.0);
     let search_display = if search.is_empty() {
-      container(
+      clipped(
         text(format!("Search {}...", current_mode))
           .size(search_font)
-          .color(style.color(theme, "search.placeholder.color", theme.overlay)),
+          .color(style.color(theme, "search.placeholder.color", theme.overlay))
+          .wrapping(Wrapping::None),
       )
     } else {
-      container(
+      clipped(
         text(format!("{search}|"))
           .size(search_font)
-          .color(style.color(theme, "search.color", theme.text)),
+          .color(style.color(theme, "search.color", theme.text))
+          .wrapping(Wrapping::None),
       )
     };
 
@@ -694,6 +743,9 @@ impl DesktopItem for Spotlight {
     let result_bg = style.color(theme, "row.background", theme.mantle);
     let selected_bg = style.color(theme, "row.selected", theme.primary);
     let result_color = style.color(theme, "result.color", theme.text);
+    let result_selected_color = style.color(theme, "result.selected.color", theme.text);
+    let result_selected_subtitle_color =
+      style.color(theme, "result.selected.subtitle.color", theme.text);
     let result_font = style.number("result.font.size").unwrap_or(15.0);
     let row_padding = style.number("row.padding").unwrap_or(10.0);
     let spacing = style.number("spacing").unwrap_or(8.0);
@@ -724,19 +776,34 @@ impl DesktopItem for Spotlight {
               )
               .size(28)
               .color(accent_color),
-              text(item.title).size(single_font_size).color(result_color),
+              clipped(
+                text(item.title)
+                  .size(single_font_size)
+                  .color(result_color)
+                  .wrapping(Wrapping::None)
+              ),
             ]
             .spacing(12)
             .align_y(Alignment::Center),
             if let Some(sub) = item.subtitle {
-              text(sub).size(14.0).color(subtext_color)
+              clipped(
+                text(sub)
+                  .size(14.0)
+                  .color(subtext_color)
+                  .wrapping(Wrapping::None),
+              )
             } else {
-              text(String::new())
+              text(String::new()).into()
             },
             if let Some(hint) = item.subtext {
-              text(hint).size(11.0).color(hint_color)
+              clipped(
+                text(hint)
+                  .size(11.0)
+                  .color(hint_color)
+                  .wrapping(Wrapping::None),
+              )
             } else {
-              text(String::new())
+              text(String::new()).into()
             }
           ]
           .spacing(6),
@@ -797,18 +864,35 @@ impl DesktopItem for Spotlight {
 
               let icon_elem = item_icon(item, i, 24);
 
-              let title_elem = text(item.title.clone())
-                .size(result_font)
-                .color(result_color);
+              let title_elem = clipped(
+                text(item.title.clone())
+                  .size(result_font)
+                  .color(if is_selected {
+                    result_selected_color
+                  } else {
+                    result_color
+                  })
+                  .wrapping(Wrapping::None),
+              );
 
               let text_col = if let Some(subtitle) = &item.subtitle {
                 column![
                   title_elem,
-                  text(subtitle.clone()).size(11.0).color(subtext_color)
+                  clipped(
+                    text(subtitle.clone())
+                      .size(11.0)
+                      .color(if is_selected {
+                        result_selected_subtitle_color
+                      } else {
+                        subtext_color
+                      })
+                      .wrapping(Wrapping::None)
+                  )
                 ]
                 .spacing(2)
+                .width(Length::Fill)
               } else {
-                column![title_elem]
+                column![title_elem].width(Length::Fill)
               };
 
               let mut row_content = row![icon_elem, text_col]
@@ -901,10 +985,19 @@ impl DesktopItem for Spotlight {
               let icon: Element<'static, ItemMessage> = container(item_icon(item, i, 36))
                 .center_x(Length::Fill)
                 .into();
-              let title: Element<'static, ItemMessage> =
-                container(text(item.title.clone()).size(12.0).color(result_color))
-                  .center_x(Length::Fill)
-                  .into();
+              let title: Element<'static, ItemMessage> = container(
+                text(item.title.clone())
+                  .size(12.0)
+                  .color(if is_selected {
+                    result_selected_color
+                  } else {
+                    result_color
+                  })
+                  .wrapping(Wrapping::None),
+              )
+              .center_x(Length::Fill)
+              .clip(true)
+              .into();
 
               let mut tile_column = column![icon, title].spacing(8).align_x(Alignment::Center);
 
@@ -919,7 +1012,7 @@ impl DesktopItem for Spotlight {
                     container(
                       text(format!("[{action_label}]"))
                         .size(10.0)
-                        .color(accent_color),
+                        .color(result_selected_color),
                     )
                     .center_x(Length::Fill),
                   );
@@ -978,8 +1071,18 @@ impl DesktopItem for Spotlight {
 
               let mut tile_content = column![preview].spacing(6);
               tile_content = tile_content.push(
-                container(text(item.title.clone()).size(12.0).color(result_color))
-                  .center_x(Length::Fill),
+                container(
+                  text(item.title.clone())
+                    .size(12.0)
+                    .color(if is_selected {
+                      result_selected_color
+                    } else {
+                      result_color
+                    })
+                    .wrapping(Wrapping::None),
+                )
+                .center_x(Length::Fill)
+                .clip(true),
               );
 
               if is_selected {
@@ -1287,6 +1390,10 @@ fn action_defs(item: &SpotlightItem, display: DisplayStyle) -> Vec<SpotlightActi
   item.actions.clone()
 }
 
+fn clipped<'a>(content: impl Into<Element<'a, ItemMessage>>) -> Element<'a, ItemMessage> {
+  container(content).width(Length::Fill).clip(true).into()
+}
+
 fn item_icon(item: &SpotlightItem, index: usize, size: u16) -> Element<'static, ItemMessage> {
   if let Some(path) = &item.image {
     iced::widget::image(iced::widget::image::Handle::from_path(path))
@@ -1423,12 +1530,12 @@ slowshell_registry::register_resources!(
       "spacing" => 8,
       "row.padding" => 10,
       "row.background" => "mantle",
-      "row.background.opacity" => 0.6,
+      "row.background.opacity" => 1.6,
       "row.border.width" => 0,
       "row.border.color" => "overlay",
       "row.border.color.opacity" => 0.15,
       "row.selected" => "primary",
-      "row.selected.opacity" => 0.7,
+      "row.selected.opacity" => 1.0,
       "tag.border.width" => 0,
       "tag.border.color" => "overlay",
       "tag.border.color.opacity" => 0.15,
@@ -1436,10 +1543,12 @@ slowshell_registry::register_resources!(
       "action.border.color" => "overlay",
       "action.border.color.opacity" => 0.15,
       "search.background" => "mantle",
-      "search.background.opacity" => 0.8,
+      "search.background.opacity" => 1.0,
       "search.color" => "text",
       "search.placeholder.color" => "overlay",
       "result.color" => "text",
+      "result.selected.color" => "base",
+      "result.selected.subtitle.color" => "mantle",
       "backdrop" => "crust",
       "backdrop.opacity" => 0.6,
       "search.font.size" => 22,
@@ -1491,5 +1600,57 @@ mod tests {
 
     assert_eq!(action_defs(&with_image, DisplayStyle::List).len(), 1);
     assert_eq!(action_defs(&item(None), DisplayStyle::ImageList).len(), 1);
+  }
+
+  #[test]
+  fn executes_command_payload_or_named() {
+    use slowshell_core::{
+      ActionDispatcher,
+      message::Message,
+      types::{PayloadBox, PayloadBuilder, PayloadBuilderArgs},
+    };
+
+    fn built(_: &str, _: PayloadBuilderArgs) -> Option<PayloadBox> {
+      Some(PayloadBox::new("built"))
+    }
+
+    let (tx, mut rx) = futures_channel::mpsc::unbounded::<Message>();
+    let mut store = Store::new();
+    store.insert(ActionDispatcher(tx));
+
+    let mut builders = PayloadBuilderRegistry::new();
+    builders.register(PayloadBuilder {
+      commands: &["test.spotlight.payload"],
+      build: built,
+    });
+    store.insert(Arc::new(builders));
+
+    slowshell_core::commands::commands().register(slowshell_core::commands::CommandEntry::named(
+      "test.spotlight.named",
+    ));
+
+    Spotlight::execute_command(
+      Some(&store),
+      "test.spotlight.payload value",
+      "test.spotlight.payload",
+    );
+    Spotlight::execute_command(Some(&store), "test.spotlight.named", "test.spotlight.named");
+
+    match rx.try_recv().expect("payload message") {
+      Message::FdUpdate(ListenerAction::Payload { name, payload }) => {
+        assert_eq!(&*name, "test.spotlight.payload");
+        assert_eq!(payload.expect("payload").enforce::<&str>(), &"built");
+      }
+      _ => panic!("unexpected message"),
+    }
+
+    match rx.try_recv().expect("named message") {
+      Message::FdUpdate(ListenerAction::Named(name)) => {
+        assert_eq!(&*name, "test.spotlight.named");
+      }
+      _ => panic!("unexpected message"),
+    }
+
+    slowshell_core::commands::commands().unregister("test.spotlight.named");
   }
 }

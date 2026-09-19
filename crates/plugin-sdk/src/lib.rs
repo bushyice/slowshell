@@ -751,6 +751,16 @@ impl Context {
     (unsafe { dispatch(self.ctx, SlStr::from_str(command)) }) == 0
   }
 
+  pub fn dispatch_with_string(&self, name: &str, payload: &str) -> bool {
+    if self.api.is_null() {
+      return false;
+    }
+    let Some(dispatch) = (unsafe { (*self.api).dispatch_with_string }) else {
+      return false;
+    };
+    (unsafe { dispatch(self.ctx, SlStr::from_str(name), SlStr::from_str(payload)) }) == 0
+  }
+
   pub fn persistence_get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
     let raw = self.persistence_raw(key)?;
 
@@ -2076,6 +2086,95 @@ impl Image {
   }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AnimationKind {
+  #[default]
+  None,
+  Slide,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Easing {
+  Linear,
+  #[default]
+  Ease,
+  EaseIn,
+  EaseOut,
+  EaseInOut,
+}
+
+impl Easing {
+  const fn to_u32(self) -> u32 {
+    match self {
+      Easing::Linear => sl_animation_easing::LINEAR,
+      Easing::Ease => sl_animation_easing::EASE,
+      Easing::EaseIn => sl_animation_easing::EASE_IN,
+      Easing::EaseOut => sl_animation_easing::EASE_OUT,
+      Easing::EaseInOut => sl_animation_easing::EASE_IN_OUT,
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Animation {
+  pub kind: AnimationKind,
+  pub duration_ms: u32,
+  pub easing: Easing,
+  pub offset: (f32, f32),
+  pub tween: bool,
+}
+
+impl Animation {
+  pub const fn slide(offset: (f32, f32)) -> Self {
+    Self {
+      kind: AnimationKind::Slide,
+      duration_ms: 130,
+      easing: Easing::EaseOut,
+      offset,
+      tween: false,
+    }
+  }
+
+  pub const fn tween() -> Self {
+    Self {
+      kind: AnimationKind::None,
+      duration_ms: 130,
+      easing: Easing::EaseOut,
+      offset: (0.0, 0.0),
+      tween: true,
+    }
+  }
+
+  pub const fn duration(mut self, millis: u32) -> Self {
+    self.duration_ms = millis;
+    self
+  }
+
+  pub const fn easing(mut self, easing: Easing) -> Self {
+    self.easing = easing;
+    self
+  }
+
+  pub const fn with_tween(mut self) -> Self {
+    self.tween = true;
+    self
+  }
+
+  fn to_sl(self) -> SlAnimation {
+    SlAnimation {
+      kind: match self.kind {
+        AnimationKind::None => sl_animation_kind::NONE,
+        AnimationKind::Slide => sl_animation_kind::SLIDE,
+      },
+      easing: self.easing.to_u32(),
+      duration_ms: self.duration_ms,
+      offset_x: self.offset.0,
+      offset_y: self.offset.1,
+      tween: self.tween,
+    }
+  }
+}
+
 pub enum Node {
   Row {
     children: Vec<Node>,
@@ -2132,6 +2231,11 @@ pub enum Node {
     width: Length,
     height: Length,
     draw: Box<dyn Fn(&mut [u8])>,
+  },
+
+  Animated {
+    child: Box<Node>,
+    animation: Animation,
   },
 }
 
@@ -2324,6 +2428,21 @@ impl Node {
       },
     }
   }
+
+  pub fn animated(self, animation: Animation) -> Node {
+    Node::Animated {
+      child: Box::new(self),
+      animation,
+    }
+  }
+
+  pub fn slide_in(self, offset: (f32, f32)) -> Node {
+    self.animated(Animation::slide(offset))
+  }
+
+  pub fn tween(self) -> Node {
+    self.animated(Animation::tween())
+  }
 }
 
 struct NodeArena {
@@ -2369,7 +2488,8 @@ impl NodeArena {
       }
       Node::Container { child, .. }
       | Node::Clickable { child, .. }
-      | Node::Scrollable { child, .. } => 1 + NodeArena::total_slots(child),
+      | Node::Scrollable { child, .. }
+      | Node::Animated { child, .. } => 1 + NodeArena::total_slots(child),
       _ => 1,
     }
   }
@@ -2621,6 +2741,13 @@ impl NodeArena {
           node.canvas.data = buffer.as_mut_ptr();
         }
         self.push(node)
+      }
+
+      Node::Animated { child, animation } => {
+        let ptr = self.materialize(child, ctx);
+        let index = unsafe { ptr.offset_from(self.nodes.as_ptr()) } as usize;
+        self.nodes[index].animation = animation.to_sl();
+        unsafe { self.nodes.as_ptr().add(index) }
       }
     }
   }
@@ -2897,6 +3024,10 @@ pub trait Component: Send + 'static {
     true
   }
 
+  fn hoverable() -> bool {
+    true
+  }
+
   fn stop(&mut self, _ctx: &Context) {}
   fn view(&self, ctx: &Context) -> Node;
 }
@@ -3031,6 +3162,14 @@ impl Registrar {
 
   pub fn spotlight<T: Spotlight>(&self, name: &str) {
     unsafe { register_spotlight(self.api, self.host, name, spotlight_vtable::<T>()) };
+  }
+
+  pub fn command(&self, name: &str, title: &str) {
+    unsafe { register_command(self.api, self.host, name, title, "") };
+  }
+
+  pub fn command_with(&self, name: &str, title: &str, description: &str) {
+    unsafe { register_command(self.api, self.host, name, title, description) };
   }
 
   pub fn style(&self, name: &str, sheet: &StyleSheet) {
@@ -3210,6 +3349,7 @@ fn component_vtable<T: Component>() -> &'static SlComponentVtable {
     view: Some(component_view::<T>),
     check_view: Some(component_check_view::<T>),
     stop: Some(component_stop::<T>),
+    hoverable: T::hoverable(),
   }))
 }
 
@@ -3891,6 +4031,34 @@ mod tests {
       assert_eq!(canvas.canvas.height, 8);
       assert_eq!(canvas.canvas.cache_key, 7);
       assert!(canvas.canvas.data.is_null());
+    }
+  }
+
+  #[test]
+  fn materializes_node_animations() {
+    let ctx = Context::new(core::ptr::null(), core::ptr::null_mut());
+    let mut arena = NodeArena::new();
+
+    let slider = Node::text("hello").slide_in((0.0, -8.0));
+    let root = arena.materialize(&slider, &ctx);
+    unsafe {
+      let node = &*root;
+      assert_eq!(node.kind, sl_node_kind::TEXT);
+      assert_eq!(node.text.as_str(), Some("hello"));
+      assert_eq!(node.animation.kind, sl_animation_kind::SLIDE);
+      assert_eq!(node.animation.offset_y, -8.0);
+      assert_eq!(node.animation.duration_ms, 130);
+      assert!(!node.animation.tween);
+    }
+
+    let tweened = Node::progress(0.5).animated(Animation::tween().duration(250));
+    let root = arena.materialize(&tweened, &ctx);
+    unsafe {
+      let node = &*root;
+      assert_eq!(node.kind, sl_node_kind::PROGRESS);
+      assert!(node.animation.tween);
+      assert_eq!(node.animation.kind, sl_animation_kind::NONE);
+      assert_eq!(node.animation.duration_ms, 250);
     }
   }
 

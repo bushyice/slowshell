@@ -202,6 +202,6 @@ impl Component for NowPlaying {
         .into()
     };
 
-    spaced_component(config, ctx, content)
+    spaced_component(config, ctx, content, true)
   }
 }

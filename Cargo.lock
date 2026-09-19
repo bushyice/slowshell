@@ -1824,6 +1824,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "iced_anim"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea7e0f5f848b041abf2907eda96a4c21cbd5c3aee4ade434bd650d898f39e95b"
+dependencies = [
+ "iced_core",
+]
+
+[[package]]
 name = "iced_core"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4310,7 +4319,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "clap",
  "futures-channel",
@@ -4339,7 +4348,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-background"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "iced",
  "iced_layershell",
@@ -4355,7 +4364,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-commons"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "freedesktop-desktop-entry",
  "libc",
@@ -4366,7 +4375,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-components"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "chrono",
  "freedesktop-desktop-entry",
@@ -4387,7 +4396,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-compositor"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "futures-channel",
@@ -4403,7 +4412,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-config"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "iced",
  "kdl",
@@ -4414,7 +4423,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-core"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "futures-channel",
  "iced_layershell",
@@ -4428,7 +4437,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-desktop"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "iced",
  "iced_layershell",
@@ -4440,7 +4449,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-ipc"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "futures-channel",
  "miette",
@@ -4449,7 +4458,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-menus"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "chrono",
  "iced",
@@ -4465,7 +4474,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-notifications"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "iced",
  "iced_layershell",
@@ -4481,9 +4490,10 @@ dependencies = [
 
 [[package]]
 name = "slowshell-panels"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "iced",
+ "iced_anim",
  "iced_layershell",
  "kdl",
  "miette",
@@ -4497,11 +4507,11 @@ dependencies = [
 
 [[package]]
 name = "slowshell-plugin"
-version = "0.0.2"
+version = "0.0.3"
 
 [[package]]
 name = "slowshell-plugin-host"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "futures-channel",
  "iced",
@@ -4526,7 +4536,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-plugin-sdk"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "kdl",
  "ron",
@@ -4536,7 +4546,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-popups"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "iced",
  "iced_layershell",
@@ -4551,7 +4561,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-registry"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "iced",
  "miette",
@@ -4564,7 +4574,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-services"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "futures-util",
  "libc",
@@ -4578,8 +4588,9 @@ dependencies = [
 
 [[package]]
 name = "slowshell-spotlight"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
+ "futures-channel",
  "iced",
  "iced_layershell",
  "libc",
@@ -4595,10 +4606,11 @@ dependencies = [
 
 [[package]]
 name = "slowshell-widgets"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "freedesktop-icons",
  "iced",
+ "iced_anim",
  "iced_layershell",
  "slowshell-commons",
  "slowshell-config",

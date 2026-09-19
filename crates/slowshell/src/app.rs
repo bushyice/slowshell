@@ -49,6 +49,38 @@ fn register_plugin_compositors(registry: &mut GlobalRegistry, compositors: &mut 
   }
 }
 
+fn register_builtin_commands() {
+  #[allow(unused_imports)]
+  use slowshell_core::commands::{CommandEntry, register_default};
+
+  #[cfg(any(feature = "panels", feature = "popups"))]
+  {
+    register_default(CommandEntry::payload("popup.close").title("Close Popup"));
+    register_default(CommandEntry::payload("panel.create").title("Create Panel"));
+  }
+
+  #[cfg(feature = "components-audio")]
+  for (name, title) in [
+    ("audio.toggle_mute", "Toggle Mute"),
+    ("audio.play_pause", "Play / Pause"),
+    ("audio.next", "Next Track"),
+    ("audio.previous", "Previous Track"),
+  ] {
+    register_default(CommandEntry::payload(name).title(title));
+  }
+
+  #[cfg(feature = "components-notifications")]
+  for (name, title) in [
+    ("notifications.toggle_dnd", "Toggle Do Not Disturb"),
+    ("notifications.clear_all", "Clear Notifications"),
+  ] {
+    register_default(CommandEntry::payload(name).title(title));
+  }
+
+  #[cfg(feature = "spotlight")]
+  register_default(CommandEntry::named("spotlight.close").title("Close Spotlight"));
+}
+
 pub struct App {
   config: Config,
   store: Store,
@@ -114,11 +146,22 @@ impl App {
     for payload in registry.inside("payload") {
       if let ResourceRegistration::Unknown(payload) = payload {
         if let Ok(builder) = payload.downcast::<PayloadBuilder>() {
+          // for command in builder.commands {
+          //   if !command.ends_with('.') {
+          //     slowshell_core::commands::register_default(
+          //       slowshell_core::commands::CommandEntry::named(*command),
+          //     );
+          //   }
+          // }
           preg.register(*builder);
         }
       }
     }
+    let preg = std::sync::Arc::new(preg);
+    store.insert(preg.clone());
     store.insert(IpcListener::new(ipc_tx, preg));
+
+    register_builtin_commands();
 
     store.insert(cs);
     store.insert(slowshell_core::ActionDispatcher(tx.clone()));
@@ -219,6 +262,13 @@ impl App {
             }
             match self.config.reload() {
               Ok(()) => {
+                slowshell_core::animations::configure(
+                  self
+                    .config
+                    .typed::<slowshell_config::AnimationsConfig>()
+                    .map(|c| c.enabled),
+                  cfg!(feature = "animations"),
+                );
                 println!("[config] Reloaded configuration");
               }
               Err(e) => {

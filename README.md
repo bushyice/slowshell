@@ -347,6 +347,7 @@ With the rust sdk, you get these from the registerar:
 - `desktop_item::<T>("name")`
 - `compositor::<T>("name")`
 - `spotlight::<T>("name")`
+- `command("name", "title")` / `command_with("name", "title", "description")`
 - `style("name", &sheet)`
 - `config_parser::<T>(…)`
 
@@ -430,8 +431,8 @@ crates/plugin-sdk/src/lib.rs#export_plugin
 
 The `Context` passed to callbacks is the plugin's view of the host: options,
 logging, timers and fds, canvas allocation, config access, styles and themes,
-compositor state, service snapshots, notifications, the shared registry and
-`dispatch`.
+compositor state, service snapshots, notifications, the shared registry,
+`dispatch` and `dispatch_with_string`.
 
 ```symbol
 crates/plugin-sdk/src/lib.rs#Context
