@@ -2,6 +2,7 @@ use std::{
   io::{BufRead, BufReader, Write},
   os::unix::net::{UnixListener, UnixStream},
   path::PathBuf,
+  sync::Arc,
 };
 
 use futures_channel::mpsc::UnboundedSender;
@@ -15,7 +16,7 @@ use slowshell_core::{
 pub struct IpcListener;
 
 impl IpcListener {
-  pub fn new(tx: UnboundedSender<Message>, preg: PayloadBuilderRegistry) -> Self {
+  pub fn new(tx: UnboundedSender<Message>, preg: Arc<PayloadBuilderRegistry>) -> Self {
     std::thread::spawn(move || {
       let path = ipc_sock_path();
 

@@ -30,6 +30,6 @@ impl Component for Separator {
       ))
       .into();
 
-    spaced_component(config, ctx, divider)
+    spaced_component(config, ctx, divider, false)
   }
 }

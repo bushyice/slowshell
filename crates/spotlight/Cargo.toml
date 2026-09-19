@@ -15,3 +15,6 @@ slowshell-registry = { path = "../registry" }
 miette.workspace = true
 serde.workspace = true
 libc.workspace = true
+
+[dev-dependencies]
+futures-channel.workspace = true

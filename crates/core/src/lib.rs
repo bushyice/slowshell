@@ -3,8 +3,10 @@ use std::{
   collections::HashMap,
 };
 
-use crate::types::Ustr;
+use crate::types::{PayloadBox, PayloadBuilderRegistry, Ustr};
 
+pub mod animations;
+pub mod commands;
 pub mod listeners;
 pub mod message;
 pub mod persistence;
@@ -15,11 +17,37 @@ pub struct ActionDispatcher(pub futures_channel::mpsc::UnboundedSender<crate::me
 
 impl ActionDispatcher {
   pub fn dispatch(&self, command: &str) -> bool {
-    let action = crate::listeners::ListenerAction::Payload {
-      name: Ustr::from(command),
-      payload: None,
-    };
+    self.dispatch_payload(command, None)
+  }
 
+  pub fn dispatch_named(&self, name: &str) -> bool {
+    self.send(crate::listeners::ListenerAction::Named(Ustr::from(name)))
+  }
+
+  pub fn dispatch_payload(&self, name: &str, payload: Option<PayloadBox>) -> bool {
+    self.send(crate::listeners::ListenerAction::Payload {
+      name: Ustr::from(name),
+      payload,
+    })
+  }
+
+  pub fn dispatch_with_args(
+    &self,
+    name: &str,
+    args: &[Ustr],
+    builders: &PayloadBuilderRegistry,
+  ) -> bool {
+    match builders.build(name, args) {
+      Some(payload) => self.dispatch_payload(name, Some(payload)),
+      None => self.dispatch_named(name),
+    }
+  }
+
+  pub fn dispatch_action(&self, action: crate::listeners::ListenerAction) -> bool {
+    self.send(action)
+  }
+
+  fn send(&self, action: crate::listeners::ListenerAction) -> bool {
     self
       .0
       .unbounded_send(crate::message::Message::FdUpdate(action))

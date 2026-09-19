@@ -179,6 +179,39 @@ impl<'a> PayloadBuilderArgs<'a> {
   }
 }
 
+pub fn split_args(input: &str) -> Option<Vec<Ustr>> {
+  let mut tokens = Vec::new();
+  let mut current = String::new();
+  let mut quotes = false;
+
+  for c in input.chars() {
+    match c {
+      '"' => {
+        quotes = !quotes;
+      }
+      c if c.is_whitespace() && !quotes => {
+        if !current.is_empty() {
+          tokens.push(Ustr::from(current.clone()));
+          current.clear();
+        }
+      }
+      _ => {
+        current.push(c);
+      }
+    }
+  }
+
+  if quotes {
+    return None;
+  }
+
+  if !current.is_empty() {
+    tokens.push(Ustr::from(current));
+  }
+
+  Some(tokens)
+}
+
 pub struct PayloadBuilderRegistry {
   builders: Vec<PayloadBuilder>,
   exact: HashMap<Ustr, usize>,

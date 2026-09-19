@@ -112,6 +112,24 @@ typedef struct {
 #define SL_IMAGE_ENCODED 1
 #define SL_IMAGE_PATH 2
 
+#define SL_ANIMATION_NONE 0
+#define SL_ANIMATION_SLIDE 1
+
+#define SL_ANIMATION_EASING_LINEAR 0
+#define SL_ANIMATION_EASING_EASE 1
+#define SL_ANIMATION_EASING_EASE_IN 2
+#define SL_ANIMATION_EASING_EASE_OUT 3
+#define SL_ANIMATION_EASING_EASE_IN_OUT 4
+
+typedef struct {
+  uint32_t kind;
+  uint32_t easing;
+  uint32_t duration_ms;
+  float offset_x;
+  float offset_y;
+  bool tween;
+} SlAnimation;
+
 typedef struct {
   uint32_t width;
   uint32_t height;
@@ -150,6 +168,8 @@ typedef struct SlNode {
 
   bool has_effect;
   size_t effect[4];
+
+  SlAnimation animation;
 } SlNode;
 
 typedef struct {
@@ -282,6 +302,7 @@ typedef struct {
   SlComponentViewFn view;
   SlComponentCheckViewFn check_view;
   SlComponentStopFn stop;
+  bool hoverable;
 } SlComponentVtable;
 
 typedef void *(*SlCompositorCreateFn)(void *ctx);
@@ -643,6 +664,9 @@ typedef int32_t (*SlCompositorRegisterFdFn)(void *ctx, int32_t fd, uint32_t flag
 typedef int32_t (*SlPersistenceGetFn)(void *ctx, SlStr key, SlStr *out);
 typedef int32_t (*SlPersistenceSetFn)(void *ctx, SlStr key, SlStr value);
 typedef int32_t (*SlPersistenceRemoveFn)(void *ctx, SlStr key);
+typedef int32_t (*SlDispatchWithStringFn)(void *ctx, SlStr name, SlStr payload);
+typedef int32_t (*SlRegisterCommandFn)(void *host, SlStr name, SlStr title,
+                                       SlStr description);
 
 typedef struct {
   uint32_t size;
@@ -688,6 +712,8 @@ typedef struct {
   SlPersistenceGetFn persistence_get;
   SlPersistenceSetFn persistence_set;
   SlPersistenceRemoveFn persistence_remove;
+  SlDispatchWithStringFn dispatch_with_string;
+  SlRegisterCommandFn register_command;
 } SlHostApi;
 
 

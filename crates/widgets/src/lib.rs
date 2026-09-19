@@ -19,6 +19,12 @@ pub use icons::Icon;
 mod misc;
 pub use misc::separator;
 
+mod animation;
+pub use animation::{
+  Animate, Animated, AnimatedState, AnimatedValue, AnimationBuilder, Easing, Event,
+  HoverBackground, HoverTransition, Mode, Motion, SlideIn, Spring, Transition,
+};
+
 mod systemmon;
 pub use systemmon::{SystemMonOptions, SystemMonWidget, render_system_mon_widget};
 

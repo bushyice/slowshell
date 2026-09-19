@@ -2,7 +2,7 @@
 
 use core::ffi::c_void;
 
-pub const SL_PLUGIN_ABI_VERSION: u32 = 2;
+pub const SL_PLUGIN_ABI_VERSION: u32 = 1;
 
 pub const SL_PLUGIN_INIT_SYMBOL: &str = "slowshell_plugin_init";
 pub const SL_PLUGIN_META_SYMBOL: &str = "slowshell_plugin_meta";
@@ -104,6 +104,19 @@ pub mod sl_node_kind {
   pub const SCROLLABLE: u32 = 8;
 }
 
+pub mod sl_animation_kind {
+  pub const NONE: u32 = 0;
+  pub const SLIDE: u32 = 1;
+}
+
+pub mod sl_animation_easing {
+  pub const LINEAR: u32 = 0;
+  pub const EASE: u32 = 1;
+  pub const EASE_IN: u32 = 2;
+  pub const EASE_OUT: u32 = 3;
+  pub const EASE_IN_OUT: u32 = 4;
+}
+
 pub mod sl_align {
   pub const START: u32 = 0;
   pub const CENTER: u32 = 1;
@@ -163,6 +176,17 @@ pub struct SlImage {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SlAnimation {
+  pub kind: u32,
+  pub easing: u32,
+  pub duration_ms: u32,
+  pub offset_x: f32,
+  pub offset_y: f32,
+  pub tween: bool,
+}
+
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SlNode {
   pub kind: u32,
@@ -183,6 +207,7 @@ pub struct SlNode {
   pub height: SlLength,
   pub has_effect: bool,
   pub effect: [usize; 4],
+  pub animation: SlAnimation,
 }
 
 impl Default for SlNode {
@@ -206,6 +231,7 @@ impl Default for SlNode {
       height: SlLength::default(),
       has_effect: false,
       effect: [0; 4],
+      animation: SlAnimation::default(),
     }
   }
 }
@@ -389,6 +415,7 @@ pub struct SlComponentVtable {
   pub view: Option<SlComponentViewFn>,
   pub check_view: Option<SlComponentCheckViewFn>,
   pub stop: Option<SlComponentStopFn>,
+  pub hoverable: bool,
 }
 
 pub type SlCompositorCreateFn = unsafe extern "C" fn(ctx: *mut c_void) -> *mut c_void;
@@ -737,6 +764,10 @@ pub struct SlPowerState {
 pub type SlPowerStateGetFn = unsafe extern "C" fn(ctx: *mut c_void, out: *mut SlPowerState) -> i32;
 
 pub type SlDispatchFn = unsafe extern "C" fn(ctx: *mut c_void, command: SlStr) -> i32;
+pub type SlDispatchWithStringFn =
+  unsafe extern "C" fn(ctx: *mut c_void, name: SlStr, payload: SlStr) -> i32;
+pub type SlRegisterCommandFn =
+  unsafe extern "C" fn(host: *mut c_void, name: SlStr, title: SlStr, description: SlStr) -> i32;
 
 pub mod sl_anchor {
   pub const TOP: u32 = 1;
@@ -1005,6 +1036,8 @@ pub struct SlHostApi {
   pub persistence_get: Option<SlPersistenceGetFn>,
   pub persistence_set: Option<SlPersistenceSetFn>,
   pub persistence_remove: Option<SlPersistenceRemoveFn>,
+  pub dispatch_with_string: Option<SlDispatchWithStringFn>,
+  pub register_command: Option<SlRegisterCommandFn>,
 }
 
 #[repr(C)]
@@ -1175,6 +1208,28 @@ pub unsafe fn register_desktop_item(
         SlStr::from_str(name),
         vtable as *const _,
         core::ptr::null_mut(),
+      );
+    }
+  }
+}
+
+pub unsafe fn register_command(
+  api: *const SlHostApi,
+  host: *mut c_void,
+  name: &str,
+  title: &str,
+  description: &str,
+) {
+  let Some(api) = (unsafe { api.as_ref() }) else {
+    return;
+  };
+  if let Some(register) = api.register_command {
+    unsafe {
+      register(
+        host,
+        SlStr::from_str(name),
+        SlStr::from_str(title),
+        SlStr::from_str(description),
       );
     }
   }

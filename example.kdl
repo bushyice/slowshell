@@ -27,6 +27,11 @@ icons {
   theme "Adwaita"
 }
 
+// turn them off
+animations {
+  enabled #true
+}
+
 
 // # Notification daemon
 
@@ -132,6 +137,13 @@ style "component" {
   spacing 5
   "padding.x" 9
   "padding.y" 5
+
+  // shared hover highlight behind interactive panel components (menus, actions).
+  // display-only components are excluded. The colour is scaled by its
+  // `.opacity`, and `"hover.background" "transparent"` disables it entirely.
+  "hover.background" "primary"
+  "hover.background.opacity" 0.18
+  "hover.radius" 4
 }
 
 // Desktop widgets (free-floating renderables)
@@ -210,11 +222,16 @@ panels {
 
         // core/window - the focused window
         //   icon, name, title   (all default: #true)
+        //   name-width          max px for the app name, clipped on overflow (default: 180)
+        //   title-width         max px for the title, clipped on overflow    (default: 320)
+        //                       (set either to 0 to disable the cap)
         component "core/window" {
           label "Window"
           icon #true
           name #true
           title #true
+          "name-width" 180.0
+          "title-width" 320.0
         }
 
         // core/windows - active windows dock, one icon per app_id/class

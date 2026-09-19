@@ -14,7 +14,7 @@ use std::{
 };
 
 use iced::{
-  Alignment, Color, Length,
+  Alignment, Color, Length, Vector,
   widget::{Space, column, container, image as image_widget, row, text},
 };
 use iced_layershell::reexport::{
@@ -48,24 +48,26 @@ use slowshell_config::{
 };
 use slowshell_core::{
   ActionDispatcher, Monitor, Store, Window, Workspace,
+  commands::CommandEntry,
   listeners::{FdHandle, ListenerAction, Listeners},
   message::{EventFilter, ItemEffect, ItemMessage},
-  types::{PayloadBox, PayloadBuilder, PayloadBuilderArgs, Ustr, Void},
+  types::{PayloadBox, PayloadBuilder, PayloadBuilderArgs, PayloadBuilderRegistry, Ustr, Void},
 };
 use slowshell_desktop::MonitorScope;
 use slowshell_desktop::{DesktopItem, UpdateWhen, Visibility};
 use slowshell_plugin::{
-  SL_PLUGIN_ABI_VERSION, SL_PLUGIN_INIT_SYMBOL, SL_PLUGIN_META_SYMBOL, SlAccessPoint, SlAudioSink,
-  SlAudioState, SlBluetoothDevice, SlBluetoothState, SlCanvas, SlColor, SlComponentVtable,
-  SlCompositorState, SlCompositorVtable, SlConfigParserFn, SlConnectionInfo, SlDesktopItemVtable,
-  SlDesktopSettings, SlEffect, SlEthernet, SlEvent, SlHostApi, SlItemMessage, SlLength, SlMonitor,
-  SlMprisPlayer, SlNetworkState, SlNode, SlNodeList, SlNotification, SlPayloadArgs,
-  SlPayloadVtable, SlPluginGetMetaFn, SlPluginInitFn, SlPowerState, SlProcessInfo,
+  SL_PLUGIN_ABI_VERSION, SL_PLUGIN_INIT_SYMBOL, SL_PLUGIN_META_SYMBOL, SlAccessPoint, SlAnimation,
+  SlAudioSink, SlAudioState, SlBluetoothDevice, SlBluetoothState, SlCanvas, SlColor,
+  SlComponentVtable, SlCompositorState, SlCompositorVtable, SlConfigParserFn, SlConnectionInfo,
+  SlDesktopItemVtable, SlDesktopSettings, SlEffect, SlEthernet, SlEvent, SlHostApi, SlItemMessage,
+  SlLength, SlMonitor, SlMprisPlayer, SlNetworkState, SlNode, SlNodeList, SlNotification,
+  SlPayloadArgs, SlPayloadVtable, SlPluginGetMetaFn, SlPluginInitFn, SlPowerState, SlProcessInfo,
   SlRegistryNotifyFn, SlRenderableSettings, SlRenderableVtable, SlSpotlightVtable, SlStr,
   SlStyleSheet, SlStyleSheetEntry, SlSystemState, SlTheme, SlTrayItem, SlTrayState, SlWindow,
-  SlWorkspace, sl_align, sl_anchor, sl_effect, sl_epoll, sl_event_kind, sl_event_mask,
-  sl_image_source, sl_keyboard_interactivity, sl_layer, sl_length_unit, sl_message_kind,
-  sl_node_kind, sl_style_color_kind, sl_style_value_kind, sl_update_when, sl_visibility,
+  SlWorkspace, sl_align, sl_anchor, sl_animation_easing, sl_animation_kind, sl_effect, sl_epoll,
+  sl_event_kind, sl_event_mask, sl_image_source, sl_keyboard_interactivity, sl_layer,
+  sl_length_unit, sl_message_kind, sl_node_kind, sl_style_color_kind, sl_style_value_kind,
+  sl_update_when, sl_visibility,
 };
 #[cfg(feature = "spotlight")]
 use slowshell_plugin::{SlSpotlightList, sl_display_style};
@@ -75,7 +77,9 @@ use slowshell_spotlight::{
   DisplayStyle, SpotlightAction, SpotlightActionDef, SpotlightItem, SpotlightKind, SpotlightMode,
   SpotlightModes,
 };
-use slowshell_widgets::{Backdrop, Icon, Renderable, Renderables, SizedPopup, clickable};
+use slowshell_widgets::{
+  Animated, Backdrop, Easing, Icon, Mode, Renderable, Renderables, SizedPopup, SlideIn, clickable,
+};
 
 #[derive(Default, Clone)]
 pub struct PluginSelection {
@@ -369,6 +373,11 @@ enum Pending {
     name: String,
     vtable: *const SlSpotlightVtable,
   },
+  Command {
+    name: String,
+    title: Option<String>,
+    description: Option<String>,
+  },
 }
 
 thread_local! {
@@ -499,6 +508,24 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
 
         contribute(plugin_id, |contributions| {
           contributions.spotlights.push(name);
+        });
+      }
+
+      Pending::Command {
+        name,
+        title,
+        description,
+      } => {
+        slowshell_core::commands::register(CommandEntry {
+          name: name.clone().into(),
+          title,
+          description,
+          icon: None,
+          action: ListenerAction::Named(name.clone().into()),
+        });
+
+        contribute(plugin_id, |contributions| {
+          contributions.commands.push(name);
         });
       }
     }
@@ -1615,6 +1642,7 @@ pub struct PluginContributions {
   pub desktop_items: Vec<String>,
   pub config_parsers: Vec<String>,
   pub spotlights: Vec<String>,
+  pub commands: Vec<String>,
   pub styles: Vec<String>,
 }
 
@@ -1970,6 +1998,35 @@ unsafe extern "C" fn host_dispatch(_ctx: *mut c_void, command: SlStr) -> i32 {
     return -1;
   };
   if dispatcher.dispatch(command) { 0 } else { -1 }
+}
+
+unsafe extern "C" fn host_dispatch_with_string(
+  _ctx: *mut c_void,
+  name: SlStr,
+  payload: SlStr,
+) -> i32 {
+  let Some(name) = (unsafe { name.as_str() }) else {
+    return -1;
+  };
+  let payload = unsafe { payload.as_str() }.unwrap_or("");
+  let Some(store) = current_store() else {
+    return -1;
+  };
+  let Some(dispatcher) = store.borrow::<ActionDispatcher>() else {
+    return -1;
+  };
+  let Some(builders) = store.borrow::<std::sync::Arc<PayloadBuilderRegistry>>() else {
+    return -1;
+  };
+  let Some(args) = slowshell_core::types::split_args(payload) else {
+    return -1;
+  };
+
+  if dispatcher.dispatch_with_args(name, &args, builders) {
+    0
+  } else {
+    -1
+  }
 }
 
 unsafe extern "C" fn host_audio_state_get(_ctx: *mut c_void, out: *mut SlAudioState) -> i32 {
@@ -2580,6 +2637,8 @@ static HOST_API: SlHostApi = SlHostApi {
   persistence_get: Some(host_persistence_get),
   persistence_set: Some(host_persistence_set),
   persistence_remove: Some(host_persistence_remove),
+  dispatch_with_string: Some(host_dispatch_with_string),
+  register_command: Some(host_register_command),
 };
 
 unsafe extern "C" fn host_register_component(
@@ -2664,6 +2723,34 @@ unsafe extern "C" fn host_register_desktop_item(
       .borrow_mut()
       .push(Pending::DesktopItem { name, vtable });
   });
+}
+
+unsafe extern "C" fn host_register_command(
+  _host: *mut c_void,
+  name: SlStr,
+  title: SlStr,
+  description: SlStr,
+) -> i32 {
+  let Some(name) = (unsafe { name.as_str() }) else {
+    return -1;
+  };
+  let title = unsafe { title.as_str() }
+    .filter(|title| !title.is_empty())
+    .map(str::to_owned);
+  let description = unsafe { description.as_str() }
+    .filter(|description| !description.is_empty())
+    .map(str::to_owned);
+
+  let name = name.to_owned();
+  PENDING.with(|pending| {
+    pending.borrow_mut().push(Pending::Command {
+      name,
+      title,
+      description,
+    });
+  });
+
+  0
 }
 
 unsafe extern "C" fn host_request_redraw(_ctx: *mut c_void, _window: u64) {
@@ -3594,7 +3681,7 @@ impl Component for PluginComponent {
     }
 
     let rendered = unsafe { render_nodes(&list, None, self.ctx as usize) };
-    spaced_component(config, ctx, rendered)
+    spaced_component(config, ctx, rendered, unsafe { (*self.vtable).hoverable })
   }
 }
 
@@ -3649,6 +3736,127 @@ unsafe fn render_nodes_inner(
 }
 
 unsafe fn render_node(
+  node: &SlNode,
+  id: Option<iced_layershell::reexport::IcedId>,
+) -> iced::Element<'static, ItemMessage> {
+  let animation = node.animation;
+  let sliding = animation.kind != sl_animation_kind::NONE;
+
+  if !animation.tween {
+    let element = unsafe { render_plain(node, id) };
+    return if sliding {
+      slide_element(element, animation)
+    } else {
+      element
+    };
+  }
+
+  let mode = animation_mode(animation);
+  let base = *node;
+  let text = unsafe { node.text.as_str() }.unwrap_or_default().to_owned();
+  let action = unsafe { node.action.as_str() }
+    .unwrap_or_default()
+    .to_owned();
+
+  let element: iced::Element<'static, ItemMessage> = match node.kind {
+    sl_node_kind::PROGRESS => {
+      let target = node.value;
+      Animated::new(target, move |value| {
+        let mut local = base;
+        local.value = *value;
+        local.text = borrow_str(&text);
+        local.action = borrow_str(&action);
+        unsafe { render_plain(&local, id) }
+      })
+      .animation(mode)
+      .animates_layout(true)
+      .into()
+    }
+
+    sl_node_kind::TEXT => {
+      let target = if node.style.has_text_color {
+        to_color(node.style.text_color)
+      } else {
+        Color::WHITE
+      };
+      Animated::new(target, move |color| {
+        let mut local = base;
+        local.style.has_text_color = true;
+        local.style.text_color = sl_color(*color);
+        local.text = borrow_str(&text);
+        local.action = borrow_str(&action);
+        unsafe { render_plain(&local, id) }
+      })
+      .animation(mode)
+      .into()
+    }
+
+    sl_node_kind::ICON if node.style.has_text_color => {
+      let target = to_color(node.style.text_color);
+      Animated::new(target, move |color| {
+        let mut local = base;
+        local.style.has_text_color = true;
+        local.style.text_color = sl_color(*color);
+        local.text = borrow_str(&text);
+        local.action = borrow_str(&action);
+        unsafe { render_plain(&local, id) }
+      })
+      .animation(mode)
+      .into()
+    }
+
+    _ => unsafe { render_plain(node, id) },
+  };
+
+  if sliding {
+    slide_element(element, animation)
+  } else {
+    element
+  }
+}
+
+fn borrow_str(text: &str) -> SlStr {
+  SlStr {
+    ptr: text.as_ptr(),
+    len: text.len(),
+  }
+}
+
+fn sl_color(color: Color) -> SlColor {
+  SlColor {
+    r: color.r,
+    g: color.g,
+    b: color.b,
+    a: color.a,
+  }
+}
+
+fn animation_mode(animation: SlAnimation) -> Mode {
+  let easing = match animation.easing {
+    sl_animation_easing::LINEAR => Easing::LINEAR,
+    sl_animation_easing::EASE => Easing::EASE,
+    sl_animation_easing::EASE_IN => Easing::EASE_IN,
+    sl_animation_easing::EASE_OUT => Easing::EASE_OUT,
+    sl_animation_easing::EASE_IN_OUT => Easing::EASE_IN_OUT,
+    _ => Easing::EASE_OUT,
+  };
+
+  easing
+    .with_duration(Duration::from_millis(animation.duration_ms.max(1) as u64))
+    .into()
+}
+
+fn slide_element(
+  element: iced::Element<'static, ItemMessage>,
+  animation: SlAnimation,
+) -> iced::Element<'static, ItemMessage> {
+  let offset = Vector::new(animation.offset_x, animation.offset_y);
+  SlideIn::new(element, offset)
+    .animation(animation_mode(animation))
+    .into()
+}
+
+unsafe fn render_plain(
   node: &SlNode,
   id: Option<iced_layershell::reexport::IcedId>,
 ) -> iced::Element<'static, ItemMessage> {
@@ -4448,6 +4656,52 @@ mod tests {
   }
 
   #[test]
+  fn renders_animated_nodes() {
+    let text = SlNode {
+      kind: sl_node_kind::TEXT,
+      text: SlStr::from_str("hello"),
+      size: 12.0,
+      style: slowshell_plugin::SlStyle {
+        text_color: SlColor {
+          r: 1.0,
+          g: 1.0,
+          b: 1.0,
+          a: 1.0,
+        },
+        has_text_color: true,
+        ..slowshell_plugin::SlStyle::default()
+      },
+      animation: SlAnimation {
+        kind: sl_animation_kind::SLIDE,
+        easing: sl_animation_easing::EASE_OUT,
+        duration_ms: 150,
+        offset_x: 0.0,
+        offset_y: -8.0,
+        tween: true,
+      },
+      ..SlNode::default()
+    };
+
+    let progress = SlNode {
+      kind: sl_node_kind::PROGRESS,
+      value: 0.5,
+      animation: SlAnimation {
+        tween: true,
+        ..SlAnimation::default()
+      },
+      ..SlNode::default()
+    };
+
+    let nodes = [text, progress];
+    let list = SlNodeList {
+      nodes: nodes.as_ptr(),
+      len: nodes.len(),
+    };
+
+    let _ = unsafe { render_nodes(&list, None, 0) };
+  }
+
+  #[test]
   fn renders_canvas_buffer() {
     let mut pixels = [0u8; 16];
     pixels[3] = 255;
@@ -5012,6 +5266,7 @@ style "example/card" {
       view: None,
       check_view: Some(deny),
       stop: None,
+      hoverable: false,
     };
     let component = PluginComponent::new(core::ptr::null_mut(), &base, core::ptr::null_mut());
     let store = Store::new();
@@ -5353,6 +5608,90 @@ style "example/card" {
       }
       _ => panic!("unexpected message"),
     }
+  }
+
+  #[test]
+  fn dispatch_with_string_builds_payload() {
+    let (tx, mut rx) = futures_channel::mpsc::unbounded::<slowshell_core::message::Message>();
+    let mut store = Store::new();
+    store.insert(ActionDispatcher(tx));
+
+    let mut builders = PayloadBuilderRegistry::new();
+    builders.register(PayloadBuilder {
+      commands: &["test.echo"],
+      build: |_, _| Some(PayloadBox::new(7u32)),
+    });
+    store.insert(std::sync::Arc::new(builders));
+    let _scope = store_scope(&store);
+
+    let code = unsafe {
+      host_dispatch_with_string(
+        std::ptr::null_mut(),
+        SlStr::from_str("test.echo"),
+        SlStr::from_str("7"),
+      )
+    };
+    assert_eq!(code, 0);
+
+    match rx.try_recv().expect("message") {
+      slowshell_core::message::Message::FdUpdate(ListenerAction::Payload { name, payload }) => {
+        assert_eq!(&*name, "test.echo");
+        assert_eq!(payload.expect("payload").enforce::<u32>(), &7);
+      }
+      _ => panic!("unexpected message"),
+    }
+  }
+
+  #[test]
+  fn dispatch_with_string_falls_back_to_named() {
+    let (tx, mut rx) = futures_channel::mpsc::unbounded::<slowshell_core::message::Message>();
+    let mut store = Store::new();
+    store.insert(ActionDispatcher(tx));
+    store.insert(std::sync::Arc::new(PayloadBuilderRegistry::new()));
+    let _scope = store_scope(&store);
+
+    let code = unsafe {
+      host_dispatch_with_string(
+        std::ptr::null_mut(),
+        SlStr::from_str("test.named"),
+        SlStr::from_str(""),
+      )
+    };
+    assert_eq!(code, 0);
+
+    match rx.try_recv().expect("message") {
+      slowshell_core::message::Message::FdUpdate(ListenerAction::Named(name)) => {
+        assert_eq!(&*name, "test.named");
+      }
+      _ => panic!("unexpected message"),
+    }
+  }
+
+  #[test]
+  fn registers_plugin_command() {
+    let name = "test.plugin.command";
+    slowshell_core::commands::commands().unregister(name);
+
+    let code = unsafe {
+      host_register_command(
+        std::ptr::null_mut(),
+        SlStr::from_str(name),
+        SlStr::from_str("Plugin Command"),
+        SlStr::from_str("Does a thing"),
+      )
+    };
+    assert_eq!(code, 0);
+
+    let mut registry = GlobalRegistry::default();
+    drain_pending(&mut registry, "test-plugin");
+
+    let entry = slowshell_core::commands::commands()
+      .get(name)
+      .expect("registered command");
+    assert_eq!(entry.title.as_deref(), Some("Plugin Command"));
+    assert_eq!(entry.description.as_deref(), Some("Does a thing"));
+
+    slowshell_core::commands::commands().unregister(name);
   }
 
   #[test]

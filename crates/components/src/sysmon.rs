@@ -12,7 +12,7 @@ use slowshell_core::{
   listeners::{FdHandle, ListenerAction},
   message::{EventFilter, ItemEffect, ItemMessage},
 };
-use slowshell_widgets::Icon;
+use slowshell_widgets::{Animated, Icon};
 
 use crate::{
   Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger, vertical_text,
@@ -307,7 +307,8 @@ impl SystemMon {
       ),
     };
 
-    let color = c.unwrap_or(color);
+    let base_color = color;
+    let icon: [String; 2] = icon.map(str::to_string);
 
     let value_num = match item {
       SystemItem::Cpu => snapshot.cpu_usage,
@@ -319,82 +320,118 @@ impl SystemMon {
 
     let pct_item = matches!(item, SystemItem::Cpu | SystemItem::Mem | SystemItem::Temp);
 
-    let (glyph_label, inline_value): (Option<String>, Option<String>) = if vertical && pct_item {
-      if labels {
-        (Some(label.to_string()), Some(value.clone()))
+    let red = theme.red;
+    let yellow = theme.yellow;
+    let blue = theme.blue;
+    let crust = theme.crust;
+    let direction = progress_direction.to_string();
+
+    let build = move |value_num: &f32| -> Element<'a, ItemMessage> {
+      let value_num = *value_num;
+
+      let threshold = match item {
+        SystemItem::Cpu | SystemItem::Mem => match value_num {
+          70.0..100.0 => Some(red),
+          50.0..70.0 => Some(yellow),
+          _ => None,
+        },
+        SystemItem::Temp => c,
+        _ => None,
+      };
+      let color = threshold.unwrap_or(base_color);
+
+      let value = if pct_item {
+        match item {
+          SystemItem::Temp => format!("{value_num:.0}°C"),
+          _ => format!("{value_num:.0}%"),
+        }
+      } else {
+        value.clone()
+      };
+
+      let (glyph_label, inline_value): (Option<String>, Option<String>) = if vertical && pct_item {
+        if labels {
+          (Some(label.to_string()), Some(value.clone()))
+        } else if !icons {
+          (None, Some(value.clone()))
+        } else {
+          (None, None)
+        }
+      } else if labels {
+        (Some(format!("{label} {value}")), None)
       } else if !icons {
-        (None, Some(value.clone()))
+        (Some(value.clone()), None)
       } else {
         (None, None)
+      };
+
+      let mut col: Vec<Element<'_, ItemMessage>> = vec![];
+
+      if progress {
+        let progress_color = threshold.unwrap_or(blue);
+        let background = crust;
+        let style = move |theme: &iced::Theme| iced::widget::progress_bar::Style {
+          background: background.into(),
+          bar: progress_color.into(),
+          ..iced::widget::progress_bar::primary(theme)
+        };
+
+        if direction == "vertical" {
+          col.push(
+            progress_bar(0.0..=100.0, value_num)
+              .vertical()
+              .length(Length::Fill)
+              .girth(Length::Fixed(4.0))
+              .style(style)
+              .into(),
+          );
+        } else {
+          col.push(
+            progress_bar(0.0..=100.0, value_num)
+              .length(Length::Fixed(16.0))
+              .girth(Length::Fixed(4.0))
+              .style(style)
+              .into(),
+          );
+        }
       }
-    } else if labels {
-      (Some(format!("{label} {value}")), None)
-    } else if !icons {
-      (Some(value.clone()), None)
-    } else {
-      (None, None)
+
+      if let Some(label) = glyph_label {
+        if vertical {
+          col.insert(0, vertical_text(&label, font_size, color));
+        } else {
+          col.insert(0, text(label).size(font_size).color(color).into());
+        }
+      }
+
+      if let Some(value) = inline_value {
+        col.insert(0, text(value).size(font_size).color(color).into());
+      }
+
+      if icons {
+        col.insert(
+          0,
+          Icon::any(icon.clone())
+            .size(icon_size)
+            .color(color)
+            .into_element(),
+        );
+      }
+
+      if vertical {
+        column(col)
+          .spacing(2)
+          .align_x(iced::Alignment::Center)
+          .into()
+      } else {
+        row(col).spacing(4).into()
+      }
     };
 
-    let mut col: Vec<Element<'_, ItemMessage>> = vec![];
-
-    if progress {
-      let progress_color = c.unwrap_or(theme.blue);
-      let background = theme.crust;
-
-      match progress_direction {
-        "vertical" => col.push(
-          progress_bar(0.0..=100.0, value_num)
-            .vertical()
-            .length(Length::Fill)
-            .girth(Length::Fixed(4.0))
-            .style(move |t| iced::widget::progress_bar::Style {
-              background: background.into(),
-              bar: progress_color.into(),
-              ..iced::widget::progress_bar::primary(t)
-            })
-            .into(),
-        ),
-
-        _ => col.push(
-          progress_bar(0.0..=100.0, value_num)
-            .length(Length::Fixed(16.0))
-            .girth(Length::Fixed(4.0))
-            .style(move |t| iced::widget::progress_bar::Style {
-              background: background.into(),
-              bar: progress_color.into(),
-              ..iced::widget::progress_bar::primary(t)
-            })
-            .into(),
-        ),
-      }
-    }
-
-    if let Some(label) = glyph_label {
-      if vertical {
-        col.insert(0, vertical_text(&label, font_size, color));
-      } else {
-        col.insert(0, text(label).size(font_size).color(color).into());
-      }
-    }
-
-    if let Some(value) = inline_value {
-      col.insert(0, text(value).size(font_size).color(color).into());
-    }
-
-    if icons {
-      col.insert(
-        0,
-        Icon::any(icon).size(icon_size).color(color).into_element(),
-      );
-    }
-
-    if vertical {
-      column(col)
-        .spacing(2)
-        .align_x(iced::Alignment::Center)
-        .into()
+    if pct_item {
+      Animated::new(value_num, build).into()
     } else {
-      row(col).spacing(4).into()
+      build(&value_num)
     }
   }
 }

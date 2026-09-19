@@ -60,7 +60,7 @@ pub fn load() -> Loaded {
   #[cfg(feature = "plugins")]
   let plugins = slowshell_plugin_host::PluginHost::load(&mut registry, &plugin_selection);
 
-  let config_parsers = registry
+  let mut config_parsers: Vec<ConfigParser> = registry
     .inside("config")
     .into_iter()
     .filter_map(|res| {
@@ -69,8 +69,16 @@ pub fn load() -> Loaded {
         .and_then(|x| x.downcast::<ConfigParser>().map(|x| *x).ok())
     })
     .collect();
+  config_parsers.push(slowshell_config::animations_parser());
 
   let config = Config::from_path_or_default(None::<&str>, config_parsers);
+
+  slowshell_core::animations::configure(
+    config
+      .typed::<slowshell_config::AnimationsConfig>()
+      .map(|c| c.enabled),
+    cfg!(feature = "animations"),
+  );
 
   Loaded {
     registry,

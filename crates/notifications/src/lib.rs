@@ -1,7 +1,7 @@
 use std::{any::TypeId, cell::RefCell, collections::HashMap, sync::atomic::Ordering};
 
 use iced::{
-  Alignment, Color, Element, Length,
+  Alignment, Color, Element, Length, Vector,
   widget::{Space, column, container, row, text, text_input},
 };
 use iced_layershell::reexport::{
@@ -20,12 +20,14 @@ use slowshell_core::{
 use slowshell_desktop::{
   DesktopItem, EventFilter, ItemEffect, ItemMessage, MonitorScope, UpdateWhen, Visibility,
 };
-use slowshell_widgets::{Icon, clickable, notification_icon};
+use slowshell_widgets::{Icon, SlideIn, clickable, notification_icon};
 
 pub struct NotificationManager {
   max_visible: usize,
   position: Anchor,
   last_popups_count: usize,
+  closing: bool,
+  last_items: Vec<NotificationItem>,
   cache: RefCell<Cache>,
 }
 
@@ -86,8 +88,44 @@ impl NotificationManager {
       max_visible: 5,
       position,
       last_popups_count: 0,
+      closing: false,
+      last_items: Vec::new(),
       cache: RefCell::new(Cache::default()),
     }
+  }
+
+  fn on_changed(&mut self, store: &Store) -> ItemEffect {
+    let Some(shared) = store.borrow::<SharedNotificationState>() else {
+      return ItemEffect::None;
+    };
+
+    let popups: Vec<NotificationItem> = {
+      let state = shared.state.lock().unwrap();
+      state
+        .popups
+        .iter()
+        .take(self.max_visible)
+        .cloned()
+        .collect()
+    };
+    let popups_len = popups.len();
+
+    if popups_len > 0 {
+      self.last_items = popups;
+      self.closing = false;
+    }
+
+    let effect = if popups_len > 0 && self.last_popups_count == 0 {
+      ItemEffect::Show
+    } else if popups_len == 0 && self.last_popups_count > 0 {
+      self.closing = true;
+      ItemEffect::Redraw
+    } else {
+      ItemEffect::Redraw
+    };
+
+    self.last_popups_count = popups_len;
+    effect
   }
 }
 
@@ -129,6 +167,7 @@ impl DesktopItem for NotificationManager {
       EventFilter::Payload("notifications.invoke".into()),
       EventFilter::Payload("notifications.reply".into()),
       EventFilter::Payload("notifications.set_reply".into()),
+      EventFilter::Payload("notifications.closed".into()),
     ]
   }
 
@@ -139,48 +178,14 @@ impl DesktopItem for NotificationManager {
     event: &ListenerAction,
   ) -> miette::Result<ItemEffect> {
     match event {
-      ListenerAction::Signal { name, .. } if &**name == NOTIF_CHANGED => {
-        if let Some(shared) = store.borrow::<SharedNotificationState>() {
-          let popups_len = {
-            let state = shared.state.lock().unwrap();
-            state.popups.len()
-          };
+      ListenerAction::Signal { name, .. } if &**name == NOTIF_CHANGED => Ok(self.on_changed(store)),
 
-          let effect = if popups_len > 0 && self.last_popups_count == 0 {
-            ItemEffect::Show
-          } else if popups_len == 0 && self.last_popups_count > 0 {
-            ItemEffect::Hide
-          } else {
-            ItemEffect::Redraw
-          };
+      ListenerAction::Named(name) if &**name == NOTIF_CHANGED => Ok(self.on_changed(store)),
 
-          self.last_popups_count = popups_len;
-          Ok(effect)
-        } else {
-          Ok(ItemEffect::None)
-        }
-      }
-
-      ListenerAction::Named(name) if &**name == NOTIF_CHANGED => {
-        if let Some(shared) = store.borrow::<SharedNotificationState>() {
-          let popups_len = {
-            let state = shared.state.lock().unwrap();
-            state.popups.len()
-          };
-
-          let effect = if popups_len > 0 && self.last_popups_count == 0 {
-            ItemEffect::Show
-          } else if popups_len == 0 && self.last_popups_count > 0 {
-            ItemEffect::Hide
-          } else {
-            ItemEffect::Redraw
-          };
-
-          self.last_popups_count = popups_len;
-          Ok(effect)
-        } else {
-          Ok(ItemEffect::None)
-        }
+      ListenerAction::Payload { name, .. } if &**name == "notifications.closed" => {
+        self.closing = false;
+        self.last_items.clear();
+        Ok(ItemEffect::Hide)
       }
 
       ListenerAction::Payload { name, payload } if &**name == "notifications.dismiss" => {
@@ -263,10 +268,19 @@ impl DesktopItem for NotificationManager {
           cache.by_id.clear();
         }
 
-        state
-          .popups
+        let items: Vec<NotificationItem> = if self.closing {
+          self.last_items.clone()
+        } else {
+          state
+            .popups
+            .iter()
+            .take(self.max_visible)
+            .cloned()
+            .collect()
+        };
+
+        items
           .iter()
-          .take(self.max_visible)
           .map(|n| {
             let cached = cache
               .by_id
@@ -291,8 +305,19 @@ impl DesktopItem for NotificationManager {
         Vec::new()
       };
 
-    container(column(notif_elements).spacing(style.number("list.spacing").unwrap_or(8.0)))
-      .style(container::transparent)
+    let content: Element<'a, ItemMessage> =
+      container(column(notif_elements).spacing(style.number("list.spacing").unwrap_or(8.0)))
+        .style(container::transparent)
+        .into();
+
+    let close = ItemMessage::Action(ListenerAction::Payload {
+      name: "notifications.closed".into(),
+      payload: None,
+    });
+
+    SlideIn::new(content, Vector::new(360.0, 0.0))
+      .closing(self.closing)
+      .on_close(close)
       .into()
   }
 }

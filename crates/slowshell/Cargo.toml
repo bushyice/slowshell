@@ -8,6 +8,7 @@ default = [
   "base",
   "compositors",
   "components",
+  "animations"
 ]
 
 base = [
@@ -53,6 +54,8 @@ components-network = ["slowshell-components?/network"]
 components-notifications = ["slowshell-components?/notifications"]
 components-power = ["slowshell-components?/power"]
 components-tray = ["slowshell-components?/tray"]
+
+animations = []
 
 [dependencies]
 slowshell-core = { path = "../core" }

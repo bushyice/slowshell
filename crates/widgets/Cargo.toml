@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 iced.workspace = true
+iced_anim.workspace = true
 iced_layershell.workspace = true
 slowshell-core = { path = "../core" }
 slowshell-commons = { path = "../commons" }

@@ -73,12 +73,12 @@ impl Component for IconComp {
         true,
       )
     } else if let Some(action) = &self.action {
-      mouse_area(spaced_component(config, ctx, icon))
+      mouse_area(spaced_component(config, ctx, icon, true))
         .interaction(mouse::Interaction::Pointer)
         .on_press(action.clone())
         .into()
     } else {
-      spaced_component(config, ctx, icon)
+      spaced_component(config, ctx, icon, false)
     }
   }
 }

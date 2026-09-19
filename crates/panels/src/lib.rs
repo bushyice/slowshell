@@ -1,4 +1,10 @@
-use std::{any::TypeId, collections::HashMap};
+use std::{
+  any::TypeId,
+  collections::HashMap,
+  time::{Duration, Instant},
+};
+
+use iced_anim::{Animated as AnimatedValue, Easing};
 
 use iced::{
   Alignment, Element, Length,
@@ -456,6 +462,10 @@ pub struct Panel {
   overlay: bool,
   autohide: bool,
   trigger: i32,
+  autohide_anim: Option<AnimatedValue<f32>>,
+  autohide_current: f32,
+  autohide_target: f32,
+  autohide_settle: bool,
 }
 
 impl Panel {
@@ -477,6 +487,10 @@ impl Panel {
       overlay: false,
       autohide: false,
       trigger: 4,
+      autohide_anim: None,
+      autohide_current: 0.0,
+      autohide_target: 0.0,
+      autohide_settle: false,
     }
   }
 
@@ -502,6 +516,9 @@ impl Panel {
 
   pub fn with_autohide(mut self, autohide: bool) -> Self {
     self.autohide = autohide;
+    // Autohide panels launch collapsed, so the first hover animates outwards.
+    self.autohide_current = if autohide { 1.0 } else { 0.0 };
+    self.autohide_target = self.autohide_current;
     self
   }
 
@@ -934,6 +951,70 @@ impl Panel {
     }
   }
 
+  fn start_autohide(&mut self, target: f32) -> bool {
+    if (target - self.autohide_target).abs() < f32::EPSILON && self.autohide_anim.is_some() {
+      return false;
+    }
+
+    if (target - self.autohide_current).abs() < f32::EPSILON && self.autohide_anim.is_none() {
+      return false;
+    }
+
+    self.autohide_target = target;
+
+    let mode = Easing::EASE_OUT.with_duration(Duration::from_millis(130));
+    let mut anim = AnimatedValue::new(self.autohide_current, mode);
+    anim.set_target(target);
+    self.autohide_anim = Some(anim);
+    self.autohide_settle = false;
+
+    true
+  }
+
+  fn autohide_margin(&self, factor: f32) -> (i32, i32, i32, i32) {
+    let (top, right, bottom, left) = self.collapsed_margin();
+    let lerp = |value: i32| (value as f32 * factor).round() as i32;
+    (lerp(top), lerp(right), lerp(bottom), lerp(left))
+  }
+
+  fn autohide_tick(&mut self) -> ItemEffect {
+    if self.autohide_settle {
+      self.autohide_anim = None;
+      self.autohide_settle = false;
+      return ItemEffect::Subscribe(self.all_events());
+    }
+
+    let (top, right, bottom, left) = self.collapsed_margin();
+    let exclusive = self.exclusive_zone(self.autohide_target > 0.5);
+
+    let Some(anim) = self.autohide_anim.as_mut() else {
+      return ItemEffect::None;
+    };
+
+    anim.tick(Instant::now());
+    let factor = *anim.value();
+    let animating = anim.is_animating();
+
+    let lerp = |value: i32| (value as f32 * factor).round() as i32;
+    let margin = (lerp(top), lerp(right), lerp(bottom), lerp(left));
+
+    self.autohide_current = factor;
+
+    if animating {
+      ItemEffect::UpdateWindow(WindowSettings {
+        margin: Some(margin),
+        ..Default::default()
+      })
+    } else {
+      self.autohide_settle = true;
+      ItemEffect::UpdateWindow(WindowSettings {
+        margin: Some(margin),
+        exclusive_zone: Some(exclusive),
+        ..Default::default()
+      })
+    }
+  }
+
   fn items(&self) -> impl Iterator<Item = &PanelItemCell> {
     self
       .sections
@@ -974,6 +1055,7 @@ impl Panel {
         config,
         ctx,
         text(&item.label).size(font_size).color(color).into(),
+        false,
       ),
     }
   }
@@ -1196,6 +1278,9 @@ impl Panel {
       EventFilter::Named(format!("{}.toggle", prefix).into()),
       EventFilter::Named("config.reload".into()),
     ];
+    if self.autohide_anim.is_some() {
+      events.push(EventFilter::Frame);
+    }
     for item in self.items() {
       for item in item.all() {
         if let Some(comp) = &item.component {
@@ -1396,6 +1481,10 @@ impl DesktopItem for Panel {
     store: &mut Store,
     event: &ListenerAction,
   ) -> miette::Result<ItemEffect> {
+    if matches!(event, ListenerAction::Frame) && self.autohide_anim.is_some() {
+      return Ok(self.autohide_tick());
+    }
+
     let mut effect = match classify_evnet(self.event_prefix(), event) {
       PanelEventKind::Add => {
         if let ListenerAction::Payload { payload, .. } = event
@@ -1637,6 +1726,32 @@ impl DesktopItem for Panel {
 
   fn handle_message(&mut self, _store: Option<&mut Store>, message: &ItemMessage) -> ItemEffect {
     match message {
+      ItemMessage::Effect(_, ItemEffect::UpdateWindow(settings)) if self.autohide => {
+        let collapsed = settings.margin != Some((0, 0, 0, 0));
+        let target = if collapsed { 1.0 } else { 0.0 };
+
+        if !slowshell_core::animations::enabled() {
+          if self.autohide_anim.is_some() {
+            return ItemEffect::None;
+          }
+
+          self.autohide_settle = false;
+          self.autohide_current = target;
+          self.autohide_target = target;
+
+          return ItemEffect::UpdateWindow(WindowSettings {
+            margin: Some(self.autohide_margin(target)),
+            exclusive_zone: Some(self.exclusive_zone(collapsed)),
+            ..Default::default()
+          });
+        }
+
+        if self.start_autohide(target) {
+          ItemEffect::Subscribe(self.all_events())
+        } else {
+          ItemEffect::None
+        }
+      }
       ItemMessage::Effect(_, effect @ ItemEffect::UpdateWindow(_)) => effect.clone(),
       _ => ItemEffect::None,
     }

@@ -37,6 +37,8 @@ struct State {
   registries: HashMap<usize, usize>,
   registry_subs: Vec<(usize, usize, SlRegistryNotifyFn)>,
   dispatched: Vec<String>,
+  dispatched_with: Vec<(String, String)>,
+  commands: Vec<(String, String, String)>,
   audio: Option<AudioState>,
   bluetooth: Option<BluetoothState>,
   network: Option<NetworkState>,
@@ -910,6 +912,32 @@ unsafe extern "C" fn mock_dispatch(_host: *mut c_void, command: SlStr) -> i32 {
   0
 }
 
+unsafe extern "C" fn mock_dispatch_with_string(
+  _host: *mut c_void,
+  name: SlStr,
+  payload: SlStr,
+) -> i32 {
+  let name = unsafe { name.as_str() }.unwrap_or_default().to_owned();
+  let payload = unsafe { payload.as_str() }.unwrap_or_default().to_owned();
+  with_state(|state| state.dispatched_with.push((name, payload)));
+  0
+}
+
+unsafe extern "C" fn mock_register_command(
+  _host: *mut c_void,
+  name: SlStr,
+  title: SlStr,
+  description: SlStr,
+) -> i32 {
+  let name = unsafe { name.as_str() }.unwrap_or_default().to_owned();
+  let title = unsafe { title.as_str() }.unwrap_or_default().to_owned();
+  let description = unsafe { description.as_str() }
+    .unwrap_or_default()
+    .to_owned();
+  with_state(|state| state.commands.push((name, title, description)));
+  0
+}
+
 unsafe extern "C" fn mock_audio_state_get(_host: *mut c_void, out: *mut SlAudioState) -> i32 {
   if out.is_null() {
     return -1;
@@ -1083,6 +1111,8 @@ static MOCK_API: SlHostApi = SlHostApi {
   persistence_get: Some(mock_persistence_get),
   persistence_set: Some(mock_persistence_set),
   persistence_remove: Some(mock_persistence_remove),
+  dispatch_with_string: Some(mock_dispatch_with_string),
+  register_command: Some(mock_register_command),
 };
 
 fn install() {
@@ -1288,6 +1318,14 @@ impl Harness {
 
   pub fn dispatched(&self) -> Vec<String> {
     with_state(|state| state.dispatched.clone())
+  }
+
+  pub fn dispatched_with(&self) -> Vec<(String, String)> {
+    with_state(|state| state.dispatched_with.clone())
+  }
+
+  pub fn commands(&self) -> Vec<(String, String, String)> {
+    with_state(|state| state.commands.clone())
   }
 
   pub fn audio(&self, state: AudioState) -> &Self {
@@ -2219,6 +2257,44 @@ mod tests {
 
     assert!(ctx.dispatch("audio.toggle_mute"));
     assert_eq!(harness.dispatched(), vec!["audio.toggle_mute".to_owned()]);
+  }
+
+  #[test]
+  fn dispatch_with_string_passes_payload() {
+    let harness = Harness::new();
+    let ctx = Context::new(&MOCK_API, CTX);
+
+    assert!(ctx.dispatch_with_string("audio.set_volume", "50"));
+    assert_eq!(
+      harness.dispatched_with(),
+      vec![("audio.set_volume".to_owned(), "50".to_owned())]
+    );
+  }
+
+  #[test]
+  fn registers_commands() {
+    let harness = Harness::new();
+
+    harness.register(|reg| {
+      reg.command("test.hello", "Say hello");
+      reg.command_with("test.echo", "Echo", "Repeat a value");
+    });
+
+    assert_eq!(
+      harness.commands(),
+      vec![
+        (
+          "test.hello".to_owned(),
+          "Say hello".to_owned(),
+          String::new()
+        ),
+        (
+          "test.echo".to_owned(),
+          "Echo".to_owned(),
+          "Repeat a value".to_owned()
+        ),
+      ]
+    );
   }
 
   struct Comp;

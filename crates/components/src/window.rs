@@ -1,6 +1,6 @@
 use iced::{
-  Element, Length,
-  widget::{container, row, text},
+  Element,
+  widget::{container, row, text, text::Wrapping},
 };
 use slowshell_commons::desktop::DesktopEntries;
 use slowshell_commons::panels::PanelOrientation;
@@ -53,6 +53,12 @@ impl Component for Window {
     let font_size = style.number("font.size").unwrap_or(13.0);
     let icon_size = style.number("icon.size").unwrap_or(14.0);
     let color = style.color(&theme, "color", theme.text);
+    let name_width = options
+      .and_then(|o| o.number("name-width"))
+      .unwrap_or(180.0);
+    let title_width = options
+      .and_then(|o| o.number("title-width"))
+      .unwrap_or(320.0);
 
     if ctx.orientation == PanelOrientation::Vertical {
       let icon_elem: Element<'_, ItemMessage> = if show_icon {
@@ -60,7 +66,7 @@ impl Component for Window {
       } else {
         row![].into()
       };
-      return spaced_component(config, ctx, icon_elem);
+      return spaced_component(config, ctx, icon_elem, false);
     }
 
     let show_name = options.and_then(|o| o.bool("name")).unwrap_or(true);
@@ -77,20 +83,21 @@ impl Component for Window {
     let title = window.title.clone();
 
     if show_name {
-      content = content.push(
-        text(
-          if let Some(name) = store
-            .borrow::<DesktopEntries>()
-            .map(|d| d.resolve_name(&class))
-          {
-            name.to_string()
-          } else {
-            class
-          },
-        )
-        .size(font_size)
-        .color(color),
-      );
+      let name = text(
+        if let Some(name) = store
+          .borrow::<DesktopEntries>()
+          .map(|d| d.resolve_name(&class))
+        {
+          name.to_string()
+        } else {
+          class
+        },
+      )
+      .size(font_size)
+      .color(color)
+      .wrapping(Wrapping::None);
+
+      content = content.push(clipped(name, name_width));
     }
 
     if show_title {
@@ -103,11 +110,27 @@ impl Component for Window {
             .size(5.0),
         );
       }
-      content =
-        content.push(container(text(title).size(font_size).color(color)).width(Length::Shrink));
+      content = content.push(clipped(
+        text(title)
+          .size(font_size)
+          .color(color)
+          .wrapping(Wrapping::None),
+        title_width,
+      ));
     }
 
-    spaced_component(config, ctx, content.into())
+    spaced_component(config, ctx, content.into(), false)
+  }
+}
+
+fn clipped<'a>(
+  content: impl Into<Element<'a, ItemMessage>>,
+  max_width: f32,
+) -> Element<'a, ItemMessage> {
+  if max_width > 0.0 {
+    container(content).max_width(max_width).clip(true).into()
+  } else {
+    content.into()
   }
 }
 

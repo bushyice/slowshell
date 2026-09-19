@@ -229,7 +229,7 @@ impl Component for SystemTray {
       }
     }
 
-    spaced_component(config, ctx, container(tray).into())
+    spaced_component(config, ctx, container(tray).into(), false)
   }
 }
 
