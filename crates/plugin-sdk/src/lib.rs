@@ -1915,12 +1915,38 @@ unsafe extern "C" fn host_theme_get_unavailable(_ctx: *mut c_void, _out: *mut Sl
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WidgetEventKind {
+  Input,
+  Submit,
+  Custom,
+  Scroll,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WidgetEvent {
+  pub id: String,
+  pub kind: WidgetEventKind,
+  pub value: String,
+  pub scroll: [f32; 2],
+}
+
+fn widget_event_kind(kind: u32) -> WidgetEventKind {
+  match kind {
+    sl_widget_event::SUBMIT => WidgetEventKind::Submit,
+    sl_widget_event::CUSTOM => WidgetEventKind::Custom,
+    sl_widget_event::SCROLL => WidgetEventKind::Scroll,
+    _ => WidgetEventKind::Input,
+  }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
   Tick { tag: u32, fd: i32 },
   Fd { action: u32, fd: i32 },
   ConfigReload,
   CompositorUpdate,
   Frame,
+  Widget(WidgetEvent),
   Other(u32),
 }
 
@@ -1938,6 +1964,14 @@ impl Event {
       sl_event_kind::CONFIG_RELOAD => Event::ConfigReload,
       sl_event_kind::COMPOSITOR_UPDATE => Event::CompositorUpdate,
       sl_event_kind::FRAME => Event::Frame,
+      sl_event_kind::WIDGET => Event::Widget(WidgetEvent {
+        id: unsafe { event.id.as_str() }.unwrap_or_default().to_owned(),
+        kind: widget_event_kind(event.widget),
+        value: unsafe { event.value.as_str() }
+          .unwrap_or_default()
+          .to_owned(),
+        scroll: event.scroll,
+      }),
       other => Event::Other(other),
     }
   }
@@ -1953,6 +1987,7 @@ impl EventMask {
   pub const CONFIG_RELOAD: Self = Self(sl_event_mask::CONFIG_RELOAD);
   pub const COMPOSITOR_UPDATE: Self = Self(sl_event_mask::COMPOSITOR_UPDATE);
   pub const FRAME: Self = Self(sl_event_mask::FRAME);
+  pub const WIDGET: Self = Self(sl_event_mask::WIDGET);
 
   pub const fn union(self, other: Self) -> Self {
     Self(self.0 | other.0)
@@ -2204,6 +2239,7 @@ pub enum Node {
     child: Box<Node>,
     width: Length,
     height: Length,
+    report_scroll: bool,
   },
   Icon {
     name: String,
@@ -2231,6 +2267,21 @@ pub enum Node {
     width: Length,
     height: Length,
     draw: Box<dyn Fn(&mut [u8])>,
+  },
+
+  TextInput {
+    id: String,
+    value: String,
+    placeholder: String,
+    secure: bool,
+    size: f32,
+    color: Option<Color>,
+    width: Length,
+  },
+
+  EventWrapper {
+    child: Box<Node>,
+    id: String,
   },
 
   Animated {
@@ -2273,6 +2324,7 @@ impl Node {
       child: Box::new(child),
       width: Length::Shrink,
       height: Length::Shrink,
+      report_scroll: false,
     }
   }
 
@@ -2298,6 +2350,59 @@ impl Node {
       size: 12.0,
       color: None,
     }
+  }
+
+  pub fn text_input(id: impl Into<String>, value: impl Into<String>) -> Node {
+    Node::TextInput {
+      id: id.into(),
+      value: value.into(),
+      placeholder: String::new(),
+      secure: false,
+      size: 12.0,
+      color: None,
+      width: Length::Fill,
+    }
+  }
+
+  pub fn event_wrapper(child: Node, id: impl Into<String>) -> Node {
+    Node::EventWrapper {
+      child: Box::new(child),
+      id: id.into(),
+    }
+  }
+
+  pub fn scroll_events(mut self) -> Node {
+    if let Node::Scrollable { report_scroll, .. } = &mut self {
+      *report_scroll = true;
+    }
+    self
+  }
+
+  pub fn placeholder(mut self, placeholder: impl Into<String>) -> Node {
+    let placeholder = placeholder.into();
+    if let Node::TextInput {
+      placeholder: target,
+      ..
+    } = &mut self
+    {
+      *target = placeholder;
+    }
+    self
+  }
+
+  pub fn secure(mut self, secure: bool) -> Node {
+    if let Node::TextInput { secure: target, .. } = &mut self {
+      *target = secure;
+    }
+    self
+  }
+
+  pub fn value(mut self, value: impl Into<String>) -> Node {
+    let value = value.into();
+    if let Node::TextInput { value: target, .. } = &mut self {
+      *target = value;
+    }
+    self
   }
 
   pub fn progress(value: f32) -> Node {
@@ -2353,7 +2458,9 @@ impl Node {
 
   pub fn size(mut self, size: f32) -> Node {
     match &mut self {
-      Node::Icon { size: target, .. } | Node::Text { size: target, .. } => *target = size,
+      Node::Icon { size: target, .. }
+      | Node::Text { size: target, .. }
+      | Node::TextInput { size: target, .. } => *target = size,
       _ => {}
     }
     self
@@ -2363,6 +2470,7 @@ impl Node {
     match &mut self {
       Node::Icon { color: target, .. }
       | Node::Text { color: target, .. }
+      | Node::TextInput { color: target, .. }
       | Node::Progress { color: target, .. } => *target = Some(color),
       _ => {}
     }
@@ -2374,6 +2482,7 @@ impl Node {
       Node::Container { width: target, .. }
       | Node::Scrollable { width: target, .. }
       | Node::Image { width: target, .. }
+      | Node::TextInput { width: target, .. }
       | Node::Canvas { width: target, .. } => *target = width,
       _ => {}
     }
@@ -2489,6 +2598,7 @@ impl NodeArena {
       Node::Container { child, .. }
       | Node::Clickable { child, .. }
       | Node::Scrollable { child, .. }
+      | Node::EventWrapper { child, .. }
       | Node::Animated { child, .. } => 1 + NodeArena::total_slots(child),
       _ => 1,
     }
@@ -2610,6 +2720,7 @@ impl NodeArena {
         child,
         width,
         height,
+        report_scroll,
       } => {
         let base = self.nodes.len();
         self.nodes.push(SlNode::default());
@@ -2621,6 +2732,49 @@ impl NodeArena {
           child_count: 1,
           width: width.to_sl(),
           height: height.to_sl(),
+          report_scroll: *report_scroll,
+          ..SlNode::default()
+        };
+        unsafe { self.nodes.as_ptr().add(base) }
+      }
+
+      Node::TextInput {
+        id,
+        value,
+        placeholder,
+        secure,
+        size,
+        color,
+        width,
+      } => {
+        let id = self.stash(id);
+        let value = self.stash(value);
+        let placeholder = self.stash(placeholder);
+        self.push(SlNode {
+          kind: sl_node_kind::TEXT_INPUT,
+          id,
+          text: value,
+          placeholder,
+          secure: *secure,
+          size: *size,
+          style: color_style(color.as_ref()),
+          width: width.to_sl(),
+          ..SlNode::default()
+        })
+      }
+
+      Node::EventWrapper { child, id } => {
+        let base = self.nodes.len();
+        self.nodes.push(SlNode::default());
+        self.materialize(child, ctx);
+
+        let id = self.stash(id);
+
+        self.nodes[base] = SlNode {
+          kind: sl_node_kind::EVENT_WRAPPER,
+          id,
+          children: unsafe { self.nodes.as_ptr().add(base + 1) },
+          child_count: 1,
           ..SlNode::default()
         };
         unsafe { self.nodes.as_ptr().add(base) }
@@ -3129,6 +3283,97 @@ pub trait Spotlight: Send + 'static {
   }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum TileAction {
+  #[default]
+  None,
+  Command(String),
+  Commands(Vec<String>),
+  Menu(String),
+  Expand,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct QuickSettingsTile {
+  pub id: String,
+  pub icon: String,
+  pub title: String,
+  pub status: String,
+  pub detail: String,
+  pub active: bool,
+  pub accent: String,
+  pub on_click: TileAction,
+  pub order: i32,
+}
+
+impl QuickSettingsTile {
+  pub fn new(id: impl Into<String>, icon: impl Into<String>, title: impl Into<String>) -> Self {
+    Self {
+      id: id.into(),
+      icon: icon.into(),
+      title: title.into(),
+      order: 100,
+      ..Default::default()
+    }
+  }
+
+  pub fn status(mut self, status: impl Into<String>) -> Self {
+    self.status = status.into();
+    self
+  }
+
+  pub fn active(mut self, active: bool) -> Self {
+    self.active = active;
+    self
+  }
+
+  pub fn action(mut self, command: impl Into<String>) -> Self {
+    self.on_click = TileAction::Command(command.into());
+    self
+  }
+
+  pub fn commands<I, S>(mut self, commands: I) -> Self
+  where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+  {
+    self.on_click = TileAction::Commands(commands.into_iter().map(Into::into).collect());
+    self
+  }
+
+  pub fn menu(mut self, menu: impl Into<String>) -> Self {
+    self.on_click = TileAction::Menu(menu.into());
+    self
+  }
+
+  pub fn expandable(mut self) -> Self {
+    self.on_click = TileAction::Expand;
+    self
+  }
+
+  pub fn accent(mut self, key: impl Into<String>) -> Self {
+    self.accent = key.into();
+    self
+  }
+
+  pub fn order(mut self, order: i32) -> Self {
+    self.order = order;
+    self
+  }
+}
+
+pub trait QuickSettings: Send + 'static {
+  fn new(ctx: &Context) -> Self;
+
+  fn tiles(&self, _ctx: &Context) -> Vec<QuickSettingsTile> {
+    Vec::new()
+  }
+
+  fn children(&self, _ctx: &Context, _id: &str) -> Vec<QuickSettingsTile> {
+    Vec::new()
+  }
+}
+
 pub struct Registrar {
   api: *const SlHostApi,
   host: *mut c_void,
@@ -3162,6 +3407,10 @@ impl Registrar {
 
   pub fn spotlight<T: Spotlight>(&self, name: &str) {
     unsafe { register_spotlight(self.api, self.host, name, spotlight_vtable::<T>()) };
+  }
+
+  pub fn quick_settings<T: QuickSettings>(&self, name: &str) {
+    unsafe { register_quick_settings(self.api, self.host, name, quick_settings_vtable::<T>()) };
   }
 
   pub fn command(&self, name: &str, title: &str) {
@@ -3832,6 +4081,171 @@ fn spotlight_vtable<T: Spotlight>() -> &'static SlSpotlightVtable {
   }))
 }
 
+struct QuickSettingsAdapter<T> {
+  inner: T,
+}
+
+thread_local! {
+  static QS_TILES: std::cell::RefCell<Vec<SlQuickSettingsTile>> =
+    const { std::cell::RefCell::new(Vec::new()) };
+  static QS_STRINGS: std::cell::RefCell<Vec<String>> =
+    const { std::cell::RefCell::new(Vec::new()) };
+  static QS_COMMANDS: std::cell::RefCell<Vec<Box<[SlStr]>>> =
+    const { std::cell::RefCell::new(Vec::new()) };
+}
+
+unsafe extern "C" fn quick_settings_create<T: QuickSettings>(ctx: *mut c_void) -> *mut c_void {
+  let inner = T::new(&context_for(ctx));
+  Box::into_raw(Box::new(QuickSettingsAdapter { inner })) as *mut c_void
+}
+
+unsafe extern "C" fn quick_settings_destroy<T: QuickSettings>(
+  _ctx: *mut c_void,
+  state: *mut c_void,
+) {
+  if !state.is_null() {
+    unsafe { drop(Box::from_raw(state as *mut QuickSettingsAdapter<T>)) };
+  }
+}
+
+fn fill_quick_settings_tiles(
+  tiles: Vec<crate::QuickSettingsTile>,
+  out: *mut SlQuickSettingsTileList,
+) {
+  let Some(out) = (unsafe { out.as_mut() }) else {
+    return;
+  };
+
+  QS_STRINGS.with(|strings| {
+    QS_TILES.with(|staged| {
+      QS_COMMANDS.with(|commands| {
+        let mut strings = strings.borrow_mut();
+        let mut staged = staged.borrow_mut();
+        let mut commands = commands.borrow_mut();
+        strings.clear();
+        staged.clear();
+        commands.clear();
+
+        let string_capacity: usize = tiles
+          .iter()
+          .map(|tile| {
+            let commands = match &tile.on_click {
+              TileAction::Commands(list) => list.len(),
+              _ => 0,
+            };
+            6 + commands
+          })
+          .sum();
+        strings.reserve(string_capacity);
+
+        for tile in tiles {
+          let stash = |strings: &mut Vec<String>, value: &str| {
+            strings.push(value.to_owned());
+            let value = strings.last().expect("just pushed");
+            SlStr {
+              ptr: value.as_ptr(),
+              len: value.len(),
+            }
+          };
+
+          let id = stash(&mut strings, &tile.id);
+          let icon = stash(&mut strings, &tile.icon);
+          let title = stash(&mut strings, &tile.title);
+          let status = stash(&mut strings, &tile.status);
+          let detail = stash(&mut strings, &tile.detail);
+          let accent = stash(&mut strings, &tile.accent);
+
+          let (action_kind, command_strings) = match &tile.on_click {
+            TileAction::None => (sl_quick_settings_action::NONE, Vec::new()),
+            TileAction::Command(command) => (
+              sl_quick_settings_action::COMMAND,
+              vec![stash(&mut strings, command)],
+            ),
+            TileAction::Commands(list) => (
+              sl_quick_settings_action::COMMANDS,
+              list
+                .iter()
+                .map(|command| stash(&mut strings, command))
+                .collect(),
+            ),
+            TileAction::Menu(_) => (sl_quick_settings_action::MENU, Vec::new()),
+            TileAction::Expand => (sl_quick_settings_action::EXPAND, Vec::new()),
+          };
+
+          let menu = match &tile.on_click {
+            TileAction::Menu(menu) => stash(&mut strings, menu),
+            _ => SlStr::EMPTY,
+          };
+
+          let (commands_ptr, command_count) = if command_strings.is_empty() {
+            (core::ptr::null(), 0)
+          } else {
+            let boxed = command_strings.into_boxed_slice();
+            let count = boxed.len();
+            let ptr = boxed.as_ptr();
+
+            commands.push(boxed);
+            (ptr, count)
+          };
+
+          staged.push(SlQuickSettingsTile {
+            id,
+            icon,
+            title,
+            status,
+            detail,
+            active: tile.active,
+            accent,
+            action_kind,
+            commands: commands_ptr,
+            command_count,
+            menu,
+            order: tile.order,
+          });
+        }
+
+        out.tiles = staged.as_ptr();
+        out.len = staged.len();
+      })
+    })
+  });
+}
+
+unsafe extern "C" fn quick_settings_tiles<T: QuickSettings>(
+  ctx: *mut c_void,
+  state: *mut c_void,
+  _expanded: SlStr,
+  out: *mut SlQuickSettingsTileList,
+) {
+  let Some(adapter) = (unsafe { (state as *const QuickSettingsAdapter<T>).as_ref() }) else {
+    return;
+  };
+  fill_quick_settings_tiles(adapter.inner.tiles(&context_for(ctx)), out);
+}
+
+unsafe extern "C" fn quick_settings_children<T: QuickSettings>(
+  ctx: *mut c_void,
+  state: *mut c_void,
+  expanded: SlStr,
+  out: *mut SlQuickSettingsTileList,
+) {
+  let Some(adapter) = (unsafe { (state as *const QuickSettingsAdapter<T>).as_ref() }) else {
+    return;
+  };
+  let id = unsafe { expanded.as_str() }.unwrap_or_default();
+  fill_quick_settings_tiles(adapter.inner.children(&context_for(ctx), id), out);
+}
+
+fn quick_settings_vtable<T: QuickSettings>() -> &'static SlQuickSettingsVtable {
+  Box::leak(Box::new(SlQuickSettingsVtable {
+    size: std::mem::size_of::<SlQuickSettingsVtable>() as u32,
+    create: Some(quick_settings_create::<T>),
+    destroy: Some(quick_settings_destroy::<T>),
+    tiles: Some(quick_settings_tiles::<T>),
+    children: Some(quick_settings_children::<T>),
+  }))
+}
+
 #[macro_export]
 macro_rules! export_plugin {
   ($register:path) => {
@@ -3949,6 +4363,154 @@ mod tests {
       assert_eq!(scrollable.height.unit, sl_length_unit::FILL);
       let child = &*scrollable.children;
       assert_eq!(child.kind, sl_node_kind::TEXT);
+    }
+  }
+
+  #[test]
+  fn materializes_text_input() {
+    let ctx = Context::new(core::ptr::null(), core::ptr::null_mut());
+    let mut arena = NodeArena::new();
+
+    let ui = Node::text_input("query", "hello")
+      .placeholder("Search…")
+      .secure(true)
+      .size(18.0)
+      .width(Length::Fill);
+
+    let root = arena.materialize(&ui, &ctx);
+    unsafe {
+      let input = &*root;
+      assert_eq!(input.kind, sl_node_kind::TEXT_INPUT);
+      assert_eq!(input.id.as_str(), Some("query"));
+      assert_eq!(input.text.as_str(), Some("hello"));
+      assert_eq!(input.placeholder.as_str(), Some("Search…"));
+      assert!(input.secure);
+      assert_eq!(input.size, 18.0);
+      assert_eq!(input.width.unit, sl_length_unit::FILL);
+    }
+
+    let ui = Node::text_input("query", "next").value("changed");
+    let root = arena.materialize(&ui, &ctx);
+    unsafe {
+      assert_eq!((&*root).text.as_str(), Some("changed"));
+    }
+  }
+
+  #[test]
+  fn materializes_event_wrapper_and_scroll_events() {
+    let ctx = Context::new(core::ptr::null(), core::ptr::null_mut());
+    let mut arena = NodeArena::new();
+
+    let ui = Node::event_wrapper(Node::text("hot zone"), "zone");
+    let root = arena.materialize(&ui, &ctx);
+    unsafe {
+      let wrapper = &*root;
+      assert_eq!(wrapper.kind, sl_node_kind::EVENT_WRAPPER);
+      assert_eq!(wrapper.id.as_str(), Some("zone"));
+      assert_eq!(wrapper.child_count, 1);
+      assert_eq!((&*wrapper.children).kind, sl_node_kind::TEXT);
+    }
+
+    let ui = Node::scrollable(Node::text("list"))
+      .height(Length::Fill)
+      .scroll_events();
+    let root = arena.materialize(&ui, &ctx);
+    unsafe {
+      let scrollable = &*root;
+      assert_eq!(scrollable.kind, sl_node_kind::SCROLLABLE);
+      assert!(scrollable.report_scroll);
+
+      let ui = Node::scrollable(Node::text("list"));
+      let root = arena.materialize(&ui, &ctx);
+      assert!(!(&*root).report_scroll);
+    }
+  }
+
+  #[test]
+  fn quick_settings_tiles_stage_through_abi() {
+    let tiles = vec![
+      QuickSettingsTile::new("vpn", "network-vpn-symbolic", "VPN")
+        .status("Connected")
+        .active(true)
+        .action("vpn.toggle")
+        .order(5),
+      QuickSettingsTile::new("misc", "network-offline-symbolic", "Offline").order(90),
+      QuickSettingsTile::new("radio", "airplane-mode-symbolic", "Airplane")
+        .commands(["network.toggle", "bluetooth.toggle"])
+        .order(60),
+      QuickSettingsTile::new("wifi", "network-wireless-symbolic", "Wi-Fi")
+        .menu("menus/network")
+        .order(10),
+    ];
+
+    let mut out = SlQuickSettingsTileList::default();
+    fill_quick_settings_tiles(tiles, &mut out);
+
+    assert_eq!(out.len, 4);
+    unsafe {
+      let first = &*out.tiles;
+      assert_eq!(first.id.as_str(), Some("vpn"));
+      assert_eq!(first.icon.as_str(), Some("network-vpn-symbolic"));
+      assert_eq!(first.title.as_str(), Some("VPN"));
+      assert_eq!(first.status.as_str(), Some("Connected"));
+      assert_eq!(first.action_kind, sl_quick_settings_action::COMMAND);
+      assert_eq!(first.command_count, 1);
+      assert_eq!((*first.commands).as_str(), Some("vpn.toggle"));
+      assert!(first.active);
+      assert_eq!(first.order, 5);
+
+      let second = &*out.tiles.add(1);
+      assert_eq!(second.id.as_str(), Some("misc"));
+      assert!(!second.active);
+      assert_eq!(second.action_kind, sl_quick_settings_action::NONE);
+      assert_eq!(second.order, 90);
+
+      let third = &*out.tiles.add(2);
+      assert_eq!(third.action_kind, sl_quick_settings_action::COMMANDS);
+      assert_eq!(third.command_count, 2);
+      assert_eq!((*third.commands).as_str(), Some("network.toggle"));
+      assert_eq!((*third.commands.add(1)).as_str(), Some("bluetooth.toggle"));
+
+      let fourth = &*out.tiles.add(3);
+      assert_eq!(fourth.action_kind, sl_quick_settings_action::MENU);
+      assert_eq!(fourth.menu.as_str(), Some("menus/network"));
+    }
+  }
+
+  #[test]
+  fn parses_widget_events() {
+    let event = SlEvent {
+      kind: sl_event_kind::WIDGET,
+      widget: sl_widget_event::SCROLL,
+      id: SlStr::from_str("query"),
+      value: SlStr::EMPTY,
+      scroll: [1.5, -2.0],
+      ..SlEvent::default()
+    };
+
+    match Event::from_sl(&event) {
+      Event::Widget(widget) => {
+        assert_eq!(widget.id, "query");
+        assert_eq!(widget.kind, WidgetEventKind::Scroll);
+        assert_eq!(widget.scroll, [1.5, -2.0]);
+      }
+      other => panic!("expected widget event, got {other:?}"),
+    }
+
+    let event = SlEvent {
+      kind: sl_event_kind::WIDGET,
+      widget: sl_widget_event::INPUT,
+      id: SlStr::from_str("query"),
+      value: SlStr::from_str("typed"),
+      ..SlEvent::default()
+    };
+
+    match Event::from_sl(&event) {
+      Event::Widget(widget) => {
+        assert_eq!(widget.kind, WidgetEventKind::Input);
+        assert_eq!(widget.value, "typed");
+      }
+      other => panic!("expected widget event, got {other:?}"),
     }
   }
 

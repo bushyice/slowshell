@@ -1,8 +1,10 @@
 pub mod actions;
 pub mod bluetooth;
+pub mod clock;
 pub mod network;
 pub mod notifications;
 pub mod power;
+pub mod quicksettings;
 pub mod sound;
 pub mod systemmon;
 pub mod tray;
@@ -56,7 +58,35 @@ slowshell_registry::register_resources!(
       "button.radius" => 8,
       "button.font.size" => 12,
       "hover.background" => "mantle",
-      "hover.background.opacity" => 0.7
+      "hover.background.opacity" => 0.7,
+      "qs.width" => 340,
+      "qs.avatar.size" => 42,
+      "qs.tile.radius" => 12,
+      "qs.tile.background" => "mantle",
+      "qs.tile.background.opacity" => 1.0,
+      "qs.tile.active" => "mantle",
+      "qs.tile.border" => "overlay",
+      "qs.tile.border.opacity" => 0.15,
+      "clock.time.size" => 38,
+      "clock.seconds.size" => 15,
+      "calendar.cell.height" => 28,
+      "calendar.spacing" => 2,
+      "calendar.today.radius" => 999
+    }
+  ),
+  slider: Style(
+    slowshell_config::style! {
+      "background" => "primary",
+      "background.rail" => "mantle",
+      "background.rail.filled" => "primary",
+      "border.color" => "transparent",
+      "border.width" => 0.0,
+      "rail.width" => 4.0,
+      "rail.border.width" => 0.0,
+      "rail.border.color" => 0.0,
+      "rail.border.radius" => 2.0,
+      "rect" => false,
+      "slider.size" => 7.0
     }
   ),
   renderables: Renderable {
@@ -70,6 +100,14 @@ slowshell_registry::register_resources!(
   renderables: Renderable {
     name: "menus/actions".into(),
     create: |_, _| Some(Box::new(actions::ActionsRenderable::default()))
+  },
+  renderables: Renderable {
+    name: "menus/clock".into(),
+    create: |_, _| Some(Box::new(clock::ClockRenderable::default()))
+  },
+  renderables: Renderable {
+    name: "menus/quick".into(),
+    create: |_, _| Some(Box::new(quicksettings::QuickSettingsRenderable::default()))
   },
   renderables: Renderable {
     name: "menus/power".into(),
@@ -94,5 +132,8 @@ slowshell_registry::register_resources!(
   renderables: Renderable {
     name: "menus/tray".into(),
     create: |_, _| Some(Box::new(tray::TrayRenderable))
-  }
+  },
+  app: Custom(|store| {
+    quicksettings::register_builtin_providers(store);
+  }),
 );

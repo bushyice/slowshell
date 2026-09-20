@@ -14,8 +14,11 @@ use std::{
 };
 
 use iced::{
-  Alignment, Color, Length, Vector,
-  widget::{Space, column, container, image as image_widget, row, text},
+  Alignment, Color, Event, Length, Vector, keyboard, mouse,
+  widget::{
+    Space, column, container, image as image_widget, row, scrollable as scrollable_widget,
+    scrollable::Direction as ScrollDirection, text, text_input,
+  },
 };
 use iced_layershell::reexport::{
   Anchor, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
@@ -23,16 +26,17 @@ use iced_layershell::reexport::{
 use libloading::{Library, Symbol};
 use miette::IntoDiagnostic;
 use nix::sys::epoll::EpollFlags;
-use slowshell_commons::audio::SharedAudioState;
-use slowshell_commons::bluetooth::SharedBluetoothState;
-use slowshell_commons::network::SharedNetworkState;
-use slowshell_commons::notifications::{
-  NotificationCmd, NotificationImage, NotificationItem, SharedNotificationState,
-};
 use slowshell_commons::popups::PopupSettings;
 use slowshell_commons::power::SharedPowerState;
 use slowshell_commons::system::SharedSystemState;
 use slowshell_commons::tray::SharedTrayState;
+use slowshell_commons::{audio::SharedAudioState, quicksettings::QuickSettingsTile};
+use slowshell_commons::{bluetooth::SharedBluetoothState, quicksettings::TileAction};
+use slowshell_commons::{network::SharedNetworkState, quicksettings::QuickSettingsProvider};
+use slowshell_commons::{
+  notifications::{NotificationCmd, NotificationImage, NotificationItem, SharedNotificationState},
+  quicksettings::ensure_registry,
+};
 #[cfg(feature = "panels")]
 use slowshell_components::{
   Component, ComponentContext, ComponentFactory, ComponentOptions, ComponentRegistration,
@@ -62,12 +66,13 @@ use slowshell_plugin::{
   SlDesktopItemVtable, SlDesktopSettings, SlEffect, SlEthernet, SlEvent, SlHostApi, SlItemMessage,
   SlLength, SlMonitor, SlMprisPlayer, SlNetworkState, SlNode, SlNodeList, SlNotification,
   SlPayloadArgs, SlPayloadVtable, SlPluginGetMetaFn, SlPluginInitFn, SlPowerState, SlProcessInfo,
-  SlRegistryNotifyFn, SlRenderableSettings, SlRenderableVtable, SlSpotlightVtable, SlStr,
-  SlStyleSheet, SlStyleSheetEntry, SlSystemState, SlTheme, SlTrayItem, SlTrayState, SlWindow,
-  SlWorkspace, sl_align, sl_anchor, sl_animation_easing, sl_animation_kind, sl_effect, sl_epoll,
-  sl_event_kind, sl_event_mask, sl_image_source, sl_keyboard_interactivity, sl_layer,
-  sl_length_unit, sl_message_kind, sl_node_kind, sl_style_color_kind, sl_style_value_kind,
-  sl_update_when, sl_visibility,
+  SlQuickSettingsTileList, SlQuickSettingsVtable, SlRegistryNotifyFn, SlRenderableSettings,
+  SlRenderableVtable, SlSpotlightVtable, SlStr, SlStyleSheet, SlStyleSheetEntry, SlSystemState,
+  SlTheme, SlTrayItem, SlTrayState, SlWindow, SlWorkspace, sl_align, sl_anchor,
+  sl_animation_easing, sl_animation_kind, sl_effect, sl_epoll, sl_event_kind, sl_event_mask,
+  sl_image_source, sl_keyboard_interactivity, sl_layer, sl_length_unit, sl_message_kind,
+  sl_node_kind, sl_quick_settings_action, sl_style_color_kind, sl_style_value_kind, sl_update_when,
+  sl_visibility, sl_widget_event,
 };
 #[cfg(feature = "spotlight")]
 use slowshell_plugin::{SlSpotlightList, sl_display_style};
@@ -373,6 +378,10 @@ enum Pending {
     name: String,
     vtable: *const SlSpotlightVtable,
   },
+  QuickSettings {
+    name: String,
+    vtable: *const SlQuickSettingsVtable,
+  },
   Command {
     name: String,
     title: Option<String>,
@@ -511,6 +520,11 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
         });
       }
 
+      Pending::QuickSettings { name, vtable } => {
+        let ctx = Box::into_raw(Box::new(PluginInstance::new(plugin_id))) as *mut c_void;
+        register_plugin_quick_settings(registry, name, ctx, vtable);
+      }
+
       Pending::Command {
         name,
         title,
@@ -545,6 +559,149 @@ unsafe impl Send for SpotlightEntry {}
 fn spotlights() -> &'static Mutex<Vec<SpotlightEntry>> {
   static SPOTLIGHTS: OnceLock<Mutex<Vec<SpotlightEntry>>> = OnceLock::new();
   SPOTLIGHTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+struct PluginQuickSettingsProvider {
+  name: String,
+  ctx: *mut c_void,
+  vtable: *const SlQuickSettingsVtable,
+}
+
+unsafe impl Send for PluginQuickSettingsProvider {}
+unsafe impl Sync for PluginQuickSettingsProvider {}
+
+impl PluginQuickSettingsProvider {
+  fn state(&self) -> *mut c_void {
+    let mut states = quick_settings_states().lock().unwrap();
+    if let Some((_, state)) = states.get(&self.name) {
+      return *state as *mut c_void;
+    }
+
+    let state = unsafe {
+      match (*self.vtable).create {
+        Some(create) => create(self.ctx),
+        None => core::ptr::null_mut(),
+      }
+    };
+    states.insert(self.name.clone(), (self.ctx as usize, state as usize));
+    state
+  }
+
+  fn fetch(&self, expanded: &str) -> Vec<QuickSettingsTile> {
+    let Some(tiles_fn) = (unsafe { (*self.vtable).tiles }) else {
+      return Vec::new();
+    };
+
+    let state = self.state();
+
+    let function = if expanded.is_empty() {
+      tiles_fn
+    } else {
+      match unsafe { (*self.vtable).children } {
+        Some(children) => children,
+        None => tiles_fn,
+      }
+    };
+
+    let mut list = SlQuickSettingsTileList::default();
+    unsafe { function(self.ctx, state, SlStr::from_str(expanded), &mut list) };
+
+    if list.tiles.is_null() || list.len == 0 {
+      return Vec::new();
+    }
+
+    (0..list.len)
+      .filter_map(|index| {
+        let tile = unsafe { list.tiles.add(index).as_ref() }?;
+        let text = |value: SlStr| unsafe { value.as_str() }.unwrap_or_default().to_owned();
+
+        let commands: Vec<String> = if tile.commands.is_null() || tile.command_count == 0 {
+          Vec::new()
+        } else {
+          (0..tile.command_count)
+            .filter_map(|index| unsafe { tile.commands.add(index).as_ref() })
+            .map(|command| text(*command))
+            .collect()
+        };
+
+        let on_click = match tile.action_kind {
+          sl_quick_settings_action::COMMAND => {
+            TileAction::Command(commands.first().cloned().unwrap_or_default())
+          }
+          sl_quick_settings_action::COMMANDS => TileAction::Commands(commands),
+          sl_quick_settings_action::MENU => TileAction::Menu(text(tile.menu)),
+          sl_quick_settings_action::EXPAND => TileAction::Expand,
+          _ => TileAction::None,
+        };
+
+        Some(QuickSettingsTile {
+          id: text(tile.id),
+          icon: text(tile.icon),
+          title: text(tile.title),
+          status: text(tile.status),
+          detail: (!tile.detail.is_empty()).then(|| text(tile.detail)),
+          active: tile.active,
+          accent: (!tile.accent.is_empty()).then(|| text(tile.accent)),
+          on_click,
+          order: tile.order,
+        })
+      })
+      .collect()
+  }
+}
+
+impl QuickSettingsProvider for PluginQuickSettingsProvider {
+  fn id(&self) -> &str {
+    &self.name
+  }
+
+  fn tiles(&self, _config: &Config, _store: &Store) -> Vec<QuickSettingsTile> {
+    self.fetch("")
+  }
+
+  fn children(&self, _config: &Config, _store: &Store, id: &str) -> Vec<QuickSettingsTile> {
+    self.fetch(id)
+  }
+}
+
+fn quick_settings_states() -> &'static Mutex<HashMap<String, (usize, usize)>> {
+  static STATES: OnceLock<Mutex<HashMap<String, (usize, usize)>>> = OnceLock::new();
+  STATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_plugin_quick_settings(
+  registry: &mut GlobalRegistry,
+  name: String,
+  ctx: *mut c_void,
+  vtable: *const SlQuickSettingsVtable,
+) {
+  let provider = std::sync::Arc::new(PluginQuickSettingsProvider { name, ctx, vtable });
+  plugin_quick_settings_providers()
+    .lock()
+    .unwrap()
+    .push(provider);
+
+  registry.include_in(
+    "app",
+    ResourceRegistration::Custom(install_plugin_quick_settings),
+  );
+}
+
+fn plugin_quick_settings_providers()
+-> &'static Mutex<Vec<std::sync::Arc<PluginQuickSettingsProvider>>> {
+  static PROVIDERS: OnceLock<Mutex<Vec<std::sync::Arc<PluginQuickSettingsProvider>>>> =
+    OnceLock::new();
+  PROVIDERS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn install_plugin_quick_settings(store: &mut Store) {
+  let providers: Vec<std::sync::Arc<PluginQuickSettingsProvider>> =
+    plugin_quick_settings_providers().lock().unwrap().clone();
+
+  let registry = ensure_registry(store);
+  for provider in providers {
+    registry.register(provider);
+  }
 }
 
 fn registries() -> &'static Mutex<HashMap<usize, usize>> {
@@ -1021,7 +1178,13 @@ impl Renderable for PluginRenderable {
       unsafe { view(self.ctx, self.state, std::ptr::null_mut(), &mut list) };
     }
 
-    let rendered = unsafe { render_nodes(&list, Some(id), self.ctx as usize) };
+    let rendered = unsafe {
+      render_nodes(
+        &list,
+        RenderCtx::without_widgets(Some(id)),
+        self.ctx as usize,
+      )
+    };
     let content = container(rendered).padding(12.0);
 
     let settings = self.settings();
@@ -1502,6 +1665,7 @@ impl DesktopItem for PluginDesktopItem {
           bag: std::ptr::null_mut(),
           action,
           fd,
+          ..SlEvent::default()
         };
         effect_sl = unsafe { update(self.ctx, self.state, &event) };
       } else {
@@ -1563,7 +1727,13 @@ impl DesktopItem for PluginDesktopItem {
         )
       };
     }
-    unsafe { render_nodes(&list, Some(id), self.ctx as usize) }
+    unsafe {
+      render_nodes(
+        &list,
+        RenderCtx::without_widgets(Some(id)),
+        self.ctx as usize,
+      )
+    }
   }
 }
 
@@ -2639,6 +2809,7 @@ static HOST_API: SlHostApi = SlHostApi {
   persistence_remove: Some(host_persistence_remove),
   dispatch_with_string: Some(host_dispatch_with_string),
   register_command: Some(host_register_command),
+  register_quick_settings: Some(host_register_quick_settings),
 };
 
 unsafe extern "C" fn host_register_component(
@@ -2708,6 +2879,20 @@ unsafe extern "C" fn host_register_spotlight(
     pending
       .borrow_mut()
       .push(Pending::Spotlight { name, vtable });
+  });
+}
+
+unsafe extern "C" fn host_register_quick_settings(
+  _host: *mut c_void,
+  name: SlStr,
+  vtable: *const SlQuickSettingsVtable,
+  _userdata: *mut c_void,
+) {
+  let name = unsafe { name.as_str() }.unwrap_or("").to_owned();
+  PENDING.with(|pending| {
+    pending
+      .borrow_mut()
+      .push(Pending::QuickSettings { name, vtable });
   });
 }
 
@@ -3440,6 +3625,70 @@ struct PluginComponent {
   fds: Vec<(i32, u32)>,
 }
 
+#[derive(Clone, Debug)]
+pub struct WidgetEvent {
+  pub id: String,
+  pub kind: u32,
+  pub value: String,
+  pub scroll: [f32; 2],
+}
+
+impl WidgetEvent {
+  fn input(id: String, value: String) -> Self {
+    Self {
+      id,
+      kind: sl_widget_event::INPUT,
+      value,
+      scroll: [0.0, 0.0],
+    }
+  }
+
+  fn submit(id: String, value: String) -> Self {
+    Self {
+      id,
+      kind: sl_widget_event::SUBMIT,
+      value,
+      scroll: [0.0, 0.0],
+    }
+  }
+
+  fn custom(id: String, value: String) -> Self {
+    Self {
+      id,
+      kind: sl_widget_event::CUSTOM,
+      value,
+      scroll: [0.0, 0.0],
+    }
+  }
+
+  fn scroll(id: String, scroll: [f32; 2]) -> Self {
+    Self {
+      id,
+      kind: sl_widget_event::SCROLL,
+      value: String::new(),
+      scroll,
+    }
+  }
+
+  fn to_sl(&self) -> SlEvent {
+    SlEvent {
+      kind: sl_event_kind::WIDGET,
+      widget: self.kind,
+      id: SlStr::from_str(&self.id),
+      value: SlStr::from_str(&self.value),
+      scroll: self.scroll,
+      ..SlEvent::default()
+    }
+  }
+}
+
+fn widget_event_message(event_name: &Ustr, event: WidgetEvent) -> ItemMessage {
+  ItemMessage::Action(ListenerAction::Payload {
+    name: event_name.clone(),
+    payload: Some(PayloadBox::new(event)),
+  })
+}
+
 #[cfg(feature = "panels")]
 unsafe impl Send for PluginComponent {}
 
@@ -3545,6 +3794,10 @@ impl Component for PluginComponent {
       filters.push(EventFilter::Named(self.event_name.clone()));
     }
 
+    if mask & sl_event_mask::WIDGET != 0 {
+      filters.push(EventFilter::Payload(self.event_name.clone()));
+    }
+
     filters
   }
 
@@ -3601,12 +3854,23 @@ impl Component for PluginComponent {
       ListenerAction::Timer { name, .. } | ListenerAction::Signal { name, .. } => {
         &**name == &*self.event_name
       }
+      ListenerAction::Payload { name, .. } => &**name == &*self.event_name,
       _ => false,
+    };
+
+    let widget_event = match event {
+      ListenerAction::Payload { name, payload } if &**name == &*self.event_name => payload
+        .as_ref()
+        .and_then(|payload| payload.as_this::<WidgetEvent>())
+        .map(WidgetEvent::to_sl),
+      _ => None,
     };
 
     let mut effect_sl = SlEffect::default();
     let (_, calls) = with_plugin_calls(|| {
-      if targeted {
+      if let Some(widget_event) = widget_event {
+        effect_sl = unsafe { update(self.ctx, self.state, &widget_event) };
+      } else if targeted {
         let (kind, action, fd) = match event {
           ListenerAction::Signal { fd, .. } => {
             let action = self
@@ -3635,6 +3899,7 @@ impl Component for PluginComponent {
           bag: std::ptr::null_mut(),
           action,
           fd,
+          ..SlEvent::default()
         };
         effect_sl = unsafe { update(self.ctx, self.state, &event) };
       } else {
@@ -3680,7 +3945,11 @@ impl Component for PluginComponent {
       };
     }
 
-    let rendered = unsafe { render_nodes(&list, None, self.ctx as usize) };
+    let render_ctx = RenderCtx {
+      id: None,
+      widget_event: Some(self.event_name.clone()),
+    };
+    let rendered = unsafe { render_nodes(&list, render_ctx, self.ctx as usize) };
     spaced_component(config, ctx, rendered, unsafe { (*self.vtable).hoverable })
   }
 }
@@ -3705,45 +3974,57 @@ fn size(sl: SlLength) -> Length {
   }
 }
 
+#[derive(Clone)]
+struct RenderCtx {
+  id: Option<iced_layershell::reexport::IcedId>,
+  widget_event: Option<Ustr>,
+}
+
+impl RenderCtx {
+  fn without_widgets(id: Option<iced_layershell::reexport::IcedId>) -> Self {
+    Self {
+      id,
+      widget_event: None,
+    }
+  }
+}
+
 unsafe fn render_nodes(
   list: &SlNodeList,
-  id: Option<iced_layershell::reexport::IcedId>,
+  ctx: RenderCtx,
   cache_ctx: usize,
 ) -> iced::Element<'static, ItemMessage> {
   image_cache_begin(cache_ctx);
-  let element = unsafe { render_nodes_inner(list, id) };
+  let element = unsafe { render_nodes_inner(list, ctx) };
   image_cache_end();
   element
 }
 
 unsafe fn render_nodes_inner(
   list: &SlNodeList,
-  id: Option<iced_layershell::reexport::IcedId>,
+  ctx: RenderCtx,
 ) -> iced::Element<'static, ItemMessage> {
   if list.nodes.is_null() || list.len == 0 {
     return iced::widget::space().into();
   }
 
   if list.len == 1 {
-    return unsafe { render_node(&*list.nodes, id) };
+    return unsafe { render_node(&*list.nodes, &ctx) };
   }
 
   let children: Vec<iced::Element<'static, ItemMessage>> = (0..list.len)
-    .map(|index| unsafe { render_node(&*list.nodes.add(index), id) })
+    .map(|index| unsafe { render_node(&*list.nodes.add(index), &ctx) })
     .collect();
 
   column(children).into()
 }
 
-unsafe fn render_node(
-  node: &SlNode,
-  id: Option<iced_layershell::reexport::IcedId>,
-) -> iced::Element<'static, ItemMessage> {
+unsafe fn render_node(node: &SlNode, ctx: &RenderCtx) -> iced::Element<'static, ItemMessage> {
   let animation = node.animation;
   let sliding = animation.kind != sl_animation_kind::NONE;
 
   if !animation.tween {
-    let element = unsafe { render_plain(node, id) };
+    let element = unsafe { render_plain(node, ctx) };
     return if sliding {
       slide_element(element, animation)
     } else {
@@ -3761,12 +4042,13 @@ unsafe fn render_node(
   let element: iced::Element<'static, ItemMessage> = match node.kind {
     sl_node_kind::PROGRESS => {
       let target = node.value;
+      let ctx = ctx.clone();
       Animated::new(target, move |value| {
         let mut local = base;
         local.value = *value;
         local.text = borrow_str(&text);
         local.action = borrow_str(&action);
-        unsafe { render_plain(&local, id) }
+        unsafe { render_plain(&local, &ctx) }
       })
       .animation(mode)
       .animates_layout(true)
@@ -3779,13 +4061,14 @@ unsafe fn render_node(
       } else {
         Color::WHITE
       };
+      let ctx = ctx.clone();
       Animated::new(target, move |color| {
         let mut local = base;
         local.style.has_text_color = true;
         local.style.text_color = sl_color(*color);
         local.text = borrow_str(&text);
         local.action = borrow_str(&action);
-        unsafe { render_plain(&local, id) }
+        unsafe { render_plain(&local, &ctx) }
       })
       .animation(mode)
       .into()
@@ -3793,19 +4076,20 @@ unsafe fn render_node(
 
     sl_node_kind::ICON if node.style.has_text_color => {
       let target = to_color(node.style.text_color);
+      let ctx = ctx.clone();
       Animated::new(target, move |color| {
         let mut local = base;
         local.style.has_text_color = true;
         local.style.text_color = sl_color(*color);
         local.text = borrow_str(&text);
         local.action = borrow_str(&action);
-        unsafe { render_plain(&local, id) }
+        unsafe { render_plain(&local, &ctx) }
       })
       .animation(mode)
       .into()
     }
 
-    _ => unsafe { render_plain(node, id) },
+    _ => unsafe { render_plain(node, ctx) },
   };
 
   if sliding {
@@ -3856,17 +4140,14 @@ fn slide_element(
     .into()
 }
 
-unsafe fn render_plain(
-  node: &SlNode,
-  id: Option<iced_layershell::reexport::IcedId>,
-) -> iced::Element<'static, ItemMessage> {
+unsafe fn render_plain(node: &SlNode, rctx: &RenderCtx) -> iced::Element<'static, ItemMessage> {
   let body: iced::Element<'static, ItemMessage> = match node.kind {
     sl_node_kind::ROW | sl_node_kind::COLUMN => {
       let children: Vec<iced::Element<'static, ItemMessage>> = if node.children.is_null() {
         Vec::new()
       } else {
         (0..node.child_count)
-          .map(|index| unsafe { render_node(&*node.children.add(index), id) })
+          .map(|index| unsafe { render_node(&*node.children.add(index), rctx) })
           .collect()
       };
 
@@ -3910,7 +4191,7 @@ unsafe fn render_plain(
       if node.children.is_null() || node.child_count == 0 {
         iced::widget::space().into()
       } else {
-        unsafe { render_node(&*node.children, id) }
+        unsafe { render_node(&*node.children, rctx) }
       }
     }
 
@@ -3918,11 +4199,23 @@ unsafe fn render_plain(
       if node.children.is_null() || node.child_count == 0 {
         iced::widget::space().into()
       } else {
-        let child = unsafe { render_node(&*node.children, id) };
-        iced::widget::scrollable(child)
+        let child = unsafe { render_node(&*node.children, rctx) };
+        let scroll = scrollable_widget(child)
           .width(size(node.width))
           .height(size(node.height))
-          .into()
+          .direction(scrollable_direction(node));
+        scroll_events(node, &rctx, scroll)
+      }
+    }
+
+    sl_node_kind::TEXT_INPUT => unsafe { text_input_element(node, &rctx) },
+
+    sl_node_kind::EVENT_WRAPPER => {
+      if node.children.is_null() || node.child_count == 0 {
+        iced::widget::space().into()
+      } else {
+        let child = unsafe { render_node(&*node.children, rctx) };
+        unsafe { event_wrapper_element(node, &rctx, child) }
       }
     }
     _ => iced::widget::space().into(),
@@ -3973,6 +4266,7 @@ unsafe fn render_plain(
   }
 
   let node_action = unsafe { node.action.as_str() }.unwrap_or_default();
+  let id = rctx.id;
   let effect = id.filter(|_| node.has_effect).map(|_| node.effect);
   if effect.is_none() && node_action.is_empty() {
     return wrapped.into();
@@ -3992,6 +4286,186 @@ unsafe fn render_plain(
     }
     action.map(ItemMessage::Action)
   })
+}
+
+unsafe fn text_input_element(
+  node: &SlNode,
+  rctx: &RenderCtx,
+) -> iced::Element<'static, ItemMessage> {
+  let id = unsafe { node.id.as_str() }.unwrap_or_default().to_owned();
+  let value = unsafe { node.text.as_str() }.unwrap_or_default().to_owned();
+  let placeholder = unsafe { node.placeholder.as_str() }
+    .unwrap_or_default()
+    .to_owned();
+  let secure = node.secure;
+  let color = node
+    .style
+    .has_text_color
+    .then(|| to_color(node.style.text_color));
+  let widget_event = rctx.widget_event.clone();
+  let width = size(node.width);
+
+  let mut input = text_input(&placeholder, &value).width(width).secure(secure);
+
+  if let Some(size) = (node.size > 0.0).then_some(node.size) {
+    input = input.size(size);
+  }
+
+  if let Some(widget_event) = widget_event {
+    let input_id = id.clone();
+    let input_event = widget_event.clone();
+    input = input.on_input(move |value| {
+      widget_event_message(&input_event, WidgetEvent::input(input_id.clone(), value))
+    });
+
+    let submit_id = id.clone();
+    input = input.on_submit(widget_event_message(
+      &widget_event,
+      WidgetEvent::submit(submit_id, value.clone()),
+    ));
+  }
+
+  if let Some(color) = color {
+    input = input.style(move |_theme, _status| text_input::Style {
+      value: color,
+      ..text_input::default(_theme, _status)
+    });
+  }
+
+  input.into()
+}
+
+unsafe fn event_wrapper_element(
+  node: &SlNode,
+  rctx: &RenderCtx,
+  child: iced::Element<'static, ItemMessage>,
+) -> iced::Element<'static, ItemMessage> {
+  let Some(widget_event) = rctx.widget_event.clone() else {
+    return child;
+  };
+
+  let id = unsafe { node.id.as_str() }.unwrap_or_default().to_owned();
+  slowshell_widgets::EventWrapper::new(child, move |event, layout, cursor| {
+    encode_wrapper_event(&widget_event, &id, event, layout.bounds(), cursor)
+  })
+  .into()
+}
+
+fn encode_wrapper_event(
+  event_name: &Ustr,
+  id: &str,
+  event: &Event,
+  bounds: iced::Rectangle,
+  cursor: mouse::Cursor,
+) -> Option<ItemMessage> {
+  let value = match event {
+    Event::Keyboard(keyboard::Event::KeyPressed {
+      physical_key,
+      text,
+      modifiers,
+      repeat,
+      ..
+    }) => {
+      let code = physical_key_code(physical_key);
+      let text = text.as_deref().unwrap_or("");
+      let repeat = u32::from(*repeat);
+      let mods = modifiers.bits();
+      format!("keydown {code} {repeat} {mods} {text}")
+    }
+    Event::Keyboard(keyboard::Event::KeyReleased {
+      physical_key,
+      modifiers,
+      ..
+    }) => {
+      let code = physical_key_code(physical_key);
+      let mods = modifiers.bits();
+      format!("keyup {code} {mods}")
+    }
+    Event::Mouse(mouse::Event::ButtonPressed(button)) if cursor.is_over(bounds) => {
+      format!("mousedown {}", mouse_button_code(*button))
+    }
+    Event::Mouse(mouse::Event::ButtonReleased(button)) if cursor.is_over(bounds) => {
+      format!("mouseup {}", mouse_button_code(*button))
+    }
+    Event::Mouse(mouse::Event::CursorMoved { position }) if cursor.is_over(bounds) => {
+      format!("mousemove {} {}", position.x, position.y)
+    }
+    Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => match delta {
+      mouse::ScrollDelta::Lines { x, y } => format!("wheel {x} {y} lines"),
+      mouse::ScrollDelta::Pixels { x, y } => format!("wheel {x} {y} pixels"),
+    },
+    Event::Mouse(mouse::Event::CursorEntered) => "enter".to_owned(),
+    Event::Mouse(mouse::Event::CursorLeft) => "exit".to_owned(),
+    _ => return None,
+  };
+
+  Some(widget_event_message(
+    event_name,
+    WidgetEvent::custom(id.to_owned(), value),
+  ))
+}
+
+fn physical_key_code(physical: &keyboard::key::Physical) -> u32 {
+  match physical {
+    keyboard::key::Physical::Code(code) => *code as u32,
+    keyboard::key::Physical::Unidentified(native) => match native {
+      keyboard::key::NativeCode::Android(code) | keyboard::key::NativeCode::Xkb(code) => *code,
+      keyboard::key::NativeCode::MacOS(code) | keyboard::key::NativeCode::Windows(code) => {
+        *code as u32
+      }
+      keyboard::key::NativeCode::Unidentified => u32::MAX,
+    },
+  }
+}
+
+fn mouse_button_code(button: mouse::Button) -> u32 {
+  match button {
+    mouse::Button::Left => 0,
+    mouse::Button::Right => 1,
+    mouse::Button::Middle => 2,
+    mouse::Button::Back => 3,
+    mouse::Button::Forward => 4,
+    mouse::Button::Other(code) => 100 + code as u32,
+  }
+}
+
+fn scrollable_direction(node: &SlNode) -> ScrollDirection {
+  let horizontal = node.width.unit != sl_length_unit::SHRINK;
+  let vertical = node.height.unit != sl_length_unit::SHRINK;
+
+  match (horizontal, vertical) {
+    (true, true) => ScrollDirection::Both {
+      vertical: scrollable_widget::Scrollbar::default(),
+      horizontal: scrollable_widget::Scrollbar::default(),
+    },
+    (true, false) => ScrollDirection::Horizontal(scrollable_widget::Scrollbar::default()),
+    _ => ScrollDirection::Vertical(scrollable_widget::Scrollbar::default()),
+  }
+}
+
+fn scroll_events(
+  node: &SlNode,
+  rctx: &RenderCtx,
+  scroll: scrollable_widget::Scrollable<'static, ItemMessage>,
+) -> iced::Element<'static, ItemMessage> {
+  if !node.report_scroll {
+    return scroll.into();
+  }
+
+  let Some(widget_event) = rctx.widget_event.clone() else {
+    return scroll.into();
+  };
+
+  let id = unsafe { node.id.as_str() }.unwrap_or_default().to_owned();
+  scroll
+    .on_scroll(move |viewport| {
+      let offset = viewport.absolute_offset();
+      widget_event_message(
+        &widget_event,
+        WidgetEvent::scroll(id.clone(), [offset.x, offset.y]),
+      )
+    })
+    .into()
 }
 
 fn progress_element(node: &SlNode) -> iced::Element<'static, ItemMessage> {
@@ -4213,6 +4687,7 @@ fn item_effect_to_code(effect: &ItemEffect) -> u32 {
     ItemEffect::None => sl_effect::NONE,
     ItemEffect::Redraw => sl_effect::REDRAW,
     ItemEffect::Subscribe(_) => sl_effect::SUBSCRIBE,
+    ItemEffect::ShowAndSubscribe(_) => sl_effect::SUBSCRIBE,
     ItemEffect::Hide => sl_effect::HIDE,
     ItemEffect::Show => sl_effect::SHOW,
     ItemEffect::ReallyHide => sl_effect::REALLY_HIDE,
@@ -4617,7 +5092,7 @@ mod tests {
   #[test]
   fn renders_empty_list() {
     let list = SlNodeList::EMPTY;
-    let _ = unsafe { render_nodes(&list, None, 0) };
+    let _ = unsafe { render_nodes(&list, RenderCtx::without_widgets(None), 0) };
   }
 
   #[test]
@@ -4652,7 +5127,7 @@ mod tests {
       len: 1,
     };
 
-    let _ = unsafe { render_nodes(&list, None, 0) };
+    let _ = unsafe { render_nodes(&list, RenderCtx::without_widgets(None), 0) };
   }
 
   #[test]
@@ -4698,7 +5173,7 @@ mod tests {
       len: nodes.len(),
     };
 
-    let _ = unsafe { render_nodes(&list, None, 0) };
+    let _ = unsafe { render_nodes(&list, RenderCtx::without_widgets(None), 0) };
   }
 
   #[test]
@@ -4721,7 +5196,7 @@ mod tests {
       len: 1,
     };
 
-    let _ = unsafe { render_nodes(&list, None, 0) };
+    let _ = unsafe { render_nodes(&list, RenderCtx::without_widgets(None), 0) };
   }
 
   #[test]
@@ -4796,7 +5271,7 @@ mod tests {
       len: 1,
     };
 
-    let _ = unsafe { render_nodes(&list, None, 0) };
+    let _ = unsafe { render_nodes(&list, RenderCtx::without_widgets(None), 0) };
   }
 
   #[test]
@@ -4870,20 +5345,6 @@ style "example/card" {
   }
 
   #[test]
-  fn theme_get_serializes_config_theme() {
-    let config = Config::default();
-    let _scope = ScopedConfig::current(&config);
-
-    let mut theme = SlTheme::default();
-    let rc = unsafe { host_theme_get(std::ptr::null_mut(), &mut theme) };
-    assert_eq!(rc, 0);
-
-    assert!((theme.primary.r - 235.0 / 255.0).abs() < 1e-3);
-    assert!((theme.primary.g - 160.0 / 255.0).abs() < 1e-3);
-    assert!((theme.primary.b - 172.0 / 255.0).abs() < 1e-3);
-  }
-
-  #[test]
   fn style_register_adds_to_default_styles() {
     let key = String::from("background");
     let hex = String::from("#ff0000");
@@ -4954,7 +5415,7 @@ style "example/card" {
       len: 1,
     };
 
-    let _ = unsafe { render_nodes(&list, None, 0) };
+    let _ = unsafe { render_nodes(&list, RenderCtx::without_widgets(None), 0) };
   }
 
   static CONFIG_PARSER_SEEN: std::sync::Mutex<Vec<(String, Option<String>)>> =
@@ -5419,6 +5880,155 @@ style "example/card" {
     );
   }
 
+  #[cfg(feature = "panels")]
+  #[test]
+  fn widget_events_route_to_plugin_update() {
+    use std::sync::atomic::AtomicBool;
+
+    static WIDGET_SEEN: AtomicBool = AtomicBool::new(false);
+    static WIDGET_KIND: AtomicU32 = AtomicU32::new(0);
+    static RECEIVED_ID: Mutex<String> = Mutex::new(String::new());
+    static RECEIVED_VALUE: Mutex<String> = Mutex::new(String::new());
+
+    unsafe extern "C" fn create(_ctx: *mut c_void) -> *mut c_void {
+      core::ptr::null_mut()
+    }
+    unsafe extern "C" fn events(_ctx: *mut c_void, _state: *mut c_void) -> u32 {
+      sl_event_mask::WIDGET
+    }
+    unsafe extern "C" fn update(
+      _ctx: *mut c_void,
+      _state: *mut c_void,
+      event: *const SlEvent,
+    ) -> SlEffect {
+      let event = unsafe { &*event };
+      if event.kind == sl_event_kind::WIDGET {
+        let id = unsafe { event.id.as_str() }.unwrap_or_default().to_owned();
+        let value = unsafe { event.value.as_str() }
+          .unwrap_or_default()
+          .to_owned();
+        WIDGET_SEEN.store(true, Ordering::Relaxed);
+        WIDGET_KIND.store(event.widget, Ordering::Relaxed);
+        *RECEIVED_ID.lock().unwrap() = id;
+        *RECEIVED_VALUE.lock().unwrap() = value;
+        return SlEffect {
+          code: sl_effect::REDRAW,
+          custom: [0; 4],
+        };
+      }
+      SlEffect::default()
+    }
+
+    let vtable = SlComponentVtable {
+      size: std::mem::size_of::<SlComponentVtable>() as u32,
+      create: Some(create),
+      destroy: None,
+      events: Some(events),
+      watch: None,
+      update: Some(update),
+      view: None,
+      check_view: None,
+      stop: None,
+      hoverable: false,
+    };
+    let mut component = PluginComponent::new(core::ptr::null_mut(), &vtable, core::ptr::null_mut());
+    let mut store = Store::new();
+
+    let filters = component.events();
+    assert!(filters.contains(&EventFilter::Payload(component.event_name.clone())));
+
+    let payload = ListenerAction::Payload {
+      name: component.event_name.clone(),
+      payload: Some(PayloadBox::new(WidgetEvent::input(
+        "query".into(),
+        "typed".into(),
+      ))),
+    };
+
+    let effect = component
+      .update(&Config::default(), &mut store, &payload, None)
+      .expect("update should succeed");
+
+    assert_eq!(effect, ItemEffect::Redraw);
+    assert!(WIDGET_SEEN.load(Ordering::Relaxed));
+    assert_eq!(WIDGET_KIND.load(Ordering::Relaxed), sl_widget_event::INPUT);
+    assert_eq!(&*RECEIVED_ID.lock().unwrap(), "query");
+    assert_eq!(&*RECEIVED_VALUE.lock().unwrap(), "typed");
+
+    let unrelated = ListenerAction::Payload {
+      name: Ustr::from("some.other.event"),
+      payload: None,
+    };
+    let effect = component
+      .update(&Config::default(), &mut store, &unrelated, None)
+      .expect("update should succeed");
+    assert_eq!(effect, ItemEffect::None);
+  }
+
+  #[test]
+  fn plugin_quick_settings_provider_bridges_tiles() {
+    use slowshell_commons::quicksettings::{QuickSettingsProvider, TileAction};
+    use slowshell_plugin::SlQuickSettingsTile;
+
+    unsafe extern "C" fn create(_ctx: *mut c_void) -> *mut c_void {
+      core::ptr::null_mut()
+    }
+    unsafe extern "C" fn tiles(
+      _ctx: *mut c_void,
+      _state: *mut c_void,
+      _expanded: SlStr,
+      out: *mut SlQuickSettingsTileList,
+    ) {
+      let commands = Box::leak(vec![SlStr::from_str("vpn.toggle")].into_boxed_slice());
+      let tile = Box::leak(Box::new(SlQuickSettingsTile {
+        id: SlStr::from_str("vpn"),
+        icon: SlStr::from_str("network-vpn-symbolic"),
+        title: SlStr::from_str("VPN"),
+        status: SlStr::from_str("Connected"),
+        detail: SlStr::EMPTY,
+        active: true,
+        accent: SlStr::EMPTY,
+        action_kind: sl_quick_settings_action::COMMAND,
+        commands: commands.as_ptr(),
+        command_count: commands.len(),
+        menu: SlStr::EMPTY,
+        order: 5,
+      }));
+
+      if let Some(out) = unsafe { out.as_mut() } {
+        out.tiles = tile;
+        out.len = 1;
+      }
+    }
+
+    let vtable = SlQuickSettingsVtable {
+      size: std::mem::size_of::<SlQuickSettingsVtable>() as u32,
+      create: Some(create),
+      destroy: None,
+      tiles: Some(tiles),
+      children: None,
+    };
+
+    let provider = PluginQuickSettingsProvider {
+      name: "test.quick".into(),
+      ctx: core::ptr::null_mut(),
+      vtable: &vtable,
+    };
+
+    let store = Store::new();
+    let rendered = provider.tiles(&Config::default(), &store);
+    assert_eq!(rendered.len(), 1);
+    assert_eq!(rendered[0].id, "vpn");
+    assert_eq!(rendered[0].title, "VPN");
+    assert_eq!(rendered[0].status, "Connected");
+    assert!(rendered[0].active);
+    assert_eq!(
+      rendered[0].on_click,
+      TileAction::Command("vpn.toggle".into())
+    );
+    assert_eq!(rendered[0].order, 5);
+  }
+
   #[test]
   fn desktop_handle_message_is_wired() {
     unsafe extern "C" fn create(_ctx: *mut c_void) -> *mut c_void {
@@ -5490,7 +6100,56 @@ style "example/card" {
     };
 
     let id = iced_layershell::reexport::IcedId::unique();
-    let _ = unsafe { render_nodes(&list, Some(id), 0) };
+    let _ = unsafe { render_nodes(&list, RenderCtx::without_widgets(Some(id)), 0) };
+  }
+
+  #[test]
+  fn renders_text_input_and_event_wrapper() {
+    let wrapper_child = SlNode {
+      kind: sl_node_kind::TEXT,
+      text: SlStr::from_str("hot zone"),
+      size: 12.0,
+      ..SlNode::default()
+    };
+    let wrapper = SlNode {
+      kind: sl_node_kind::EVENT_WRAPPER,
+      id: SlStr::from_str("zone"),
+      children: &wrapper_child,
+      child_count: 1,
+      ..SlNode::default()
+    };
+    let input = SlNode {
+      kind: sl_node_kind::TEXT_INPUT,
+      id: SlStr::from_str("query"),
+      text: SlStr::from_str("value"),
+      placeholder: SlStr::from_str("Search…"),
+      size: 14.0,
+      width: SlLength {
+        unit: sl_length_unit::FILL,
+        value: 0.0,
+      },
+      ..SlNode::default()
+    };
+    let children = [input, wrapper];
+    let column = SlNode {
+      kind: sl_node_kind::COLUMN,
+      children: children.as_ptr(),
+      child_count: 2,
+      ..SlNode::default()
+    };
+    let list = SlNodeList {
+      nodes: &column,
+      len: 1,
+    };
+
+    let event_name = Ustr::from("component/plugin.test");
+    let ctx = RenderCtx {
+      id: None,
+      widget_event: Some(event_name),
+    };
+    let _ = unsafe { render_nodes(&list, ctx, 0) };
+
+    let _ = unsafe { render_nodes(&list, RenderCtx::without_widgets(None), 0) };
   }
 
   #[test]

@@ -7,6 +7,7 @@ pub mod bluetooth;
 pub mod network;
 pub mod notifications;
 pub mod power;
+pub mod quicksettings;
 pub mod system;
 
 // TODO: move to own files

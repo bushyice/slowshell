@@ -15,7 +15,8 @@ use nix::{
   sys::epoll::EpollFlags,
 };
 use slowshell_commons::notifications::{
-  NOTIF_CHANGED, NotificationCmd, NotificationPayload, NotificationState, SharedNotificationState,
+  NOTIF_CHANGED, NotificationCmd, NotificationPayload, NotificationSettings, NotificationState,
+  SharedNotificationState,
 };
 use slowshell_config::Config;
 use slowshell_core::{
@@ -83,6 +84,10 @@ impl Component for Notifications {
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
     store.insert(self.shared.clone());
     self.shared_in_store = true;
+
+    if !NotificationSettings::from_store(store) {
+      return;
+    }
 
     if self.started {
       return;

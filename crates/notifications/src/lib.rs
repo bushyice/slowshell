@@ -8,8 +8,8 @@ use iced_layershell::reexport::{
   Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings,
 };
 use slowshell_commons::notifications::{
-  NOTIF_CHANGED, NotificationCmd, NotificationItem, NotificationPayload, SharedNotificationState,
-  reply_action_key,
+  NOTIF_CHANGED, NotificationCmd, NotificationItem, NotificationPayload, NotificationSettings,
+  SharedNotificationState, reply_action_key,
 };
 use slowshell_config::{Config, ConfigParser, style::Style, style::Theme};
 use slowshell_core::{
@@ -537,6 +537,13 @@ slowshell_registry::register_resources!(
       return Ok(vec![notif_mgr]);
     }
     Ok(vec![])
+  }),
+  app: CustomConfig(|config, store| {
+    let enabled = config
+      .typed::<NotificationConfig>()
+      .map(|conf| conf.enabled)
+      .unwrap_or(true);
+    store.insert(NotificationSettings { enabled });
   }),
   notifications: Style(
     slowshell_config::style! {

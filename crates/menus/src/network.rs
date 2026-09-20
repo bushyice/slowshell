@@ -10,7 +10,7 @@ use slowshell_config::{Config, style::Style, style::Theme};
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
-  message::{ItemEffect, ItemMessage},
+  message::{EventFilter, ItemEffect, ItemMessage},
   types::{PayloadBox, ToUstr},
 };
 use slowshell_popups::PopupSettings;
@@ -550,6 +550,22 @@ fn info_submenu<'a>(
 }
 
 impl Renderable for NetworkRenderable {
+  fn events(&self) -> Vec<EventFilter> {
+    vec![
+      EventFilter::Named("component/network.changed".into()),
+      EventFilter::Payload("network.password".into()),
+    ]
+  }
+
+  fn on_event(
+    &mut self,
+    _config: &Config,
+    _store: &mut Store,
+    _event: &ListenerAction,
+  ) -> Option<ItemEffect> {
+    Some(ItemEffect::Redraw)
+  }
+
   fn view<'a>(
     &self,
     config: &'a Config,

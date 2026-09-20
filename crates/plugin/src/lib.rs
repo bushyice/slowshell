@@ -2,7 +2,7 @@
 
 use core::ffi::c_void;
 
-pub const SL_PLUGIN_ABI_VERSION: u32 = 1;
+pub const SL_PLUGIN_ABI_VERSION: u32 = 2;
 
 pub const SL_PLUGIN_INIT_SYMBOL: &str = "slowshell_plugin_init";
 pub const SL_PLUGIN_META_SYMBOL: &str = "slowshell_plugin_meta";
@@ -102,6 +102,8 @@ pub mod sl_node_kind {
   pub const CONTAINER: u32 = 6;
   pub const IMAGE: u32 = 7;
   pub const SCROLLABLE: u32 = 8;
+  pub const TEXT_INPUT: u32 = 9;
+  pub const EVENT_WRAPPER: u32 = 10;
 }
 
 pub mod sl_animation_kind {
@@ -208,6 +210,12 @@ pub struct SlNode {
   pub has_effect: bool,
   pub effect: [usize; 4],
   pub animation: SlAnimation,
+  // input
+  pub id: SlStr,
+  pub placeholder: SlStr,
+  pub secure: bool,
+
+  pub report_scroll: bool,
 }
 
 impl Default for SlNode {
@@ -232,6 +240,10 @@ impl Default for SlNode {
       has_effect: false,
       effect: [0; 4],
       animation: SlAnimation::default(),
+      id: SlStr::EMPTY,
+      placeholder: SlStr::EMPTY,
+      secure: false,
+      report_scroll: false,
     }
   }
 }
@@ -257,6 +269,7 @@ pub mod sl_event_kind {
   pub const COMPOSITOR_UPDATE: u32 = 3;
   pub const FD: u32 = 4;
   pub const FRAME: u32 = 5;
+  pub const WIDGET: u32 = 6;
 }
 
 pub mod sl_event_mask {
@@ -265,6 +278,15 @@ pub mod sl_event_mask {
   pub const COMPOSITOR_UPDATE: u32 = 1 << 2;
   pub const FD: u32 = 1 << 3;
   pub const FRAME: u32 = 1 << 4;
+  pub const WIDGET: u32 = 1 << 5;
+}
+
+pub mod sl_widget_event {
+  pub const NONE: u32 = 0;
+  pub const INPUT: u32 = 1;
+  pub const SUBMIT: u32 = 2;
+  pub const CUSTOM: u32 = 3;
+  pub const SCROLL: u32 = 4;
 }
 
 pub mod sl_effect {
@@ -310,6 +332,10 @@ pub struct SlEvent {
   pub bag: *mut c_void,
   pub action: u32,
   pub fd: i32,
+  pub widget: u32,
+  pub id: SlStr,
+  pub value: SlStr,
+  pub scroll: [f32; 2],
 }
 
 impl Default for SlEvent {
@@ -320,6 +346,10 @@ impl Default for SlEvent {
       bag: core::ptr::null_mut(),
       action: 0,
       fd: -1,
+      widget: sl_widget_event::NONE,
+      id: SlStr::EMPTY,
+      value: SlStr::EMPTY,
+      scroll: [0.0, 0.0],
     }
   }
 }
@@ -513,6 +543,58 @@ pub struct SlRenderableVtable {
   pub initialize: Option<SlRenderableInitializeFn>,
   pub update: Option<SlRenderableUpdateFn>,
   pub handle_message: Option<SlRenderableHandleMessageFn>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SlQuickSettingsTile {
+  pub id: SlStr,
+  pub icon: SlStr,
+  pub title: SlStr,
+  pub status: SlStr,
+  pub detail: SlStr,
+  pub active: bool,
+  pub accent: SlStr,
+  pub action_kind: u32,
+  pub commands: *const SlStr,
+  pub command_count: usize,
+  pub menu: SlStr,
+  pub order: i32,
+}
+
+pub mod sl_quick_settings_action {
+  pub const NONE: u32 = 0;
+  pub const COMMAND: u32 = 1;
+  pub const COMMANDS: u32 = 2;
+  pub const MENU: u32 = 3;
+  pub const EXPAND: u32 = 4;
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SlQuickSettingsTileList {
+  pub tiles: *const SlQuickSettingsTile,
+  pub len: usize,
+}
+
+pub type SlQuickSettingsTilesFn = unsafe extern "C" fn(
+  ctx: *mut c_void,
+  state: *mut c_void,
+  expanded: SlStr,
+  out: *mut SlQuickSettingsTileList,
+);
+
+pub type SlQuickSettingsCreateFn = unsafe extern "C" fn(ctx: *mut c_void) -> *mut c_void;
+pub type SlQuickSettingsDestroyFn = unsafe extern "C" fn(ctx: *mut c_void, state: *mut c_void);
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SlQuickSettingsVtable {
+  pub size: u32,
+  pub create: Option<SlQuickSettingsCreateFn>,
+  pub destroy: Option<SlQuickSettingsDestroyFn>,
+  pub tiles: Option<SlQuickSettingsTilesFn>,
+  pub children: Option<SlQuickSettingsTilesFn>,
 }
 
 #[repr(C)]
@@ -886,6 +968,12 @@ pub type SlRegisterSpotlightFn = unsafe extern "C" fn(
   vtable: *const SlSpotlightVtable,
   userdata: *mut c_void,
 );
+pub type SlRegisterQuickSettingsFn = unsafe extern "C" fn(
+  host: *mut c_void,
+  name: SlStr,
+  vtable: *const SlQuickSettingsVtable,
+  userdata: *mut c_void,
+);
 pub type SlRegisterDesktopItemFn = unsafe extern "C" fn(
   host: *mut c_void,
   name: SlStr,
@@ -1038,6 +1126,7 @@ pub struct SlHostApi {
   pub persistence_remove: Option<SlPersistenceRemoveFn>,
   pub dispatch_with_string: Option<SlDispatchWithStringFn>,
   pub register_command: Option<SlRegisterCommandFn>,
+  pub register_quick_settings: Option<SlRegisterQuickSettingsFn>,
 }
 
 #[repr(C)]
@@ -1181,6 +1270,27 @@ pub unsafe fn register_spotlight(
     return;
   };
   if let Some(register) = api.register_spotlight {
+    unsafe {
+      register(
+        host,
+        SlStr::from_str(name),
+        vtable as *const _,
+        core::ptr::null_mut(),
+      );
+    }
+  }
+}
+
+pub unsafe fn register_quick_settings(
+  api: *const SlHostApi,
+  host: *mut c_void,
+  name: &str,
+  vtable: &'static SlQuickSettingsVtable,
+) {
+  let Some(api) = (unsafe { api.as_ref() }) else {
+    return;
+  };
+  if let Some(register) = api.register_quick_settings {
     unsafe {
       register(
         host,

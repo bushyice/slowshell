@@ -10,6 +10,26 @@ use std::{
 
 pub const NOTIF_CHANGED: &str = "component/notifications.changed";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotificationSettings {
+  pub enabled: bool,
+}
+
+impl Default for NotificationSettings {
+  fn default() -> Self {
+    Self { enabled: true }
+  }
+}
+
+impl NotificationSettings {
+  pub fn from_store(store: &slowshell_core::Store) -> bool {
+    store
+      .borrow::<NotificationSettings>()
+      .map(|settings| settings.enabled)
+      .unwrap_or(true)
+  }
+}
+
 #[derive(Debug, Clone)]
 pub enum NotificationImage {
   Rgba {

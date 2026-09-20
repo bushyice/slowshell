@@ -135,6 +135,7 @@ pub enum ItemEffect {
   None,
   Redraw,
   Show,
+  ShowAndSubscribe(Vec<EventFilter>),
   Hide,
   ReallyHide,
   Destroy,

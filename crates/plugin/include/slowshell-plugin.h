@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SL_PLUGIN_ABI_VERSION 1
+#define SL_PLUGIN_ABI_VERSION 2
 
 typedef struct {
   const uint8_t *ptr;
@@ -93,6 +93,8 @@ typedef struct {
 #define SL_NODE_CONTAINER 6
 #define SL_NODE_IMAGE 7
 #define SL_NODE_SCROLLABLE 8
+#define SL_NODE_TEXT_INPUT 9
+#define SL_NODE_EVENT_WRAPPER 10
 
 #define SL_ALIGN_START 0
 #define SL_ALIGN_CENTER 1
@@ -162,7 +164,6 @@ typedef struct SlNode {
   SlImage image;
   SlStr action;
 
-  // default is 0
   SlLength width;
   SlLength height;
 
@@ -170,6 +171,12 @@ typedef struct SlNode {
   size_t effect[4];
 
   SlAnimation animation;
+
+  // inputs
+  SlStr id;
+  SlStr placeholder;
+  bool secure;
+  bool report_scroll;
 } SlNode;
 
 typedef struct {
@@ -183,12 +190,20 @@ typedef struct {
 #define SL_EVENT_COMPOSITOR_UPDATE 3
 #define SL_EVENT_FD 4
 #define SL_EVENT_FRAME 5
+#define SL_EVENT_WIDGET 6
 
 #define SL_EVENT_MASK_TICK (1u << 0)
 #define SL_EVENT_MASK_CONFIG_RELOAD (1u << 1)
 #define SL_EVENT_MASK_COMPOSITOR_UPDATE (1u << 2)
 #define SL_EVENT_MASK_FD (1u << 3)
 #define SL_EVENT_MASK_FRAME (1u << 4)
+#define SL_EVENT_MASK_WIDGET (1u << 5)
+
+#define SL_WIDGET_EVENT_NONE 0
+#define SL_WIDGET_EVENT_INPUT 1
+#define SL_WIDGET_EVENT_SUBMIT 2
+#define SL_WIDGET_EVENT_CUSTOM 3
+#define SL_WIDGET_EVENT_SCROLL 4
 
 #define SL_EFFECT_NONE 0
 #define SL_EFFECT_REDRAW 1
@@ -223,6 +238,11 @@ typedef struct {
   void *bag;
   uint32_t action;
   int32_t fd;
+
+  uint32_t widget;
+  SlStr id;
+  SlStr value;
+  float scroll[2];
 } SlEvent;
 
 typedef struct {
@@ -411,6 +431,45 @@ typedef struct {
 #define SL_DISPLAY_STYLE_LIST 1
 #define SL_DISPLAY_STYLE_GRID 2
 #define SL_DISPLAY_STYLE_IMAGE_LIST 4
+
+typedef struct {
+  SlStr id;
+  SlStr icon;
+  SlStr title;
+  SlStr status;
+  SlStr detail;
+  bool active;
+  SlStr accent;
+  uint32_t action_kind;
+  const SlStr *commands;
+  size_t command_count;
+  SlStr menu;
+  int32_t order;
+} SlQuickSettingsTile;
+
+#define SL_QS_ACTION_NONE 0
+#define SL_QS_ACTION_COMMAND 1
+#define SL_QS_ACTION_COMMANDS 2
+#define SL_QS_ACTION_MENU 3
+#define SL_QS_ACTION_EXPAND 4
+
+typedef struct {
+  const SlQuickSettingsTile *tiles;
+  size_t len;
+} SlQuickSettingsTileList;
+
+typedef void *(*SlQuickSettingsCreateFn)(void *ctx);
+typedef void (*SlQuickSettingsDestroyFn)(void *ctx, void *state);
+typedef void (*SlQuickSettingsTilesFn)(void *ctx, void *state, SlStr expanded,
+                                       SlQuickSettingsTileList *out);
+
+typedef struct {
+  uint32_t size;
+  SlQuickSettingsCreateFn create;
+  SlQuickSettingsDestroyFn destroy;
+  SlQuickSettingsTilesFn tiles;
+  SlQuickSettingsTilesFn children;
+} SlQuickSettingsVtable;
 
 
 
@@ -637,6 +696,9 @@ typedef void (*SlRegisterRenderableFn)(void *host, SlStr name,
 typedef void (*SlRegisterSpotlightFn)(void *host, SlStr name,
                                       const SlSpotlightVtable *vtable,
                                       void *userdata);
+typedef void (*SlRegisterQuickSettingsFn)(void *host, SlStr name,
+                                          const SlQuickSettingsVtable *vtable,
+                                          void *userdata);
 typedef void (*SlRegisterDesktopItemFn)(void *host, SlStr name,
                                         const SlDesktopItemVtable *vtable,
                                         void *userdata);
@@ -714,8 +776,8 @@ typedef struct {
   SlPersistenceRemoveFn persistence_remove;
   SlDispatchWithStringFn dispatch_with_string;
   SlRegisterCommandFn register_command;
+  SlRegisterQuickSettingsFn register_quick_settings;
 } SlHostApi;
-
 
 
 typedef struct {

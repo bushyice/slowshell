@@ -460,6 +460,21 @@ impl DesktopItems {
         self.active.insert(idx);
         task
       }
+      ItemEffect::ShowAndSubscribe(new_filters) => {
+        let task = if !self.reverse_windows.contains_key(&idx) {
+          Some(self.launch_all(config, idx))
+        } else {
+          None
+        };
+        self.active.insert(idx);
+
+        self.remove_subscriptions(idx);
+        for filter in new_filters {
+          self.subscriptions.entry(filter).or_default().insert(idx);
+        }
+
+        task
+      }
       ItemEffect::Hide => {
         self.active.remove(&idx);
         if matches!(self.items[idx].visibility(), Visibility::Transient) {

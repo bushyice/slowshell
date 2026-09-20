@@ -304,6 +304,14 @@ panels {
           spacing 4
         }
 
+        // quick settings - a menu icon that opens the quick settings popup.
+        // tiles come from built-in providers plus anything plugins contribute.
+        component "core/icon" {
+          label "Quick settings"
+          menu "menus/quick"
+          icon "preferences-system-symbolic"
+        }
+
         group "Media" {
           // core/audio (or core/sound) - volume + nowplaying controls
           //   show-percent  (default: #false)

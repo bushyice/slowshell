@@ -448,7 +448,7 @@ crates/plugin-sdk/src/lib.rs#Context
 | `DesktopItem` | Layer-shell desktop item. | `new`, `settings`, `view` |
 | `Compositor` | Compositor backend adapter. | `new` |
 | `Spotlight` | Spotlight mode provider. | `new` |
-
+| `QuickSettings` | Quick settings tile provider. | `new` |
 
 ### Nodes
 

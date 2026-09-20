@@ -4367,7 +4367,9 @@ name = "slowshell-commons"
 version = "0.0.3"
 dependencies = [
  "freedesktop-desktop-entry",
+ "iced",
  "libc",
+ "slowshell-config",
  "slowshell-core",
  "system-tray",
  "tokio",

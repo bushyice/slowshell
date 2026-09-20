@@ -148,7 +148,7 @@ impl Component for Clock {
     menu_trigger(
       content.into(),
       MenuConfig {
-        content: "clock".into(),
+        content: "menus/clock".into(),
         panel_name: None,
         position: ctx.position,
       },
