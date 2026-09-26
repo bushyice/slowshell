@@ -7,7 +7,9 @@ use std::{
 };
 
 use futures_util::StreamExt;
-use slowshell_commons::audio::{AudioCmd, AudioSink, MprisPlayer, SharedAudioState};
+use slowshell_commons::audio::{
+  AudioCmd, AudioSink, MprisPlayer, MprisSelection, SharedAudioState,
+};
 use zbus::zvariant::Value;
 
 use crate::util;
@@ -93,7 +95,13 @@ async fn audio_loop(
   loop {
     tokio::select! {
       Some(cmd) = cmd_rx.recv() => {
+        let select_player = matches!(cmd, AudioCmd::SelectPlayer(_));
         handle_cmd(&session_conn, shared, cmd).await;
+
+        if select_player {
+          refresh_mpris(&session_conn, shared).await.ok();
+        }
+
         refresh_audio_wpctl(shared);
         bump(shared, notify);
       }
@@ -248,21 +256,14 @@ async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> mi
   let dbus_proxy = zbus::fdo::DBusProxy::new(conn).await.into_diagnostic()?;
   let names = dbus_proxy.list_names().await.into_diagnostic()?;
 
-  let mut mpris_buses = Vec::new();
-  for name in names {
-    if name.starts_with("org.mpris.MediaPlayer2.") {
-      mpris_buses.push(name.to_string());
-    }
-  }
+  let mut mpris_buses: Vec<String> = names
+    .into_iter()
+    .filter(|name| name.starts_with("org.mpris.MediaPlayer2."))
+    .map(|name| name.to_string())
+    .collect();
+  mpris_buses.sort();
 
-  if mpris_buses.is_empty() {
-    let mut cur = shared.player.lock().unwrap();
-    let changed = cur.is_some();
-    *cur = None;
-    return Ok(changed);
-  }
-
-  let mut chosen_player: Option<MprisPlayer> = None;
+  let mut players: Vec<MprisPlayer> = Vec::with_capacity(mpris_buses.len());
 
   for bus in mpris_buses {
     let Ok(player_proxy) = zbus::Proxy::new_owned(
@@ -351,7 +352,7 @@ async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> mi
       .await
       .unwrap_or(true);
 
-    let player = MprisPlayer {
+    players.push(MprisPlayer {
       bus_name: bus,
       identity,
       title,
@@ -362,23 +363,16 @@ async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> mi
       can_play_pause,
       can_go_next,
       can_go_previous,
-    };
-
-    let is_playing = player.playback_status == "Playing";
-    let has_title = !player.title.is_empty();
-
-    if is_playing {
-      chosen_player = Some(player);
-      break;
-    } else if has_title && chosen_player.is_none() {
-      chosen_player = Some(player);
-    } else if chosen_player.is_none() {
-      chosen_player = Some(player);
-    }
+    });
   }
 
+  let selected = shared.selected.lock().unwrap().clone();
+  let chosen = choose_player(&players, selected.as_ref()).cloned();
+
   let mut cur = shared.player.lock().unwrap();
-  let changed = match (&*cur, &chosen_player) {
+  let mut cur_players = shared.players.lock().unwrap();
+
+  let player_changed = match (&*cur, &chosen) {
     (Some(old), Some(new_p)) => {
       old.title != new_p.title
         || old.artist != new_p.artist
@@ -389,8 +383,39 @@ async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> mi
     _ => true,
   };
 
-  *cur = chosen_player.map(Arc::new);
-  Ok(changed)
+  let players_changed = cur_players.len() != players.len()
+    || cur_players
+      .iter()
+      .zip(players.iter())
+      .any(|(old, new_p)| old.as_ref() != new_p);
+
+  *cur = chosen.map(Arc::new);
+  *cur_players = players.into_iter().map(Arc::new).collect();
+
+  Ok(player_changed || players_changed)
+}
+
+fn choose_player<'a>(
+  players: &'a [MprisPlayer],
+  selected: Option<&MprisSelection>,
+) -> Option<&'a MprisPlayer> {
+  if let Some(selection) = selected {
+    if let Some(player) = players.iter().find(|p| p.bus_name == selection.bus_name) {
+      return Some(player);
+    }
+
+    if !selection.identity.is_empty()
+      && let Some(player) = players.iter().find(|p| p.identity == selection.identity)
+    {
+      return Some(player);
+    }
+  }
+
+  players
+    .iter()
+    .find(|p| p.playback_status == "Playing")
+    .or_else(|| players.iter().find(|p| !p.title.is_empty()))
+    .or_else(|| players.first())
 }
 
 async fn handle_cmd(conn: &zbus::Connection, shared: &SharedAudioState, cmd: AudioCmd) {
@@ -486,6 +511,9 @@ async fn handle_cmd(conn: &zbus::Connection, shared: &SharedAudioState, cmd: Aud
           let _ = proxy.call_method("Previous", &()).await;
         }
       }
+    }
+    AudioCmd::SelectPlayer(selection) => {
+      *shared.selected.lock().unwrap() = Some(selection);
     }
   }
 }

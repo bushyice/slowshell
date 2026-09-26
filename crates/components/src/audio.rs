@@ -15,13 +15,14 @@ use nix::{
   sys::epoll::EpollFlags,
 };
 use slowshell_commons::audio::{
-  AUDIO_CHANGED, AudioCmd, AudioState, SharedAudioState, volume_icon,
+  AUDIO_CHANGED, AudioCmd, AudioState, MprisSelection, SharedAudioState, volume_icon,
 };
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::{FdHandle, ListenerAction},
   message::{EventFilter, ItemEffect, ItemMessage},
+  persistence,
   types::{OptionalPayloadBox, PayloadBox},
 };
 use slowshell_services::util::drain_signal_fd;
@@ -30,6 +31,8 @@ use slowshell_widgets::{EventWrapper, Icon};
 use crate::{
   Component, ComponentContext, ComponentOptions, MenuConfig, popup_open_action, spaced_component,
 };
+
+const PRIMARY_PLAYER_FILE: &str = "audio-primary-player";
 
 pub struct Audio {
   signal_fd: Option<i32>,
@@ -49,6 +52,8 @@ impl Audio {
       shared: Arc::new(AudioState {
         state: Mutex::new(Default::default()),
         player: Mutex::new(None),
+        players: Mutex::new(Vec::new()),
+        selected: Mutex::new(None),
         revision: AtomicU64::new(0),
         cmd_tx,
       }),
@@ -76,6 +81,7 @@ impl Component for Audio {
       EventFilter::Payload("audio.play_pause".into()),
       EventFilter::Payload("audio.next".into()),
       EventFilter::Payload("audio.previous".into()),
+      EventFilter::Payload("audio.select_player".into()),
     ]
   }
 
@@ -87,6 +93,10 @@ impl Component for Audio {
       return;
     }
     self.started = true;
+
+    if let Some((bus_name, identity)) = persistence::load::<(String, String)>(PRIMARY_PLAYER_FILE) {
+      *self.shared.selected.lock().unwrap() = Some(MprisSelection { bus_name, identity });
+    }
 
     let notify = store.borrow::<FdHandle>().and_then(|handle| {
       let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
@@ -194,6 +204,24 @@ impl Component for Audio {
 
       ListenerAction::Payload { name, .. } if &**name == "audio.previous" => {
         let _ = self.shared.cmd_tx.send(AudioCmd::Previous);
+        Ok(ItemEffect::Redraw)
+      }
+
+      ListenerAction::Payload { name, payload } if &**name == "audio.select_player" => {
+        if let Some(selection) = payload.transform::<MprisSelection>() {
+          let selection = selection.clone();
+          let _ = self
+            .shared
+            .cmd_tx
+            .send(AudioCmd::SelectPlayer(selection.clone()));
+
+          if let Err(e) = persistence::save(
+            PRIMARY_PLAYER_FILE,
+            &(selection.bus_name, selection.identity),
+          ) {
+            eprintln!("[audio] failed to persist the primary player: {e}");
+          }
+        }
         Ok(ItemEffect::Redraw)
       }
 

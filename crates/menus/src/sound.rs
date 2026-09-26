@@ -3,7 +3,9 @@ use iced::{
   widget::{Space, column, container, row, slider},
 };
 use iced_layershell::reexport::IcedId;
-use slowshell_commons::audio::{AudioSink, MprisPlayer, SharedAudioState, volume_icon};
+use slowshell_commons::audio::{
+  AudioSink, MprisPlayer, MprisSelection, SharedAudioState, volume_icon,
+};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
@@ -25,6 +27,7 @@ enum SoundAction {
   PlayPause,
   Next,
   Previous,
+  SelectPlayer { bus_name: String, identity: String },
 }
 
 impl SoundAction {
@@ -37,6 +40,10 @@ impl SoundAction {
       SoundAction::PlayPause => ("audio.play_pause", None),
       SoundAction::Next => ("audio.next", None),
       SoundAction::Previous => ("audio.previous", None),
+      SoundAction::SelectPlayer { bus_name, identity } => (
+        "audio.select_player",
+        Some(PayloadBox::new(MprisSelection { bus_name, identity })),
+      ),
     };
 
     ItemMessage::EffectAction(
@@ -65,11 +72,14 @@ impl Renderable for SoundRenderable {
     if let Some(shared) = store.borrow::<SharedAudioState>() {
       let state = shared.state.lock().unwrap().clone();
       let player = shared.player.lock().unwrap().clone();
+      let players = shared.players.lock().unwrap().clone();
 
       let (vol, muted) = (state.volume, state.muted);
 
       children.push(render_header(config, id, vol, muted));
       children.push(render_volume_slider(config, vol, muted, id));
+
+      let primary_bus = player.as_ref().map(|p| p.bus_name.clone());
 
       if let Some(player) = player {
         if !player.title.is_empty() {
@@ -85,6 +95,19 @@ impl Renderable for SoundRenderable {
             .width(Length::Fill)
             .into(),
           );
+        }
+      }
+
+      if players.len() > 1 {
+        children.push(
+          config
+            .text("Players", &["menu", "text-status", "text-faded"])
+            .into(),
+        );
+
+        for player in players.iter() {
+          let is_primary = primary_bus.as_deref() == Some(player.bus_name.as_str());
+          children.push(render_player(config, player, is_primary, id));
         }
       }
 
@@ -357,4 +380,90 @@ fn render_sink<'a>(config: &'a Config, sink: &AudioSink, id: IcedId) -> Element<
   clickable(wrapped, move |_, _, _| {
     Some(SoundAction::SetSink(sink_id).message(id))
   })
+}
+
+fn render_player<'a>(
+  config: &'a Config,
+  player: &MprisPlayer,
+  is_primary: bool,
+  id: IcedId,
+) -> Element<'a, ItemMessage> {
+  let theme = config.palette();
+  let color = if is_primary {
+    theme.primary
+  } else {
+    theme.text
+  };
+
+  let icon_name = if is_primary {
+    "checkbox-checked-symbolic"
+  } else {
+    "checkbox-symbolic"
+  };
+
+  let checkbox_size = config
+    .computed(&["menu", "checkbox"])
+    .length("checkbox-size")
+    .unwrap_or(14.0) as u16;
+  let check_icon: Element<'a, ItemMessage> =
+    Icon::new(icon_name).size(checkbox_size).color(color).into();
+
+  let identity = if player.identity.is_empty() {
+    player.bus_name.clone()
+  } else {
+    player.identity.clone()
+  };
+
+  let name_classes: &[&str] = if is_primary {
+    &["menu", "text-name", "text-primary"]
+  } else {
+    &["menu", "text-name"]
+  };
+  let name = config.text(truncate(&identity, 18), name_classes);
+
+  let mut content = row![check_icon, Space::new().width(6), name]
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+
+  if !player.title.is_empty() {
+    content = content.push(Space::new().width(6)).push(config.text(
+      truncate(&player.title, 16),
+      &["menu", "text-status", "text-faded"],
+    ));
+  }
+
+  let bus_name = player.bus_name.clone();
+  let identity = player.identity.clone();
+
+  let wrapped = hover_row(
+    config,
+    &["menu", "row"],
+    container(content)
+      .padding(config.sizing(&["menu", "row"]).padding())
+      .width(Length::Fill),
+  );
+
+  clickable(wrapped, move |_, _, _| {
+    Some(
+      SoundAction::SelectPlayer {
+        bus_name: bus_name.clone(),
+        identity: identity.clone(),
+      }
+      .message(id),
+    )
+  })
+}
+
+fn truncate(input: &str, max: usize) -> String {
+  if input.chars().count() > max {
+    format!(
+      "{}…",
+      input
+        .chars()
+        .take(max.saturating_sub(1))
+        .collect::<String>()
+    )
+  } else {
+    input.to_string()
+  }
 }

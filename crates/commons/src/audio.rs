@@ -21,7 +21,7 @@ pub struct AudioInner {
   pub sinks: Vec<AudioSink>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct MprisPlayer {
   pub bus_name: String,
   pub identity: String,
@@ -35,6 +35,12 @@ pub struct MprisPlayer {
   pub can_go_previous: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MprisSelection {
+  pub bus_name: String,
+  pub identity: String,
+}
+
 #[derive(Debug, Clone)]
 pub enum AudioCmd {
   SetVolume(f32),
@@ -44,11 +50,14 @@ pub enum AudioCmd {
   PlayPause,
   Next,
   Previous,
+  SelectPlayer(MprisSelection),
 }
 
 pub struct AudioState {
   pub state: Mutex<Arc<AudioInner>>,
   pub player: Mutex<Option<Arc<MprisPlayer>>>,
+  pub players: Mutex<Vec<Arc<MprisPlayer>>>,
+  pub selected: Mutex<Option<MprisSelection>>,
   pub revision: AtomicU64,
   pub cmd_tx: tokio::sync::mpsc::UnboundedSender<AudioCmd>,
 }
