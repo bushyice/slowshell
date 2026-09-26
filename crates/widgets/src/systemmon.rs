@@ -27,6 +27,17 @@ impl Default for SystemMonOptions {
 pub struct SystemMonWidget;
 
 impl Renderable for SystemMonWidget {
+  fn initialize(&self, _config: &Config, store: &mut Store) -> Box<dyn std::any::Any + Send> {
+    if SystemMonOptions::default().show_processes {
+      set_sample_processes(store, true);
+    }
+    Box::new(())
+  }
+
+  fn close(&mut self, store: &mut Store) {
+    set_sample_processes(store, false);
+  }
+
   fn view<'a>(
     &self,
     config: &'a Config,
@@ -35,6 +46,14 @@ impl Renderable for SystemMonWidget {
     _data: &'a dyn std::any::Any,
   ) -> Element<'a, ItemMessage> {
     render_system_mon_widget(config, store, SystemMonOptions::default())
+  }
+}
+
+pub fn set_sample_processes(store: &Store, enabled: bool) {
+  if let Some(shared) = store.borrow::<SharedSystemState>() {
+    shared
+      .sample_processes
+      .store(enabled, std::sync::atomic::Ordering::Relaxed);
   }
 }
 
@@ -53,12 +72,6 @@ pub fn render_system_mon_widget<'a>(
     .padding(12)
     .into();
   };
-
-  if options.show_processes {
-    shared
-      .sample_processes
-      .store(true, std::sync::atomic::Ordering::Relaxed);
-  }
 
   let snap = {
     let guard = shared.snapshot.lock().unwrap();

@@ -11,11 +11,21 @@ use slowshell_core::{
 use slowshell_popups::PopupSettings;
 use slowshell_widgets::{
   Backdrop, Renderable, SizedPopup, SystemMonOptions, render_system_mon_widget,
+  set_sample_processes,
 };
 
 pub struct SystemMonRenderable;
 
 impl Renderable for SystemMonRenderable {
+  fn initialize(&self, _config: &Config, store: &mut Store) -> Box<dyn std::any::Any + Send> {
+    set_sample_processes(store, true);
+    Box::new(())
+  }
+
+  fn close(&mut self, store: &mut Store) {
+    set_sample_processes(store, false);
+  }
+
   fn view<'a>(
     &self,
     config: &'a Config,

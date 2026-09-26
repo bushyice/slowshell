@@ -1,11 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use iced::{
   Element, Length,
   widget::{column, container, progress_bar, row, text},
 };
 use slowshell_commons::panels::PanelOrientation;
-use slowshell_commons::system::{SharedSystemState, SystemSnapshot, SystemState};
+use slowshell_commons::system::{SharedSystemState, SystemSnapshot};
 use slowshell_config::{Config, style::Theme};
 use slowshell_core::{
   Store,
@@ -51,7 +51,7 @@ impl SystemMon {
   pub fn new() -> Self {
     Self {
       timer_fd: None,
-      shared: Arc::new(SystemState::default()),
+      shared: slowshell_commons::system::shared(),
     }
   }
 }
@@ -68,14 +68,11 @@ impl Component for SystemMon {
   }
 
   fn watch(&mut self, store: &mut Store, options: Option<&ComponentOptions>) {
-    if options
-      .and_then(|o| o.bool("processes"))
-      .is_some_and(|x| x == false)
-    {
-      let mut shared = SystemState::default();
-      shared.sample_processes = false.into();
-
-      self.shared = Arc::new(shared);
+    if options.and_then(|o| o.bool("processes")) == Some(true) {
+      self
+        .shared
+        .sample_processes
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     store.insert(self.shared.clone());

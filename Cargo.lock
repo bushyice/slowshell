@@ -4875,6 +4875,7 @@ dependencies = [
  "iced_anim",
  "iced_layershell",
  "icss",
+ "resvg",
  "slowshell-commons",
  "slowshell-config",
  "slowshell-core",

@@ -12,3 +12,4 @@ slowshell-commons = { path = "../commons" }
 slowshell-config = { path = "../config" }
 icss.workspace = true
 freedesktop-icons.workspace = true
+resvg = "0.45"

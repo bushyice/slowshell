@@ -87,6 +87,15 @@ impl Popup {
       .is_some_and(|x| x.contains_key(&settings.content));
 
     if available {
+      let switching = self
+        .current
+        .as_ref()
+        .is_some_and(|current| current.content != settings.content);
+
+      if switching {
+        self.close_current(store);
+      }
+
       self.current = Some(settings.clone());
 
       self.with_renderable(store, |renderable, store| {

@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use std::sync::{Arc, Mutex, OnceLock, atomic::AtomicBool};
 
 #[derive(Debug, Clone, Default)]
 pub struct ProcessInfo {
@@ -40,3 +40,10 @@ impl Default for SystemState {
 }
 
 pub type SharedSystemState = Arc<SystemState>;
+
+pub fn shared() -> SharedSystemState {
+  static SHARED: OnceLock<SharedSystemState> = OnceLock::new();
+  SHARED
+    .get_or_init(|| Arc::new(SystemState::default()))
+    .clone()
+}

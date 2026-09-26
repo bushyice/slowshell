@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+  sync::{Arc, OnceLock},
+  time::Duration,
+};
 
 use slowshell_commons::system::{ProcessInfo, SharedSystemState, SystemSnapshot};
 use sysinfo::{
@@ -8,6 +11,12 @@ use sysinfo::{
 
 // TODO: Add sort-by
 pub fn run(shared: SharedSystemState, update_time: Duration) {
+  static STARTED: OnceLock<()> = OnceLock::new();
+
+  if STARTED.set(()).is_err() {
+    return;
+  }
+
   std::thread::spawn(move || {
     let mut sys = System::new_with_specifics(
       RefreshKind::nothing()

@@ -1,7 +1,7 @@
 use std::{
   os::fd::AsRawFd,
   sync::{
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicBool, AtomicU64, Ordering},
   },
 };
@@ -26,21 +26,18 @@ use slowshell_widgets::Icon;
 
 use crate::{Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger};
 
-pub struct Bluetooth {
-  signal_fd: Option<i32>,
-  started: bool,
+struct GlobalBluetooth {
   shared: SharedBluetoothState,
-  last_revision: u64,
-  shared_in_store: bool,
-  cmd_rx: Option<tokio::sync::mpsc::UnboundedReceiver<BluetoothCmd>>,
+  rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<BluetoothCmd>>>,
 }
 
-impl Bluetooth {
-  pub fn new() -> Self {
+static GLOBAL: OnceLock<GlobalBluetooth> = OnceLock::new();
+
+fn global() -> &'static GlobalBluetooth {
+  GLOBAL.get_or_init(|| {
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-    Self {
-      signal_fd: None,
-      started: false,
+
+    GlobalBluetooth {
       shared: Arc::new(BluetoothState {
         powered: AtomicBool::new(false),
         discovering: AtomicBool::new(false),
@@ -49,9 +46,27 @@ impl Bluetooth {
         revision: AtomicU64::new(0),
         cmd_tx,
       }),
+      rx: Mutex::new(Some(cmd_rx)),
+    }
+  })
+}
+
+pub struct Bluetooth {
+  signal_fd: Option<i32>,
+  started: bool,
+  shared: SharedBluetoothState,
+  last_revision: u64,
+  shared_in_store: bool,
+}
+
+impl Bluetooth {
+  pub fn new() -> Self {
+    Self {
+      signal_fd: None,
+      started: false,
+      shared: global().shared.clone(),
       last_revision: 0,
       shared_in_store: false,
-      cmd_rx: Some(cmd_rx),
     }
   }
 }
@@ -86,27 +101,28 @@ impl Component for Bluetooth {
     }
     self.started = true;
 
-    let notify = store.borrow::<FdHandle>().and_then(|handle| {
-      let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
-      fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
-
-      let raw = read_fd.as_raw_fd();
-      handle.watch_with_flags(
-        read_fd,
-        EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
-        ListenerAction::Signal {
-          name: BT_CHANGED.into(),
-          fd: raw,
-        },
-      );
-      self.signal_fd = Some(raw);
-
-      Some(write_fd)
-    });
-
     let shared = self.shared.clone();
-    let cmd_rx = self.cmd_rx.take();
+    let cmd_rx = global().rx.lock().unwrap().take();
+
     if let Some(cmd_rx) = cmd_rx {
+      let notify = store.borrow::<FdHandle>().and_then(|handle| {
+        let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
+        fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
+
+        let raw = read_fd.as_raw_fd();
+        handle.watch_with_flags(
+          read_fd,
+          EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
+          ListenerAction::Signal {
+            name: BT_CHANGED.into(),
+            fd: raw,
+          },
+        );
+        self.signal_fd = Some(raw);
+
+        Some(write_fd)
+      });
+
       slowshell_services::bluetooth::run(shared, cmd_rx, notify);
     }
   }

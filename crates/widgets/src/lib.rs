@@ -58,7 +58,9 @@ pub fn hover_row<'a>(
 }
 
 mod systemmon;
-pub use systemmon::{SystemMonOptions, SystemMonWidget, render_system_mon_widget};
+pub use systemmon::{
+  SystemMonOptions, SystemMonWidget, render_system_mon_widget, set_sample_processes,
+};
 
 mod confirm;
 pub use confirm::{ConfirmDialogProps, render_confirm_dialog};

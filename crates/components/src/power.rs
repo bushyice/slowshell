@@ -1,7 +1,7 @@
 use std::{
   os::fd::AsRawFd,
   sync::{
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicU64, Ordering},
   },
 };
@@ -31,29 +31,44 @@ use crate::{
   Component, ComponentContext, ComponentOptions, MenuConfig, popup_open_action, spaced_component,
 };
 
+struct GlobalPower {
+  shared: SharedPowerState,
+  rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<PowerCmd>>>,
+}
+
+static GLOBAL: OnceLock<GlobalPower> = OnceLock::new();
+
+fn global() -> &'static GlobalPower {
+  GLOBAL.get_or_init(|| {
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    GlobalPower {
+      shared: Arc::new(PowerState {
+        data: Mutex::new(Default::default()),
+        revision: AtomicU64::new(0),
+        cmd_tx,
+      }),
+      rx: Mutex::new(Some(cmd_rx)),
+    }
+  })
+}
+
 pub struct Power {
   signal_fd: Option<i32>,
   started: bool,
   shared: SharedPowerState,
   last_revision: u64,
   shared_in_store: bool,
-  cmd_rx: Option<tokio::sync::mpsc::UnboundedReceiver<PowerCmd>>,
 }
 
 impl Power {
   pub fn new() -> Self {
-    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     Self {
       signal_fd: None,
       started: false,
-      shared: Arc::new(PowerState {
-        data: Mutex::new(Default::default()),
-        revision: AtomicU64::new(0),
-        cmd_tx,
-      }),
+      shared: global().shared.clone(),
       last_revision: 0,
       shared_in_store: false,
-      cmd_rx: Some(cmd_rx),
     }
   }
 
@@ -64,7 +79,6 @@ impl Power {
       shared,
       last_revision: 0,
       shared_in_store: false,
-      cmd_rx: None,
     }
   }
 }
@@ -99,29 +113,29 @@ impl Component for Power {
     }
     self.started = true;
 
-    let notify = store.borrow::<FdHandle>().and_then(|handle| {
-      let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
-      fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
-
-      let raw = read_fd.as_raw_fd();
-      handle.watch_with_flags(
-        read_fd,
-        EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
-        ListenerAction::Signal {
-          name: POWER_CHANGED.into(),
-          fd: raw,
-        },
-      );
-      self.signal_fd = Some(raw);
-
-      Some(write_fd)
-    });
-
     let shared = self.shared.clone();
-    let cmd_rx = self.cmd_rx.take();
-    let interval = _options.and_then(|o| o.int("interval")).unwrap_or(10) as u64;
+    let cmd_rx = global().rx.lock().unwrap().take();
+
     if let Some(cmd_rx) = cmd_rx {
-      slowshell_services::power::run(shared, cmd_rx, notify, interval);
+      let notify = store.borrow::<FdHandle>().and_then(|handle| {
+        let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
+        fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
+
+        let raw = read_fd.as_raw_fd();
+        handle.watch_with_flags(
+          read_fd,
+          EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
+          ListenerAction::Signal {
+            name: POWER_CHANGED.into(),
+            fd: raw,
+          },
+        );
+        self.signal_fd = Some(raw);
+
+        Some(write_fd)
+      });
+
+      slowshell_services::power::run(shared, cmd_rx, notify);
     }
   }
 

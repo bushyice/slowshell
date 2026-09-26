@@ -1,7 +1,7 @@
 use std::{
   os::fd::AsRawFd,
   sync::{
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicU64, Ordering},
   },
 };
@@ -34,21 +34,18 @@ use crate::{
 
 const PRIMARY_PLAYER_FILE: &str = "audio-primary-player";
 
-pub struct Audio {
-  signal_fd: Option<i32>,
-  started: bool,
+struct GlobalAudio {
   shared: SharedAudioState,
-  last_revision: u64,
-  shared_in_store: bool,
-  cmd_rx: Option<tokio::sync::mpsc::UnboundedReceiver<AudioCmd>>,
+  rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<AudioCmd>>>,
 }
 
-impl Audio {
-  pub fn new() -> Self {
+static GLOBAL: OnceLock<GlobalAudio> = OnceLock::new();
+
+fn global() -> &'static GlobalAudio {
+  GLOBAL.get_or_init(|| {
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-    Self {
-      signal_fd: None,
-      started: false,
+
+    GlobalAudio {
       shared: Arc::new(AudioState {
         state: Mutex::new(Default::default()),
         player: Mutex::new(None),
@@ -57,9 +54,27 @@ impl Audio {
         revision: AtomicU64::new(0),
         cmd_tx,
       }),
+      rx: Mutex::new(Some(cmd_rx)),
+    }
+  })
+}
+
+pub struct Audio {
+  signal_fd: Option<i32>,
+  started: bool,
+  shared: SharedAudioState,
+  last_revision: u64,
+  shared_in_store: bool,
+}
+
+impl Audio {
+  pub fn new() -> Self {
+    Self {
+      signal_fd: None,
+      started: false,
+      shared: global().shared.clone(),
       last_revision: 0,
       shared_in_store: false,
-      cmd_rx: Some(cmd_rx),
     }
   }
 }
@@ -98,27 +113,28 @@ impl Component for Audio {
       *self.shared.selected.lock().unwrap() = Some(MprisSelection { bus_name, identity });
     }
 
-    let notify = store.borrow::<FdHandle>().and_then(|handle| {
-      let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
-      fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
-
-      let raw = read_fd.as_raw_fd();
-      handle.watch_with_flags(
-        read_fd,
-        EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
-        ListenerAction::Signal {
-          name: AUDIO_CHANGED.into(),
-          fd: raw,
-        },
-      );
-      self.signal_fd = Some(raw);
-
-      Some(write_fd)
-    });
-
     let shared = self.shared.clone();
-    let cmd_rx = self.cmd_rx.take();
+    let cmd_rx = global().rx.lock().unwrap().take();
+
     if let Some(cmd_rx) = cmd_rx {
+      let notify = store.borrow::<FdHandle>().and_then(|handle| {
+        let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
+        fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
+
+        let raw = read_fd.as_raw_fd();
+        handle.watch_with_flags(
+          read_fd,
+          EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
+          ListenerAction::Signal {
+            name: AUDIO_CHANGED.into(),
+            fd: raw,
+          },
+        );
+        self.signal_fd = Some(raw);
+
+        Some(write_fd)
+      });
+
       slowshell_services::audio::run(shared, cmd_rx, notify);
     }
   }
