@@ -388,7 +388,7 @@ mod tests {
     };
     let action = popup_open_action(&menu_config, iced::Point::ORIGIN);
     if let ListenerAction::Payload { name, payload } = action {
-      assert_eq!(name.as_ref(), "popup.open");
+      assert_eq!(name.as_ref(), "popup.toggle");
       let payload = payload.expect("payload should be Some");
       println!(
         "target TypeId: {:?}",
@@ -403,7 +403,9 @@ mod tests {
         settings.is_some(),
         "PopupSettings should downcast successfully"
       );
-      assert_eq!(settings.unwrap().content.as_ref(), "menus/sound");
+      let settings = settings.unwrap();
+      assert!(settings.insets);
+      assert_eq!(settings.content.as_ref(), "menus/sound");
     } else {
       panic!("Expected ListenerAction::Payload");
     }

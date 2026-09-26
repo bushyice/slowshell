@@ -28,6 +28,7 @@ impl Popup {
     vec![
       EventFilter::Payload("popup.toggle".into()),
       EventFilter::Payload("popup.open".into()),
+      EventFilter::Named("popup.close".into()),
       EventFilter::Payload("popup.close".into()),
     ]
   }
@@ -165,7 +166,7 @@ impl DesktopItem for Popup {
           .is_some_and(|c| c.content == settings.content)
         {
           self.close_current(store);
-          Ok(ItemEffect::Subscribe(Self::base_events()))
+          Ok(ItemEffect::Hide)
         } else {
           self.open(config, store, settings)
         }
@@ -185,10 +186,11 @@ impl DesktopItem for Popup {
 
         self.open(config, store, settings)
       }
-      ListenerAction::Payload { name, payload } if name.as_ref() == "popup.close" => {
-        let _ = payload;
+      ListenerAction::Named(name) | ListenerAction::Payload { name, .. }
+        if name.as_ref() == "popup.close" =>
+      {
         self.close_current(store);
-        Ok(ItemEffect::Subscribe(Self::base_events()))
+        Ok(ItemEffect::Hide)
       }
       other => {
         if self.current.is_none() {
@@ -198,7 +200,7 @@ impl DesktopItem for Popup {
         if let Some(Some(effect)) = self.with_renderable(store, |renderable, store| {
           renderable.on_event(config, store, other)
         }) {
-          return Ok(effect);
+          return Ok(self.finish_renderable_effect(store, effect));
         }
 
         Ok(ItemEffect::None)
@@ -206,7 +208,7 @@ impl DesktopItem for Popup {
     }
   }
 
-  fn handle_message(&mut self, store: Option<&mut Store>, message: &ItemMessage) -> ItemEffect {
+  fn handle_message(&mut self, mut store: Option<&mut Store>, message: &ItemMessage) -> ItemEffect {
     match message {
       ItemMessage::Effect(_, effect) => match effect {
         ItemEffect::Hide | ItemEffect::Destroy => {
@@ -218,15 +220,18 @@ impl DesktopItem for Popup {
           ItemEffect::Hide
         }
         ItemEffect::Custom([tag, ..]) if *tag == 40 || *tag == 42 => {
-          if let Some(current) = &self.current
-            && let Some(effect) = store
-              .and_then(|s| s.borrow_mut::<Renderables>())
+          let effect = match (&self.current, store.as_deref_mut()) {
+            (Some(current), Some(store)) => store
+              .borrow_mut::<Renderables>()
               .and_then(|x| x.get_mut(&current.content))
-              .and_then(|r| r.handle_message(message))
-          {
-            return effect;
+              .and_then(|r| r.handle_message(message)),
+            _ => None,
+          };
+
+          match (effect, store) {
+            (Some(effect), Some(store)) => self.finish_renderable_effect(store, effect),
+            _ => ItemEffect::None,
           }
-          ItemEffect::None
         }
         other => other.clone(),
       },
@@ -252,6 +257,16 @@ impl DesktopItem for Popup {
 }
 
 impl Popup {
+  fn finish_renderable_effect(&mut self, store: &mut Store, effect: ItemEffect) -> ItemEffect {
+    if matches!(
+      effect,
+      ItemEffect::Hide | ItemEffect::ReallyHide | ItemEffect::Destroy | ItemEffect::ReallyDestroy
+    ) {
+      self.close_current(store);
+    }
+    effect
+  }
+
   fn close_current(&mut self, store: &mut Store) {
     self.with_renderable(store, |renderable, store| {
       renderable.close(store);
