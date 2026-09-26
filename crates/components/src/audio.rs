@@ -8,7 +8,7 @@ use std::{
 
 use iced::{
   Element, Event, mouse,
-  widget::{container, row, text},
+  widget::{container, row},
 };
 use nix::{
   fcntl::{FcntlArg, OFlag, fcntl},
@@ -202,17 +202,29 @@ impl Component for Audio {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = config.style("component");
-    let theme = &config.theme;
+    let style = config.computed(&["component"]);
+    let theme = config.palette();
 
-    let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(13.0);
+    let icon_size = style.length("icon-size").unwrap_or(14.0) as u16;
+
+    let text_color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
+    let faded = style
+      .color("color-faded")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.subtext);
+    let primary = style
+      .color("color-primary")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.primary);
 
     let (vol, muted) = {
       let state = self.shared.state.lock().unwrap();
@@ -245,11 +257,7 @@ impl Component for Audio {
       .unwrap_or(false);
 
     let icon_name = volume_icon(vol, muted);
-    let color = if muted {
-      style.color(theme, "color.faded", theme.subtext)
-    } else {
-      style.color(theme, "color", theme.text)
-    };
+    let color = if muted { faded } else { text_color };
 
     let icon = Icon::new(icon_name).size(icon_size).color(color);
 
@@ -257,11 +265,7 @@ impl Component for Audio {
 
     if show_track && track_info.is_some() {
       let (track_label, is_playing) = track_info.unwrap();
-      let track_color = if is_playing {
-        style.color(theme, "color.primary", theme.primary)
-      } else {
-        style.color(theme, "color.faded", theme.subtext)
-      };
+      let track_color = if is_playing { primary } else { faded };
 
       let truncated: String = if track_label.chars().count() > 30 {
         format!("{}…", track_label.chars().take(28).collect::<String>())
@@ -269,10 +273,15 @@ impl Component for Audio {
         track_label
       };
 
-      items.push(text(truncated).size(font_size).color(track_color).into());
+      items.push(
+        config
+          .text(truncated, &["component"])
+          .color(track_color)
+          .into(),
+      );
     } else if show_percent {
       let pct_str = format!("{}%", (vol * 100.0).round() as u32);
-      items.push(text(pct_str).size(font_size).color(color).into());
+      items.push(config.text(pct_str, &["component"]).color(color).into());
     }
 
     let content = container(row(items).spacing(4).align_y(iced::Alignment::Center));

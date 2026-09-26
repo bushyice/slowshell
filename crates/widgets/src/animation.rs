@@ -377,8 +377,11 @@ struct HoverBackgroundState {
 
 pub struct HoverBackground<'a> {
   content: Element<'a, ItemMessage>,
+  base: Option<Color>,
   color: Color,
   radius: f32,
+  border_width: f32,
+  border_color: Color,
   mode: Mode,
   disabled: bool,
 }
@@ -387,10 +390,36 @@ impl<'a> HoverBackground<'a> {
   pub fn new(content: impl Into<Element<'a, ItemMessage>>, color: Color, radius: f32) -> Self {
     Self {
       content: content.into(),
+      base: None,
       color,
       radius,
+      border_width: 0.0,
+      border_color: Color::TRANSPARENT,
       mode: quick(),
       disabled: !slowshell_core::animations::enabled(),
+    }
+  }
+
+  pub fn with_base(mut self, base: Color) -> Self {
+    self.base = Some(base);
+    self
+  }
+
+  pub fn with_border(mut self, width: f32, color: Color) -> Self {
+    self.border_width = width;
+    self.border_color = color;
+    self
+  }
+
+  fn quad(&self, bounds: Rectangle) -> renderer::Quad {
+    renderer::Quad {
+      bounds,
+      border: iced::Border {
+        radius: self.radius.into(),
+        width: self.border_width,
+        color: self.border_color,
+      },
+      ..Default::default()
     }
   }
 
@@ -472,16 +501,16 @@ impl Widget<ItemMessage, iced::Theme, iced::Renderer> for HoverBackground<'_> {
       .progress
       .value();
 
+    if self.base.is_some() || self.border_width > 0.0 {
+      renderer.fill_quad(
+        self.quad(layout.bounds()),
+        self.base.unwrap_or(Color::TRANSPARENT),
+      );
+    }
+
     if alpha > 0.0 {
       renderer.fill_quad(
-        renderer::Quad {
-          bounds: layout.bounds(),
-          border: iced::Border {
-            radius: self.radius.into(),
-            ..Default::default()
-          },
-          ..Default::default()
-        },
+        self.quad(layout.bounds()),
         Color {
           a: (self.color.a * alpha.clamp(0.0, 1.0)).clamp(0.0, 1.0),
           ..self.color

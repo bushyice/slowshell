@@ -1,9 +1,6 @@
 #[cfg(feature = "panels")]
 use slowshell_components::{ComponentRegistration, Components};
-use slowshell_config::{
-  Config,
-  style::{ColorValue, StyleValue},
-};
+use slowshell_config::Config;
 use slowshell_core::Store;
 #[cfg(feature = "panels")]
 use slowshell_panels::PanelPositions;
@@ -13,17 +10,10 @@ use slowshell_widgets::Renderables;
 pub fn styles() -> miette::Result<()> {
   let loaded = crate::daemon::load();
 
-  let mut names: Vec<String> = loaded
-    .config
-    .styles()
-    .keys()
-    .map(|key| key.to_string())
-    .collect();
-  names.sort();
-
-  // TODO: List the styles themselves
-  for name in names {
-    println!("{name}");
+  let css = loaded.config.stylesheet();
+  print!("{css}");
+  if !css.ends_with('\n') {
+    println!();
   }
 
   Ok(())
@@ -37,7 +27,17 @@ pub fn plugins() -> miette::Result<()> {
   infos.sort_by(|a, b| a.id.cmp(&b.id));
 
   for info in infos {
-    println!("{} {} {}", info.id, info.version, info.path.display());
+    if info.requires.is_empty() {
+      println!("{} {} {}", info.id, info.version, info.path.display());
+    } else {
+      println!(
+        "{} {} {} requires {}",
+        info.id,
+        info.version,
+        info.path.display(),
+        info.requires.join(", ")
+      );
+    }
   }
 
   drop(loaded);
@@ -174,41 +174,29 @@ pub fn config_show() -> miette::Result<()> {
 
   println!("theme {{");
   for (name, color) in [
-    ("base", config.theme.base),
-    ("crust", config.theme.crust),
-    ("mantle", config.theme.mantle),
-    ("primary", config.theme.primary),
-    ("secondary", config.theme.secondary),
-    ("green", config.theme.green),
-    ("red", config.theme.red),
-    ("blue", config.theme.blue),
-    ("yellow", config.theme.yellow),
-    ("orange", config.theme.orange),
-    ("text", config.theme.text),
-    ("subtext", config.theme.subtext),
-    ("overlay", config.theme.overlay),
+    ("base", config.palette().base),
+    ("crust", config.palette().crust),
+    ("mantle", config.palette().mantle),
+    ("primary", config.palette().primary),
+    ("secondary", config.palette().secondary),
+    ("green", config.palette().green),
+    ("red", config.palette().red),
+    ("blue", config.palette().blue),
+    ("yellow", config.palette().yellow),
+    ("orange", config.palette().orange),
+    ("text", config.palette().text),
+    ("subtext", config.palette().subtext),
+    ("overlay", config.palette().overlay),
   ] {
     println!("  {name} = {}", hex(color));
   }
   println!("}}");
 
-  let mut styles: Vec<(String, &slowshell_config::style::Style)> = config
-    .styles()
-    .iter()
-    .map(|(name, style)| (name.to_string(), style))
-    .collect();
-  styles.sort_by(|a, b| a.0.cmp(&b.0));
-
-  for (name, style) in styles {
-    let mut entries: Vec<(&str, &StyleValue)> = style.entries().collect();
-    entries.sort_by(|a, b| a.0.cmp(b.0));
-
+  println!();
+  let css = config.stylesheet();
+  print!("{css}");
+  if !css.ends_with('\n') {
     println!();
-    println!("style {name} {{");
-    for (key, value) in entries {
-      println!("  {key} = {}", style_value(value));
-    }
-    println!("}}");
   }
 
   Ok(())
@@ -237,18 +225,6 @@ fn context_store(registry: &mut GlobalRegistry, config: &Config) -> Store {
   }
 
   store
-}
-
-fn style_value(value: &StyleValue) -> String {
-  match value {
-    StyleValue::String(text) => text.clone(),
-    StyleValue::Integer(int) => int.to_string(),
-    StyleValue::Float(float) => float.to_string(),
-    StyleValue::Boolean(boolean) => boolean.to_string(),
-    StyleValue::Color(ColorValue::Transparent) => "transparent".into(),
-    StyleValue::Color(ColorValue::Theme(name)) => name.clone(),
-    StyleValue::Color(ColorValue::Color(hex)) => hex.clone(),
-  }
 }
 
 fn hex(color: iced::Color) -> String {

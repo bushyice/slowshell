@@ -1,11 +1,11 @@
 use std::sync::{Arc, Mutex};
 
 use iced::{
-  Alignment, Color, Element, Length,
-  widget::{Space, column, container, row, text},
+  Alignment, Element, Length,
+  widget::{Space, column, container, row},
 };
 use iced_layershell::reexport::IcedId;
-use slowshell_config::{Config, style::Style, style::Theme};
+use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
@@ -14,7 +14,8 @@ use slowshell_core::{
 };
 use slowshell_popups::PopupSettings;
 use slowshell_widgets::{
-  Backdrop, ConfirmDialogProps, Icon, Renderable, SizedPopup, clickable, render_confirm_dialog,
+  Backdrop, ConfirmDialogProps, Icon, Renderable, SizedPopup, clickable, hover_row,
+  render_confirm_dialog,
 };
 
 pub struct ActionsRenderable {
@@ -178,52 +179,47 @@ impl ActionsRenderable {
 
   fn power_row<'a>(
     &self,
+    config: &'a Config,
     icon_name: &'static str,
     label: &'static str,
     action: PowerAction,
     id: IcedId,
-    style: &Style,
-    theme: &Theme,
   ) -> Element<'a, ItemMessage> {
-    let color = if matches!(action, PowerAction::Shutdown) {
-      style.color(theme, "color.danger", theme.red)
+    let theme = config.palette();
+    let danger = matches!(action, PowerAction::Shutdown);
+
+    let icon_color = if danger { theme.red } else { theme.primary };
+    let icon_size = config
+      .computed(&["menu", "icon"])
+      .length("icon-size")
+      .unwrap_or(16.0) as u16;
+
+    let icon: Element<'a, ItemMessage> = Icon::new(icon_name)
+      .size(icon_size)
+      .color(icon_color)
+      .into();
+
+    let label_classes: &[&str] = if danger {
+      &["menu", "text-name", "text-danger"]
     } else {
-      style.color(theme, "color", theme.text)
+      &["menu", "text-name"]
     };
-
-    let icon_color = if matches!(action, PowerAction::Shutdown) {
-      style.color(theme, "color.danger", theme.red)
-    } else {
-      style.color(theme, "color.primary", theme.primary)
-    };
-
-    let icon: Element<'a, ItemMessage> = Icon::new(icon_name).size(16).color(icon_color).into();
-
-    let label_el = text(label)
-      .size(style.number("name.font.size").unwrap_or(13.0))
-      .color(color);
+    let label_el = config.text(label, label_classes);
 
     let full_row = row![icon, Space::new().width(8), label_el]
       .align_y(Alignment::Center)
       .width(Length::Fill);
 
-    let bg = style.color(theme, "row.background", Color::TRANSPARENT);
-    let row_radius = style.number("row.radius").unwrap_or(6.0);
-
-    let wrapped = container(full_row)
-      .padding(style.padding([6.0, 10.0]))
-      .width(Length::Fill)
-      .style(move |_| container::Style {
-        background: Some(bg.into()),
-        border: iced::Border {
-          radius: row_radius.into(),
-          ..Default::default()
-        },
-        ..Default::default()
-      });
+    let wrapped = hover_row(
+      config,
+      &["menu", "row"],
+      container(full_row)
+        .padding(config.sizing(&["menu", "row"]).padding())
+        .width(Length::Fill),
+    );
 
     let pending = self.action.clone();
-    clickable(wrapped.into(), move |_, _, _| {
+    clickable(wrapped, move |_, _, _| {
       Some(action.trigger(pending.clone(), id))
     })
   }
@@ -267,8 +263,6 @@ impl Renderable for ActionsRenderable {
     data: &'a dyn std::any::Any,
   ) -> Element<'a, ItemMessage> {
     let data = data.downcast_ref::<PopupSettings>().unwrap();
-    let style = config.style("menu");
-    let theme = &config.theme;
 
     let body: Element<'a, ItemMessage> =
       if let Some(action) = &self.action.lock().ok().and_then(|p| *p) {
@@ -283,8 +277,7 @@ impl Renderable for ActionsRenderable {
             on_confirm: action.confirm(id),
             on_cancel: PowerAction::cancel(id),
           },
-          &style,
-          theme,
+          config,
         );
 
         column![confirm_widget].width(Length::Fixed(280.0)).into()
@@ -293,71 +286,58 @@ impl Renderable for ActionsRenderable {
 
         let items = vec![
           self.power_row(
+            config,
             "system-lock-screen-symbolic",
             "Lock Screen",
             PowerAction::Lock,
             id,
-            &style,
-            theme,
           ),
           self.power_row(
+            config,
             "system-suspend-symbolic",
             "Suspend",
             PowerAction::Suspend,
             id,
-            &style,
-            theme,
           ),
           self.power_row(
+            config,
             "system-log-out-symbolic",
             "Log Out…",
             PowerAction::Logout,
             id,
-            &style,
-            theme,
           ),
           self.power_row(
+            config,
             "system-reboot-symbolic",
             "Restart…",
             PowerAction::Reboot,
             id,
-            &style,
-            theme,
           ),
           self.power_row(
+            config,
             "system-shutdown-symbolic",
             "Shut Down…",
             PowerAction::Shutdown,
             id,
-            &style,
-            theme,
           ),
         ];
 
         column![
           title,
-          column(items).spacing(style.number("list.spacing").unwrap_or(6.0)),
+          column(items).spacing(config.sizing(&["menu", "list"]).gap),
         ]
-        .spacing(style.number("spacing").unwrap_or(14.0))
+        .spacing(config.sizing(&["menu"]).gap)
         .width(Length::Fixed(280.0))
         .into()
       };
 
-    let inner_padding = style.number("inner.padding").unwrap_or(8.0);
-    let mut popup_style = style.container_style(theme);
-    if let (Some(x), Some(y)) = (
-      style.number("shadow.offset.x"),
-      style.number("shadow.offset.y"),
-    ) {
-      popup_style.shadow.offset = iced::Vector::new(x, y);
-    }
+    let inner_padding = config.sizing(&["menu", "inner"]).padding();
+    let popup_style = config.container_cached(&["menu"]);
 
     let on_close = Self::dismiss_message(id);
 
     SizedPopup::new(container(
-      container(body)
-        .padding(inner_padding)
-        .style(move |_| popup_style),
+      container(body).padding(inner_padding).style(popup_style),
     ))
     .with_width(240.)
     .with_backdrop(Backdrop::transparent().with_close_on_click(true))

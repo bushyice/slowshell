@@ -14,7 +14,8 @@ use crate::{
 };
 
 pub struct DesktopItems {
-  items: Vec<Box<dyn DesktopItem>>,
+  items: Vec<Option<Box<dyn DesktopItem>>>,
+  free: Vec<usize>,
   index: HashMap<Ustr, usize>,
   active: HashSet<usize>,
   windows: HashMap<IcedId, usize>,
@@ -32,6 +33,7 @@ impl Default for DesktopItems {
   fn default() -> Self {
     Self {
       items: Vec::new(),
+      free: Vec::new(),
       index: HashMap::new(),
       active: HashSet::new(),
       windows: HashMap::new(),
@@ -77,10 +79,13 @@ impl DesktopItems {
     let launches: Vec<(usize, Ustr)> = {
       let mut result = Vec::new();
       for idx in 0..self.items.len() {
-        if !matches!(self.items[idx].visibility(), Visibility::Visible) {
+        let Some(item) = self.items[idx].as_ref() else {
+          continue;
+        };
+        if !matches!(item.visibility(), Visibility::Visible) {
           continue;
         }
-        let scope = self.items[idx].monitor(config);
+        let scope = item.monitor(config);
         match scope {
           MonitorScope::PerMonitor => {
             for monitor in &self.monitors {
@@ -155,7 +160,10 @@ impl DesktopItems {
     let settings = if let Some(item) = item {
       item.layer(config, monitor)
     } else {
-      self.items[idx].layer(config, monitor)
+      match self.items.get(idx).and_then(|slot| slot.as_ref()) {
+        Some(item) => item.layer(config, monitor),
+        None => return Task::none(),
+      }
     };
     let (id, task) = Message::open_layer(settings);
     self.windows.insert(id, idx);
@@ -173,7 +181,13 @@ impl DesktopItems {
       events.push(EventFilter::Frame);
     }
 
-    let index = self.items.len();
+    let index = match self.free.pop() {
+      Some(index) => index,
+      None => {
+        self.items.push(None);
+        self.items.len() - 1
+      }
+    };
 
     let task = if matches!(vis, Visibility::Visible) {
       match scope {
@@ -212,7 +226,7 @@ impl DesktopItems {
 
     self.index.insert(item.id().to_ustr(), index);
     self.uninitialized.insert(index);
-    self.items.push(item);
+    self.items[index] = Some(item);
 
     task
   }
@@ -234,10 +248,31 @@ impl DesktopItems {
     store: &mut Store,
     event: &ListenerAction,
   ) -> Task<Message> {
-    let Some(matching) = self.deployable_subs.get(&event.into()) else {
+    let mut matching: Vec<usize> = self
+      .deployable_subs
+      .get(&event.into())
+      .map(|indices| indices.iter().copied().collect())
+      .unwrap_or_default();
+
+    if let Some(indices) = self.deployable_subs.get(&EventFilter::All) {
+      matching.extend(indices.iter().copied());
+    }
+
+    if let ListenerAction::Payload {
+      name,
+      payload: None,
+    } = event
+      && let Some(indices) = self.deployable_subs.get(&EventFilter::Named(name.clone()))
+    {
+      matching.extend(indices.iter().copied());
+    }
+
+    matching.sort_unstable();
+    matching.dedup();
+
+    if matching.is_empty() {
       return Task::none();
-    };
-    let matching: Vec<usize> = matching.iter().copied().collect();
+    }
 
     let mut tasks = Vec::new();
 
@@ -265,54 +300,16 @@ impl DesktopItems {
     Task::batch(tasks)
   }
 
-  fn rebuild_index(&mut self, removed_idx: usize) {
-    for val in self.index.values_mut() {
-      if *val > removed_idx {
-        *val -= 1;
-      }
-    }
-
-    self.uninitialized = self
-      .uninitialized
-      .iter()
-      .map(|&i| if i > removed_idx { i - 1 } else { i })
-      .collect();
-
-    self.active = self
-      .active
-      .iter()
-      .map(|&i| if i > removed_idx { i - 1 } else { i })
-      .collect();
-
-    for val in self.windows.values_mut() {
-      if *val > removed_idx {
-        *val -= 1;
-      }
-    }
-
-    self.reverse_windows = self
-      .reverse_windows
-      .drain()
-      .map(|(i, v)| {
-        let new_i = if i > removed_idx { i - 1 } else { i };
-        (new_i, v)
-      })
-      .collect();
-
-    for indices in self.subscriptions.values_mut() {
-      *indices = indices
-        .iter()
-        .map(|&i| if i > removed_idx { i - 1 } else { i })
-        .collect();
-    }
-  }
-
   pub fn destroy_idx(&mut self, idx: usize) -> Task<Message> {
     let task = self.close_item_windows(idx);
     self.remove_subscriptions(idx);
     self.active.remove(&idx);
-    self.items.remove(idx);
-    self.rebuild_index(idx);
+    self.uninitialized.remove(&idx);
+
+    if let Some(item) = self.items[idx].take() {
+      self.index.remove(&item.id().to_ustr());
+      self.free.push(idx);
+    }
 
     task
   }
@@ -326,7 +323,14 @@ impl DesktopItems {
   }
 
   fn launch_all(&mut self, config: &Config, idx: usize) -> Task<Message> {
-    let scope = self.items[idx].monitor(config);
+    let Some(scope) = self
+      .items
+      .get(idx)
+      .and_then(|slot| slot.as_ref())
+      .map(|item| item.monitor(config))
+    else {
+      return Task::none();
+    };
     let targets = match scope {
       MonitorScope::Single(monitor) => {
         let target = match monitor {
@@ -352,17 +356,42 @@ impl DesktopItems {
     }
 
     for idx in self.uninitialized.clone() {
-      let item = &mut self.items[idx];
-      match item.initialize(store) {
-        _ => {}
+      if let Some(item) = self.items[idx].as_mut() {
+        let _ = item.initialize(store);
       }
     }
 
     self.uninitialized.clear();
   }
 
+  fn matching_items(&self, event: &ListenerAction) -> Vec<usize> {
+    let mut matching: Vec<usize> = self
+      .subscriptions
+      .get(&event.into())
+      .map(|indices| indices.iter().copied().collect())
+      .unwrap_or_default();
+
+    if let Some(indices) = self.subscriptions.get(&EventFilter::All) {
+      matching.extend(indices.iter().copied());
+    }
+
+    if let ListenerAction::Payload {
+      name,
+      payload: None,
+    } = event
+      && let Some(indices) = self.subscriptions.get(&EventFilter::Named(name.clone()))
+    {
+      matching.extend(indices.iter().copied());
+    }
+
+    matching
+  }
+
   pub fn wants_frames(&self) -> bool {
-    self.subscriptions.contains_key(&EventFilter::Frame)
+    self
+      .subscriptions
+      .get(&EventFilter::Frame)
+      .is_some_and(|indices| !indices.is_empty())
   }
 
   pub fn update(
@@ -371,10 +400,26 @@ impl DesktopItems {
     store: &mut Store,
     event: &ListenerAction,
   ) -> Task<Message> {
-    let Some(matching) = self.subscriptions.get(&event.into()) else {
+    let mut matching = self.matching_items(event);
+
+    if let ListenerAction::UpdateCompositor(changed) = event
+      && !changed.is_empty()
+    {
+      for (filter, indices) in &self.subscriptions {
+        if let EventFilter::Compositor(mask) = filter
+          && mask.intersects(*changed)
+        {
+          matching.extend(indices.iter().copied());
+        }
+      }
+    }
+
+    matching.sort_unstable();
+    matching.dedup();
+
+    if matching.is_empty() {
       return Task::none();
-    };
-    let matching: Vec<usize> = matching.iter().copied().collect();
+    }
 
     let mut tasks = Vec::new();
     let mut pending_destroy: Vec<usize> = Vec::new();
@@ -383,7 +428,10 @@ impl DesktopItems {
       // if !self.active.contains(&idx) {
       //   continue;
       // }
-      match self.items[idx].update(config, store, event) {
+      let Some(item) = self.items.get_mut(idx).and_then(|slot| slot.as_mut()) else {
+        continue;
+      };
+      match item.update(config, store, event) {
         Ok(effect) => {
           if effect == ItemEffect::ReallyDestroy {
             pending_destroy.push(idx);
@@ -420,7 +468,8 @@ impl DesktopItems {
       .get(&window_id)
       .map(|m| &**m)
       .unwrap_or("");
-    Some(self.items[idx].view(config, store, window_id, monitor))
+    let item = self.items.get(idx).and_then(|slot| slot.as_ref())?;
+    Some(item.view(config, store, window_id, monitor))
   }
 
   pub fn handle_message(
@@ -431,9 +480,14 @@ impl DesktopItems {
   ) -> Task<Message> {
     if let ItemMessage::Effect(id, _) = message {
       if let Some(&idx) = self.windows.get(id) {
-        let effect = self.items[idx].handle_message(store, message);
+        let (effect, item_id) = {
+          let Some(item) = self.items.get_mut(idx).and_then(|slot| slot.as_mut()) else {
+            return Task::none();
+          };
+          let effect = item.handle_message(store, message);
+          (effect, item.id().to_ustr())
+        };
         if effect == ItemEffect::ReallyDestroy {
-          let item_id = self.items[idx].id().to_ustr();
           return self.destroy(item_id);
         }
         if let Some(task) = self.apply_effect(config, idx, effect) {
@@ -477,7 +531,12 @@ impl DesktopItems {
       }
       ItemEffect::Hide => {
         self.active.remove(&idx);
-        if matches!(self.items[idx].visibility(), Visibility::Transient) {
+        let transient = self
+          .items
+          .get(idx)
+          .and_then(|slot| slot.as_ref())
+          .is_some_and(|item| matches!(item.visibility(), Visibility::Transient));
+        if transient {
           Some(self.close_item_windows(idx))
         } else {
           None
@@ -546,8 +605,210 @@ impl DesktopItems {
   }
 
   fn remove_subscriptions(&mut self, idx: usize) {
-    for indices in self.subscriptions.values_mut() {
+    self.subscriptions.retain(|_, indices| {
       indices.remove(&idx);
+      !indices.is_empty()
+    });
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::sync::{Arc, Mutex};
+
+  use iced_layershell::reexport::NewLayerShellSettings;
+  use slowshell_core::listeners::CompositorEvent;
+
+  struct MockItem {
+    calls: Arc<Mutex<Vec<CompositorEvent>>>,
+  }
+
+  impl DesktopItem for MockItem {
+    fn id(&self) -> &str {
+      "mock"
     }
+
+    fn layer(&self, _config: &Config, _monitor: &str) -> NewLayerShellSettings {
+      unimplemented!("hidden items are never launched")
+    }
+
+    fn visibility(&self) -> Visibility {
+      Visibility::Toggleable(false)
+    }
+
+    fn update_strategy(&self) -> UpdateWhen {
+      UpdateWhen::OnEvent
+    }
+
+    fn init_events(&self) -> Vec<EventFilter> {
+      vec![EventFilter::Compositor(CompositorEvent::WINDOWS)]
+    }
+
+    fn update(
+      &mut self,
+      _config: &Config,
+      _store: &mut Store,
+      event: &ListenerAction,
+    ) -> miette::Result<ItemEffect> {
+      if let ListenerAction::UpdateCompositor(changed) = event {
+        self.calls.lock().unwrap().push(*changed);
+      }
+      Ok(ItemEffect::None)
+    }
+
+    fn view<'a>(
+      &'a self,
+      _config: &'a Config,
+      _store: &'a Store,
+      _id: IcedId,
+      _monitor: &str,
+    ) -> Element<'a, ItemMessage> {
+      iced::widget::Space::new().into()
+    }
+  }
+
+  struct MockEvents {
+    id: &'static str,
+    filters: Vec<EventFilter>,
+    calls: Arc<Mutex<Vec<String>>>,
+  }
+
+  impl DesktopItem for MockEvents {
+    fn id(&self) -> &str {
+      self.id
+    }
+
+    fn layer(&self, _config: &Config, _monitor: &str) -> NewLayerShellSettings {
+      unimplemented!("hidden items are never launched")
+    }
+
+    fn visibility(&self) -> Visibility {
+      Visibility::Toggleable(false)
+    }
+
+    fn update_strategy(&self) -> UpdateWhen {
+      UpdateWhen::OnEvent
+    }
+
+    fn init_events(&self) -> Vec<EventFilter> {
+      self.filters.clone()
+    }
+
+    fn update(
+      &mut self,
+      _config: &Config,
+      _store: &mut Store,
+      event: &ListenerAction,
+    ) -> miette::Result<ItemEffect> {
+      self.calls.lock().unwrap().push(format!("{event:?}"));
+      Ok(ItemEffect::None)
+    }
+
+    fn view<'a>(
+      &'a self,
+      _config: &'a Config,
+      _store: &'a Store,
+      _id: IcedId,
+      _monitor: &str,
+    ) -> Element<'a, ItemMessage> {
+      iced::widget::Space::new().into()
+    }
+  }
+
+  #[test]
+  fn all_and_named_subscribers_receive_bare_commands() {
+    let config = Config::default();
+    let mut store = Store::new();
+    let mut items = DesktopItems::new();
+    let all_calls = Arc::new(Mutex::new(Vec::new()));
+    let named_calls = Arc::new(Mutex::new(Vec::new()));
+
+    let _ = items.register(
+      &config,
+      Box::new(MockEvents {
+        id: "mock-all",
+        filters: vec![EventFilter::All],
+        calls: Arc::clone(&all_calls),
+      }),
+    );
+    let _ = items.register(
+      &config,
+      Box::new(MockEvents {
+        id: "mock-named",
+        filters: vec![EventFilter::Named("fixture.toggle".into())],
+        calls: Arc::clone(&named_calls),
+      }),
+    );
+
+    let bare = ListenerAction::Payload {
+      name: "fixture.toggle".into(),
+      payload: None,
+    };
+    let _ = items.update(&config, &mut store, &bare);
+
+    assert_eq!(all_calls.lock().unwrap().len(), 1);
+    assert_eq!(named_calls.lock().unwrap().len(), 1);
+
+    let _ = items.update(
+      &config,
+      &mut store,
+      &ListenerAction::Named("fixture.desktop".into()),
+    );
+    assert_eq!(all_calls.lock().unwrap().len(), 2);
+    assert_eq!(named_calls.lock().unwrap().len(), 1);
+  }
+
+  #[test]
+  fn compositor_subscribers_are_dispatched_by_area() {
+    let config = Config::default();
+    let mut store = Store::new();
+    let mut items = DesktopItems::new();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+
+    let _ = items.register(
+      &config,
+      Box::new(MockItem {
+        calls: Arc::clone(&calls),
+      }),
+    );
+
+    let _ = items.update(
+      &config,
+      &mut store,
+      &ListenerAction::UpdateCompositor(CompositorEvent::WORKSPACES | CompositorEvent::MONITORS),
+    );
+    assert!(calls.lock().unwrap().is_empty());
+
+    let changed = CompositorEvent::WINDOWS | CompositorEvent::FOCUS;
+    let _ = items.update(
+      &config,
+      &mut store,
+      &ListenerAction::UpdateCompositor(changed),
+    );
+    assert_eq!(*calls.lock().unwrap(), vec![changed]);
+  }
+
+  #[test]
+  fn emptied_frame_subscription_stops_requesting_frames() {
+    let mut items = DesktopItems::default();
+
+    items
+      .subscriptions
+      .entry(EventFilter::Frame)
+      .or_default()
+      .insert(0);
+    assert!(items.wants_frames());
+
+    items.remove_subscriptions(0);
+
+    assert!(
+      !items.subscriptions.contains_key(&EventFilter::Frame),
+      "an empty frame subscription set must be dropped"
+    );
+    assert!(
+      !items.wants_frames(),
+      "the frame loop must stop once the last frame subscriber unsubscribes"
+    );
   }
 }

@@ -11,14 +11,14 @@ use std::sync::{Arc, Mutex};
 
 use iced::{
   Alignment, Element, Length,
-  widget::{Space, column, container, row, text},
+  widget::{Space, column, container, row},
 };
 use iced_layershell::reexport::IcedId;
 use slowshell_commons::quicksettings::*;
 use slowshell_commons::quicksettings::{
   QuickSettingsProvider, QuickSettingsRegistry, QuickSettingsTile,
 };
-use slowshell_config::{Config, style::Style, style::Theme};
+use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
@@ -97,8 +97,6 @@ impl Renderable for QuickSettingsRenderable {
     data: &'a dyn std::any::Any,
   ) -> Element<'a, ItemMessage> {
     let data = data.downcast_ref::<PopupSettings>().unwrap();
-    let style = config.style("menu");
-    let theme = &config.theme;
 
     let expanded = self.expanded.lock().ok().and_then(|slot| slot.clone());
 
@@ -114,18 +112,17 @@ impl Renderable for QuickSettingsRenderable {
     }
 
     let mut children: Vec<Element<'a, ItemMessage>> = Vec::new();
-    children.push(render_user_header(&style, theme));
+    children.push(render_user_header(config));
 
     if let Some(registry) = registry.as_ref() {
       children.extend(registry.sections(config, store));
     }
 
     let grid = render_tile_grid(
+      config,
       &tiles,
       expanded.as_deref(),
       id,
-      &style,
-      theme,
       &mut allocator,
       &self.slots,
     );
@@ -135,37 +132,31 @@ impl Renderable for QuickSettingsRenderable {
       let sub_tiles = registry.children(config, store, expanded);
       if !sub_tiles.is_empty() {
         children.push(render_expanded(
+          config,
           &sub_tiles,
           id,
-          &style,
-          theme,
           &mut allocator,
           &self.slots,
         ));
       }
     }
 
-    // children.push(render_footer(&style, theme));
+    // children.push(render_footer(config));
 
-    let list_spacing = style.number("list.spacing").unwrap_or(8.0);
-    let list_width = style.number("qs.width").unwrap_or(340.0);
+    let list_spacing = config.sizing(&["menu", "list"]).gap;
+    let list_width = config
+      .computed(&["menu", "qs"])
+      .length("width")
+      .unwrap_or(340.0);
     let list = column(children)
       .spacing(list_spacing)
       .width(Length::Fixed(list_width));
 
-    let inner_padding = style.number("inner.padding").unwrap_or(12.0);
-    let mut popup_style = style.container_style(theme);
-    if let (Some(x), Some(y)) = (
-      style.number("shadow.offset.x"),
-      style.number("shadow.offset.y"),
-    ) {
-      popup_style.shadow.offset = iced::Vector::new(x, y);
-    }
+    let inner_padding = config.sizing(&["menu", "inner"]).padding();
+    let popup_style = config.container_cached(&["menu"]);
 
     SizedPopup::new(container(
-      container(list)
-        .padding(inner_padding)
-        .style(move |_| popup_style),
+      container(list).padding(inner_padding).style(popup_style),
     ))
     .with_width(140.)
     .with_backdrop(Backdrop::transparent().with_close_on_click(true))
@@ -177,10 +168,12 @@ impl Renderable for QuickSettingsRenderable {
   }
 }
 
-fn render_user_header<'a>(style: &Style, theme: &Theme) -> Element<'a, ItemMessage> {
-  let color = style.color(theme, "color", theme.text);
-  let faded = style.color(theme, "color.faded", theme.subtext);
-  let avatar_size = style.number("qs.avatar.size").unwrap_or(42.0);
+fn render_user_header<'a>(config: &'a Config) -> Element<'a, ItemMessage> {
+  let faded = config.palette().subtext;
+  let avatar_size = config
+    .computed(&["menu", "qs", "avatar"])
+    .length("avatar-size")
+    .unwrap_or(42.0);
 
   let picture = user_picture();
   let avatar: Element<'a, ItemMessage> = if let Some(path) = picture {
@@ -209,12 +202,8 @@ fn render_user_header<'a>(style: &Style, theme: &Theme) -> Element<'a, ItemMessa
     });
 
   let names = column![
-    text(user_name())
-      .size(style.number("header.font.size").unwrap_or(15.0))
-      .color(color),
-    text(host_name())
-      .size(style.number("status.font.size").unwrap_or(11.0))
-      .color(faded),
+    config.text(user_name(), &["menu", "text-header"]),
+    config.text(host_name(), &["menu", "text-status", "text-faded"]),
   ]
   .spacing(1);
 
@@ -223,9 +212,7 @@ fn render_user_header<'a>(style: &Style, theme: &Theme) -> Element<'a, ItemMessa
     Space::new().width(10),
     names,
     Space::new().width(Length::Fill),
-    text(uptime_label())
-      .size(style.number("status.font.size").unwrap_or(11.0))
-      .color(faded),
+    config.text(uptime_label(), &["menu", "text-status", "text-faded"]),
   ]
   .align_y(Alignment::Center)
   .into()
@@ -252,11 +239,10 @@ impl SlotAllocator {
 }
 
 fn render_tile_grid<'a>(
+  config: &'a Config,
   tiles: &[QuickSettingsTile],
   expanded: Option<&str>,
   id: IcedId,
-  style: &Style,
-  theme: &Theme,
   allocator: &mut SlotAllocator,
   slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
 ) -> Element<'a, ItemMessage> {
@@ -265,7 +251,7 @@ fn render_tile_grid<'a>(
 
   for tile in tiles {
     let is_expanded = expanded == Some(tile.id.as_str());
-    let rendered = tile_element(tile, is_expanded, id, style, theme, allocator, slots);
+    let rendered = tile_element(config, tile, is_expanded, id, allocator, slots);
     current.push(rendered);
 
     if current.len() == 2 {
@@ -282,15 +268,14 @@ fn render_tile_grid<'a>(
 }
 
 fn tile_element<'a>(
+  config: &'a Config,
   tile: &QuickSettingsTile,
   expanded: bool,
   id: IcedId,
-  style: &Style,
-  theme: &Theme,
   allocator: &mut SlotAllocator,
   slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
 ) -> Element<'a, ItemMessage> {
-  let base = render_tile(tile, expanded, style, theme);
+  let base = render_tile(tile, expanded, config);
 
   match tile.on_click.clone() {
     TileAction::None => base,
@@ -361,82 +346,111 @@ fn render_action_tile<'a>(
 }
 
 fn render_expanded<'a>(
+  config: &'a Config,
   tiles: &[QuickSettingsTile],
   id: IcedId,
-  style: &Style,
-  theme: &Theme,
   allocator: &mut SlotAllocator,
   slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
 ) -> Element<'a, ItemMessage> {
-  let faded = style.color(theme, "color.faded", theme.subtext);
-
   let mut items: Vec<Element<'a, ItemMessage>> = tiles
     .iter()
-    .map(|tile| tile_element(tile, false, id, style, theme, allocator, slots))
+    .map(|tile| tile_element(config, tile, false, id, allocator, slots))
     .collect();
 
   if items.is_empty() {
     items.push(
-      text("Nothing here yet")
-        .size(style.number("status.font.size").unwrap_or(11.0))
-        .color(faded)
+      config
+        .text("Nothing here yet", &["menu", "text-status", "text-faded"])
         .into(),
     );
   }
 
   container(column(items).spacing(6).width(Length::Fill))
-    .padding(style.padding([4.0, 4.0]))
+    .padding([4.0, 4.0])
     .width(Length::Fill)
     .into()
 }
 
-// fn render_footer<'a>(style: &Style, theme: &Theme) -> Element<'a, ItemMessage> {
-//   let faded = style.color(theme, "color.faded", theme.subtext);
+// fn render_footer<'a>(config: &'a Config) -> Element<'a, ItemMessage> {
+//   let engine = config.theme();
+//   let style = config.computed(&["menu"]);
+//   let faded = style.color("color-faded").map(|c| c.to_iced()).unwrap_or(config.palette().subtext);
 
 //   row![
 //     Icon::new("preferences-system-symbolic")
 //       .size(14)
 //       .color(faded),
 //     Space::new().width(6),
-//     text("Settings")
-//       .size(style.number("status.font.size").unwrap_or(11.0))
-//       .color(faded),
+//     config.text("Settings", &["menu", "text-status", "text-faded"]),
 //   ]
 //   .align_y(Alignment::Center)
 //   .into()
 // }
 
-fn user_name() -> String {
-  std::env::var("USER")
-    .or_else(|_| std::env::var("LOGNAME"))
-    .unwrap_or_else(|_| "user".to_string())
+fn user_name() -> &'static str {
+  static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  NAME
+    .get_or_init(|| {
+      std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "user".to_string())
+    })
+    .as_str()
 }
 
-fn host_name() -> String {
-  std::fs::read_to_string("/etc/hostname")
-    .map(|name| name.trim().to_string())
-    .ok()
-    .filter(|name| !name.is_empty())
-    .unwrap_or_else(|| "localhost".to_string())
+fn host_name() -> &'static str {
+  static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  HOST
+    .get_or_init(|| {
+      std::fs::read_to_string("/etc/hostname")
+        .map(|name| name.trim().to_string())
+        .ok()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "localhost".to_string())
+    })
+    .as_str()
 }
 
-fn user_picture() -> Option<std::path::PathBuf> {
-  let home = std::env::var("HOME").ok()?;
-  let home = std::path::PathBuf::from(home);
+fn user_picture() -> Option<&'static std::path::PathBuf> {
+  static PICTURE: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+  PICTURE
+    .get_or_init(|| {
+      let home = std::env::var("HOME").ok()?;
+      let home = std::path::PathBuf::from(home);
 
-  for candidate in [".face", ".face.icon", ".config/avatar"] {
-    let path = home.join(candidate);
-    if path.is_file() {
-      return Some(path);
-    }
-  }
+      for candidate in [".face", ".face.icon", ".config/avatar"] {
+        let path = home.join(candidate);
+        if path.is_file() {
+          return Some(path);
+        }
+      }
 
-  let user = std::env::var("USER").ok()?;
-  let path = std::path::PathBuf::from(format!("/var/lib/AccountsService/icons/{user}"));
-  path.is_file().then_some(path)
+      let user = std::env::var("USER").ok()?;
+      let path = std::path::PathBuf::from(format!("/var/lib/AccountsService/icons/{user}"));
+      path.is_file().then_some(path)
+    })
+    .as_ref()
 }
 
 pub fn uptime_label() -> String {
+  static CACHE: Mutex<Option<(std::time::Instant, String)>> = Mutex::new(None);
+
+  let Ok(mut cache) = CACHE.lock() else {
+    return String::new();
+  };
+
+  if let Some((computed_at, label)) = cache.as_ref()
+    && computed_at.elapsed() < std::time::Duration::from_secs(60)
+  {
+    return label.clone();
+  }
+
+  let label = compute_uptime_label();
+  *cache = Some((std::time::Instant::now(), label.clone()));
+  label
+}
+
+fn compute_uptime_label() -> String {
   let Ok(raw) = std::fs::read_to_string("/proc/uptime") else {
     return String::new();
   };
@@ -585,8 +599,8 @@ impl QuickSettingsProvider for SoundProvider {
       volume,
       0.0..=1.5,
       muted,
-      &config.style("slider"),
-      &config.theme,
+      &config.computed(&["slider"]),
+      config.palette(),
     ))
   }
 }

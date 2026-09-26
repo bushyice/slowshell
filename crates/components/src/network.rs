@@ -227,44 +227,37 @@ impl Component for Network {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = ctx.resolve_style(config);
-    let theme = &config.theme;
-    let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(12.0);
+    let style = config.computed(ctx.classes());
+    let theme = config.palette();
+    let icon_size = style.length("icon-size").unwrap_or(14.0) as u16;
+    let font_size = config.sizing(ctx.classes()).font_size;
+
+    let color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
+    let offline = style
+      .color("color-offline")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.subtext);
 
     let inner = self.shared.state.lock().unwrap().clone();
     let wifi_enabled = self.shared.wifi_enabled.load(Ordering::Relaxed);
 
     let (icon, color) = if let Some(wifi) = &inner.wifi_connected {
-      (
-        signal_icon(wifi.signal),
-        style.color(theme, "color", theme.text),
-      )
+      (signal_icon(wifi.signal), color)
     } else if inner.ethernet.as_ref().is_some_and(|e| e.connected) {
-      (
-        "network-wired-symbolic",
-        style.color(theme, "color", theme.text),
-      )
+      ("network-wired-symbolic", color)
     } else if !wifi_enabled {
-      (
-        "network-wireless-disabled-symbolic",
-        style
-          .get_color(theme, "color.offline")
-          .unwrap_or(theme.subtext),
-      )
+      ("network-wireless-disabled-symbolic", offline)
     } else {
-      (
-        "network-wireless-offline-symbolic",
-        style
-          .get_color(theme, "color.offline")
-          .unwrap_or(theme.subtext),
-      )
+      ("network-wireless-offline-symbolic", offline)
     };
 
     let show_icon = options.and_then(|o| o.bool("icon")).unwrap_or(true);
@@ -303,12 +296,7 @@ impl Component for Network {
         items.push(icon);
       }
       if show_ssid && let Some(label) = label {
-        items.push(
-          iced::widget::text(label)
-            .size(font_size)
-            .color(color)
-            .into(),
-        );
+        items.push(config.text(label, ctx.classes()).color(color).into());
       }
       if items.is_empty() {
         container(iced::widget::Space::new()).into()

@@ -2,7 +2,10 @@ use std::{
   collections::HashMap,
   os::fd::OwnedFd,
   path::PathBuf,
-  sync::atomic::{AtomicU32, Ordering},
+  sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+  },
   time::{Duration, Instant},
 };
 
@@ -96,7 +99,8 @@ impl NotificationServer {
     let is_dnd = self.shared.dnd.load(Ordering::Relaxed);
 
     {
-      let mut state = self.shared.state.lock().unwrap();
+      let mut guard = self.shared.state.lock().unwrap();
+      let state = Arc::make_mut(&mut guard);
       state.history.retain(|n| n.id != id);
       state.history.insert(0, item.clone());
       state.unread_count += 1;
@@ -212,7 +216,8 @@ async fn notif_loop(
         }
         NotificationCmd::DismissHistory(id) => {
           let dropped = {
-            let mut state = shared.state.lock().unwrap();
+            let mut guard = shared.state.lock().unwrap();
+            let state = Arc::make_mut(&mut guard);
             state.history.retain(|n| n.id != id);
             let before = state.popups.len();
             state.popups.retain(|n| n.id != id);
@@ -224,7 +229,8 @@ async fn notif_loop(
         }
         NotificationCmd::ClearAll => {
           let ids = {
-            let mut state = shared.state.lock().unwrap();
+            let mut guard = shared.state.lock().unwrap();
+            let state = Arc::make_mut(&mut guard);
             let ids: Vec<u32> = state.popups.iter().map(|n| n.id).collect();
             state.history.clear();
             state.popups.clear();
@@ -280,7 +286,8 @@ async fn notif_loop(
 }
 
 fn drop_popup(shared: &SharedNotificationState, id: u32) -> bool {
-  let mut state = shared.state.lock().unwrap();
+  let mut guard = shared.state.lock().unwrap();
+  let state = Arc::make_mut(&mut guard);
   let before = state.popups.len();
   state.popups.retain(|n| n.id != id);
   before != state.popups.len()
@@ -288,7 +295,8 @@ fn drop_popup(shared: &SharedNotificationState, id: u32) -> bool {
 
 async fn notify_all_closed(shared: &SharedNotificationState, conn: &Connection) {
   let ids: Vec<u32> = {
-    let mut state = shared.state.lock().unwrap();
+    let mut guard = shared.state.lock().unwrap();
+    let state = Arc::make_mut(&mut guard);
     let ids: Vec<u32> = state.popups.iter().map(|n| n.id).collect();
     state.popups.clear();
     ids

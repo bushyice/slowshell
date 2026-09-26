@@ -233,8 +233,8 @@ impl DesktopItem for DesktopWidget {
     id: IcedId,
     _monitor: &str,
   ) -> Element<'a, ItemMessage> {
-    let bg = config.theme.base;
-    let text_color = config.theme.text;
+    let bg = config.palette().base;
+    let text_color = config.palette().text;
 
     let mut content: Element<'_, ItemMessage> = text(&*self.name).size(14).color(text_color).into();
 

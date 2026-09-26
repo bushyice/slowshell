@@ -13,5 +13,6 @@ slowshell-widgets = { path = "../widgets" }
 iced_layershell.workspace = true
 iced.workspace = true
 image.workspace = true
+libc.workspace = true
 miette.workspace = true
 serde.workspace = true

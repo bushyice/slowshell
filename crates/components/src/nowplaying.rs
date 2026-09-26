@@ -1,6 +1,6 @@
 use iced::{
   Element,
-  widget::{column, row, text},
+  widget::{column, row},
 };
 
 use slowshell_commons::{
@@ -66,16 +66,28 @@ impl Component for NowPlaying {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    store: &Store,
+    &'a self,
+    config: &'a Config,
+    store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = ctx.resolve_style(config);
-    let theme = &config.theme;
-    let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(12.0);
+    let style = config.computed(ctx.classes());
+    let theme = config.palette();
+    let icon_size = style.length("icon-size").unwrap_or(14.0) as u16;
+
+    let color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
+    let faded = style
+      .color("color-faded")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.subtext);
+    let primary = style
+      .color("color-primary")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.primary);
 
     let show_artist = options.and_then(|o| o.bool("show-artist")).unwrap_or(true);
     let show_controls = options.and_then(|o| o.bool("controls")).unwrap_or(false);
@@ -119,16 +131,12 @@ impl Component for NowPlaying {
       track_label
     };
 
-    let text_color = style.color(theme, "color", theme.text);
+    let text_color = color;
 
     let mut items: Vec<Element<'a, ItemMessage>> = Vec::new();
 
     if show_controls {
-      let prev_color = if can_go_previous {
-        style.color(theme, "color", theme.text)
-      } else {
-        style.color(theme, "color.faded", theme.subtext)
-      };
+      let prev_color = if can_go_previous { color } else { faded };
       let prev_icon: Element<'a, ItemMessage> = Icon::new("media-skip-backward-symbolic")
         .size(icon_size)
         .color(prev_color)
@@ -148,7 +156,7 @@ impl Component for NowPlaying {
       };
       let play_icon: Element<'a, ItemMessage> = Icon::new(play_icon_name)
         .size(icon_size)
-        .color(style.color(theme, "color.primary", theme.primary))
+        .color(primary)
         .into();
       let play_btn = clickable(play_icon, |_, _, _| {
         Some(ItemMessage::Action(ListenerAction::Payload {
@@ -158,11 +166,7 @@ impl Component for NowPlaying {
       });
       items.push(play_btn);
 
-      let next_color = if can_go_next {
-        style.color(theme, "color", theme.text)
-      } else {
-        style.color(theme, "color.faded", theme.subtext)
-      };
+      let next_color = if can_go_next { color } else { faded };
       let next_icon: Element<'a, ItemMessage> = Icon::new("media-skip-forward-symbolic")
         .size(icon_size)
         .color(next_color)
@@ -178,7 +182,10 @@ impl Component for NowPlaying {
 
     if ctx.orientation == PanelOrientation::Horizontal {
       items.push(menu_trigger(
-        text(truncated).size(font_size).color(text_color).into(),
+        config
+          .text(truncated, ctx.classes())
+          .color(text_color)
+          .into(),
         MenuConfig {
           content: "menus/sound".into(),
           panel_name: None,

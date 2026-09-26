@@ -1,4 +1,11 @@
-use std::{any::TypeId, collections::HashMap};
+use std::{
+  any::TypeId,
+  collections::HashMap,
+  sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+  },
+};
 
 use iced::{
   Element, Length,
@@ -8,20 +15,33 @@ use iced_layershell::reexport::{
   Anchor, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
 use slowshell_config::{Config, ConfigParser};
-use slowshell_core::{Store, listeners::ListenerAction};
+use slowshell_core::{
+  Store,
+  listeners::{FdHandle, ListenerAction},
+};
 use slowshell_desktop::{
   DesktopItem, EventFilter, ItemEffect, ItemMessage, MonitorScope, UpdateWhen, Visibility,
 };
 
+type SharedCache = Arc<Mutex<HashMap<String, image::Handle>>>;
+
+struct PendingLoad(Arc<AtomicUsize>);
+
+impl Drop for PendingLoad {
+  fn drop(&mut self) {
+    self.0.fetch_sub(1, Ordering::SeqCst);
+  }
+}
+
 pub struct Wallpaper {
   file: Option<String>,
   paths: HashMap<String, String>,
-  cache: HashMap<String, image::Handle>,
+  cache: SharedCache,
+  pending: Arc<AtomicUsize>,
 }
 
 impl Wallpaper {
   pub fn new(config: &WallpaperConfig) -> Self {
-    let mut cache = HashMap::new();
     let max_w = config.max_width.unwrap_or(1920);
     let max_h = config.max_height.unwrap_or(1080);
 
@@ -37,9 +57,23 @@ impl Wallpaper {
       }
     }
 
+    let cache: SharedCache = Arc::new(Mutex::new(HashMap::new()));
+    let pending = Arc::new(AtomicUsize::new(unique_paths.len()));
+
     for path in unique_paths {
-      if let Some(handle) = load_optimized_handle(&path, max_w, max_h) {
-        cache.insert(path, handle);
+      let thread_cache = Arc::clone(&cache);
+      let thread_pending = Arc::clone(&pending);
+      let spawned = std::thread::Builder::new()
+        .name("slowshell-wallpaper".into())
+        .spawn(move || {
+          let _pending = PendingLoad(thread_pending);
+          if let Some(handle) = load_optimized_handle(&path, max_w, max_h) {
+            thread_cache.lock().unwrap().insert(path, handle);
+          }
+        });
+
+      if spawned.is_err() {
+        pending.fetch_sub(1, Ordering::SeqCst);
       }
     }
 
@@ -47,7 +81,20 @@ impl Wallpaper {
       file: config.file.clone(),
       paths: config.paths.clone().unwrap_or_default(),
       cache,
+      pending,
     }
+  }
+
+  fn is_loading(&self) -> bool {
+    self.pending.load(Ordering::SeqCst) > 0
+  }
+
+  fn events(&self) -> Vec<EventFilter> {
+    let mut events = vec![EventFilter::Named("config.reload".into())];
+    if self.is_loading() {
+      events.push(EventFilter::Frame);
+    }
+    events
   }
 }
 
@@ -82,20 +129,7 @@ fn load_optimized_handle(path: &str, max_width: u32, max_height: u32) -> Option<
 fn spawn_external_daemon(conf: &WallpaperConfig) {
   let backend = conf.backend.as_deref().unwrap_or("slowshell");
   match backend {
-    "swaybg" => {
-      let mut cmd = std::process::Command::new("swaybg");
-      if let Some(paths) = &conf.paths {
-        for (out, path) in paths {
-          cmd.args(["-o", out, "-i", path, "-m", "fill"]);
-        }
-      }
-      if let Some(file) = &conf.file {
-        cmd.args(["-i", file, "-m", "fill"]);
-      }
-      if let Err(e) = cmd.spawn() {
-        eprintln!("[wallpaper] failed to spawn swaybg: {e}");
-      }
-    }
+    "swaybg" => spawn_swaybg(conf),
     "swww" | "sww" => {
       if let Some(paths) = &conf.paths {
         for (out, path) in paths {
@@ -160,6 +194,92 @@ fn spawn_external_daemon(conf: &WallpaperConfig) {
   }
 }
 
+fn spawn_signature(conf: &WallpaperConfig) -> String {
+  let mut signature = String::new();
+  signature.push_str(conf.backend.as_deref().unwrap_or("slowshell"));
+
+  if let Some(file) = &conf.file {
+    signature.push('\0');
+    signature.push_str(file);
+  }
+  if let Some(paths) = &conf.paths {
+    let mut entries: Vec<(&String, &String)> = paths.iter().collect();
+    entries.sort();
+    for (output, path) in entries {
+      signature.push('\0');
+      signature.push_str(output);
+      signature.push('=');
+      signature.push_str(path);
+    }
+  }
+  if let Some(args) = &conf.spawn_args {
+    signature.push('\0');
+    signature.push_str(args);
+  }
+
+  signature.replace('\n', " ")
+}
+
+fn wallpaper_pid_path() -> std::path::PathBuf {
+  std::env::var("XDG_RUNTIME_DIR")
+    .map(std::path::PathBuf::from)
+    .map(|dir| dir.join("slowshell-wallpaper.pid"))
+    .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/slowshell-wallpaper.pid"))
+}
+
+fn read_wallpaper_pidfile(path: &std::path::Path) -> Option<(String, u32)> {
+  let content = std::fs::read_to_string(path).ok()?;
+  let mut lines = content.lines();
+  let signature = lines.next()?.to_string();
+  let pid = lines.next()?.trim().parse().ok()?;
+  Some((signature, pid))
+}
+
+fn process_alive(pid: u32) -> bool {
+  unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+fn process_name(pid: u32) -> Option<String> {
+  std::fs::read_to_string(format!("/proc/{pid}/comm"))
+    .ok()
+    .map(|name| name.trim().to_string())
+}
+
+fn spawn_swaybg(conf: &WallpaperConfig) {
+  let signature = spawn_signature(conf);
+  let pid_path = wallpaper_pid_path();
+
+  if let Some((old_signature, pid)) = read_wallpaper_pidfile(&pid_path)
+    && process_alive(pid)
+    && process_name(pid).as_deref() == Some("swaybg")
+  {
+    if old_signature == signature {
+      return;
+    }
+
+    unsafe {
+      libc::kill(pid as libc::pid_t, libc::SIGTERM);
+    }
+  }
+
+  let mut cmd = std::process::Command::new("swaybg");
+  if let Some(paths) = &conf.paths {
+    for (out, path) in paths {
+      cmd.args(["-o", out, "-i", path, "-m", "fill"]);
+    }
+  }
+  if let Some(file) = &conf.file {
+    cmd.args(["-i", file, "-m", "fill"]);
+  }
+
+  match cmd.spawn() {
+    Ok(child) => {
+      let _ = std::fs::write(&pid_path, format!("{signature}\n{}\n", child.id()));
+    }
+    Err(e) => eprintln!("[wallpaper] failed to spawn swaybg: {e}"),
+  }
+}
+
 fn spawn_shell_command(cmd_str: &str) {
   let parts: Vec<&str> = cmd_str.split_whitespace().collect();
   if let Some((prog, args)) = parts.split_first() {
@@ -201,7 +321,7 @@ impl DesktopItem for Wallpaper {
   }
 
   fn init_events(&self) -> Vec<EventFilter> {
-    vec![EventFilter::Named("config.reload".into())]
+    self.events()
   }
 
   fn update(
@@ -223,8 +343,14 @@ impl DesktopItem for Wallpaper {
           } else {
             *self = Wallpaper::new(conf);
           }
-          return Ok(ItemEffect::Redraw);
+          return Ok(ItemEffect::Subscribe(self.events()));
         }
+      }
+      ListenerAction::Frame => {
+        if self.is_loading() {
+          return Ok(ItemEffect::None);
+        }
+        return Ok(ItemEffect::Subscribe(self.events()));
       }
       _ => {}
     }
@@ -238,13 +364,13 @@ impl DesktopItem for Wallpaper {
     _id: iced_layershell::reexport::IcedId,
     monitor: &str,
   ) -> Element<'a, ItemMessage> {
-    let fallback = config.theme.base;
+    let fallback = config.palette().base;
     let path = self.paths.get(monitor).or(self.file.as_ref());
-    let handle = path.and_then(|p| self.cache.get(p));
+    let handle = path.and_then(|p| self.cache.lock().unwrap().get(p).cloned());
 
     if let Some(handle) = handle {
       container(
-        image(handle.clone())
+        image(handle)
           .content_fit(iced::ContentFit::Cover)
           .width(Length::Fill)
           .height(Length::Fill),
@@ -309,11 +435,13 @@ slowshell_registry::register_resources!(
       })))
     }
   })),
-  app: Item(|config, _| {
+  app: Item(|config, store| {
     if let Some(conf) = config.typed::<WallpaperConfig>() {
       let backend = conf.backend.as_deref().unwrap_or("slowshell");
       if backend != "slowshell" {
-        spawn_external_daemon(conf);
+        if store.borrow::<FdHandle>().is_some() {
+          spawn_external_daemon(conf);
+        }
         return Ok(vec![]);
       }
 

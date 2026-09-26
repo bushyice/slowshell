@@ -1,6 +1,6 @@
 use iced::{
   Element, Length,
-  widget::{column, container, text},
+  widget::{column, container},
 };
 use iced_layershell::reexport::IcedId;
 use slowshell_config::Config;
@@ -24,12 +24,8 @@ impl Renderable for SystemMonRenderable {
     data: &'a dyn std::any::Any,
   ) -> Element<'a, ItemMessage> {
     let data = data.downcast_ref::<PopupSettings>().unwrap();
-    let style = config.style("menu");
-    let theme = &config.theme;
 
-    let header = text("System Monitor")
-      .size(style.number("header.font.size").unwrap_or(15.0))
-      .color(style.color(theme, "color", theme.text));
+    let header = config.text("System Monitor", &["menu", "text-header"]);
 
     let options = SystemMonOptions {
       show_processes: true,
@@ -40,24 +36,19 @@ impl Renderable for SystemMonRenderable {
     let widget = render_system_mon_widget(config, store, options);
 
     let body = column![header, widget,]
-      .spacing(style.number("spacing").unwrap_or(14.0))
+      .spacing(config.sizing(&["menu"]).gap)
       .width(Length::Fixed(
-        style.number("list.large.width").unwrap_or(320.0),
+        config
+          .computed(&["menu", "list", "large"])
+          .length("list-large-width")
+          .unwrap_or(320.0),
       ));
 
-    let inner_padding = style.number("inner.padding").unwrap_or(8.0);
-    let mut popup_style = style.container_style(theme);
-    if let (Some(x), Some(y)) = (
-      style.number("shadow.offset.x"),
-      style.number("shadow.offset.y"),
-    ) {
-      popup_style.shadow.offset = iced::Vector::new(x, y);
-    }
+    let inner_padding = config.sizing(&["menu", "inner"]).padding();
+    let popup_style = config.container_cached(&["menu"]);
 
     SizedPopup::new(container(
-      container(body)
-        .padding(inner_padding)
-        .style(move |_| popup_style),
+      container(body).padding(inner_padding).style(popup_style),
     ))
     .with_width(280.)
     .with_backdrop(Backdrop::transparent().with_close_on_click(true))

@@ -1,10 +1,10 @@
 use crate::Renderable;
 use iced::{
   Alignment, Color, Element, Length,
-  widget::{Space, column, container, progress_bar, row, text},
+  widget::{Space, column, container, progress_bar, row},
 };
 use slowshell_commons::system::SharedSystemState;
-use slowshell_config::{Config, style::Style, style::Theme};
+use slowshell_config::Config;
 use slowshell_core::{Store, message::ItemMessage};
 
 #[derive(Debug, Clone, Copy)]
@@ -43,15 +43,13 @@ pub fn render_system_mon_widget<'a>(
   store: &Store,
   options: SystemMonOptions,
 ) -> Element<'a, ItemMessage> {
-  let style = config.style("menu");
-  let theme = &config.theme;
+  let theme = config.palette();
 
   let Some(shared) = store.borrow::<SharedSystemState>() else {
-    return container(
-      text("System monitor unavailable")
-        .size(style.number("status.font.size").unwrap_or(11.0))
-        .color(style.color(theme, "color.faded", theme.subtext)),
-    )
+    return container(config.text(
+      "System monitor unavailable",
+      &["menu", "text-status", "text-faded"],
+    ))
     .padding(12)
     .into();
   };
@@ -70,23 +68,21 @@ pub fn render_system_mon_widget<'a>(
   let mut children: Vec<Element<'a, ItemMessage>> = Vec::new();
 
   children.push(render_stat_bar(
+    config,
     "CPU",
     snap.cpu_usage,
     format!("{:.0}%", snap.cpu_usage),
-    style.color(theme, "color.primary", theme.primary),
-    &style,
-    theme,
+    theme.primary,
   ));
 
   let mem_gb_used = snap.mem_used as f64 / 1024.0 / 1024.0 / 1024.0;
   let mem_gb_total = snap.mem_total as f64 / 1024.0 / 1024.0 / 1024.0;
   children.push(render_stat_bar(
+    config,
     "Memory",
     snap.mem_usage,
     format!("{:.1} / {:.1} GB", mem_gb_used, mem_gb_total),
-    style.color(theme, "color.secondary", theme.yellow),
-    &style,
-    theme,
+    theme.yellow,
   ));
 
   let mut sub_info: Vec<Element<'a, ItemMessage>> = Vec::new();
@@ -94,33 +90,39 @@ pub fn render_system_mon_widget<'a>(
     && let Some(temp) = snap.temperature
   {
     sub_info.push(
-      text(format!("Temp: {:.0}°C", temp))
-        .size(style.number("status.font.size").unwrap_or(10.0))
-        .color(style.color(theme, "color.faded", theme.subtext))
+      config
+        .text(
+          format!("Temp: {:.0}°C", temp),
+          &["menu", "text-status", "text-faded"],
+        )
         .into(),
     );
   }
 
   sub_info.push(
-    text(format!(
-      "Load: {:.2}  {:.2}  {:.2}",
-      snap.load[0], snap.load[1], snap.load[2]
-    ))
-    .size(style.number("status.font.size").unwrap_or(11.0))
-    .color(style.color(theme, "color.faded", theme.subtext))
-    .into(),
+    config
+      .text(
+        format!(
+          "Load: {:.2}  {:.2}  {:.2}",
+          snap.load[0], snap.load[1], snap.load[2]
+        ),
+        &["menu", "text-status", "text-faded"],
+      )
+      .into(),
   );
 
   if snap.network_rx > 0 || snap.network_tx > 0 {
     sub_info.push(
-      text(format!(
-        "Net: ↓{}  ↑{}",
-        format_bytes(snap.network_rx),
-        format_bytes(snap.network_tx)
-      ))
-      .size(style.number("status.font.size").unwrap_or(11.0))
-      .color(style.color(theme, "color.faded", theme.subtext))
-      .into(),
+      config
+        .text(
+          format!(
+            "Net: ↓{}  ↑{}",
+            format_bytes(snap.network_rx),
+            format_bytes(snap.network_tx)
+          ),
+          &["menu", "text-status", "text-faded"],
+        )
+        .into(),
     );
   }
 
@@ -128,17 +130,11 @@ pub fn render_system_mon_widget<'a>(
 
   if options.show_processes && !snap.top_processes.is_empty() {
     let proc_header = row![
-      text("Process")
-        .size(style.number("status.font.size").unwrap_or(10.0))
-        .color(style.color(theme, "color.faded", theme.subtext)),
+      config.text("Process", &["menu", "text-status", "text-faded"]),
       Space::new().width(Length::Fill),
-      text("Memory")
-        .size(style.number("status.font.size").unwrap_or(10.0))
-        .color(style.color(theme, "color.faded", theme.subtext)),
+      config.text("Memory", &["menu", "text-status", "text-faded"]),
       Space::new().width(12),
-      text("CPU%")
-        .size(style.number("status.font.size").unwrap_or(10.0))
-        .color(style.color(theme, "color.faded", theme.subtext)),
+      config.text("CPU%", &["menu", "text-status", "text-faded"]),
     ]
     .align_y(Alignment::Center);
 
@@ -146,78 +142,51 @@ pub fn render_system_mon_widget<'a>(
 
     let mut proc_rows = Vec::new();
     for p in snap.top_processes.iter().take(options.max_processes) {
-      let name = if p.name.chars().count() > 14 {
-        format!("{}…", p.name.chars().take(13).collect::<String>())
-      } else {
-        p.name.clone()
-      };
-
-      let mem_mb = p.memory as f64 / 1024.0 / 1024.0;
-      let mem_text = if mem_mb >= 1024.0 {
-        format!("{:.1}G", mem_mb / 1024.0)
-      } else {
-        format!("{:.0}M", mem_mb)
-      };
-
       let r = row![
-        text(name)
-          .size(style.number("name.font.size").unwrap_or(11.0))
-          .color(style.color(theme, "color", theme.text)),
+        config.text(p.name_display.clone(), &["menu", "text-name"]),
         Space::new().width(Length::Fill),
-        text(mem_text)
-          .size(style.number("status.font.size").unwrap_or(10.0))
-          .color(style.color(theme, "color.faded", theme.subtext)),
+        config.text(
+          p.memory_display.clone(),
+          &["menu", "text-status", "text-faded"]
+        ),
         Space::new().width(12),
-        text(format!("{:.0}%", p.cpu_usage))
-          .size(style.number("status.font.size").unwrap_or(10.0))
-          .color(style.color(theme, "color.primary", theme.primary)),
+        config.text(
+          p.cpu_display.clone(),
+          &["menu", "text-status", "text-primary"]
+        ),
       ]
       .align_y(Alignment::Center);
 
-      let bg = style.color(theme, "row.background", Color::TRANSPARENT);
-      let row_radius = style.number("row.radius").unwrap_or(4.0);
-
-      proc_rows.push(
+      proc_rows.push(crate::hover_row(
+        config,
+        &["menu", "row"],
         container(r)
-          .padding(style.padding([2.0, 6.0]))
-          .width(Length::Fill)
-          .style(move |_| container::Style {
-            background: Some(bg.into()),
-            border: iced::Border {
-              radius: row_radius.into(),
-              ..Default::default()
-            },
-            ..Default::default()
-          })
-          .into(),
-      );
+          .padding(config.sizing(&["menu", "row"]).padding())
+          .width(Length::Fill),
+      ));
     }
 
     children.push(column(proc_rows).spacing(3).width(Length::Fill).into());
   }
 
   column(children)
-    .spacing(style.number("spacing").unwrap_or(8.0))
+    .spacing(config.sizing(&["menu"]).gap)
     .width(Length::Fill)
     .into()
 }
 
 fn render_stat_bar<'a>(
+  config: &'a Config,
   label: &'static str,
   percent: f32,
   val_text: String,
   accent_color: Color,
-  style: &Style,
-  theme: &'a Theme,
 ) -> Element<'a, ItemMessage> {
+  let theme = config.palette();
   let header = row![
-    text(label)
-      .size(style.number("name.font.size").unwrap_or(13.0))
-      .color(theme.text),
+    config.text(label, &["menu", "text-name"]),
     Space::new().width(Length::Fill),
-    text(val_text)
-      .size(style.number("status.font.size").unwrap_or(11.0))
-      .color(theme.subtext),
+    config.text(val_text, &["menu", "text-status", "text-faded"]),
   ]
   .align_y(Alignment::Center);
 

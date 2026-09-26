@@ -30,6 +30,7 @@ use slowshell_commons::{
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
+  commands::CommandEntry,
   listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
   types::{PayloadBox, ToUstr, Ustr},
@@ -66,9 +67,9 @@ pub trait Component: Send {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    store: &Store,
+    &'a self,
+    config: &'a Config,
+    store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage>;
@@ -129,11 +130,11 @@ pub struct ComponentContext<'a> {
 }
 
 impl<'a> ComponentContext<'a> {
-  pub fn resolve_style(&self, config: &slowshell_config::Config) -> slowshell_config::style::Style {
+  pub fn classes(&self) -> &'static [&'static str] {
     if self.orientation == PanelOrientation::Horizontal {
-      config.style("component")
+      &["component"]
     } else {
-      config.style_any(&["component.vertical", "component"])
+      &["component", "vertical"]
     }
   }
 }
@@ -205,18 +206,17 @@ pub fn fill_cross<'a, Message: 'a>(
 }
 
 pub fn spaced_component<'a>(
-  config: &Config,
+  config: &'a Config,
   ctx: &ComponentContext,
   content: Element<'a, ItemMessage>,
   hoverable: bool,
 ) -> Element<'a, ItemMessage> {
-  let style = config.style("item");
-  let spacing = style.number("spacing").unwrap_or(4.0);
-  let [y, x] = style.padding([4.0, 8.0]);
+  let item = config.sizing(&["item"]);
+  let spacing = item.gap;
   let padding = if ctx.orientation == PanelOrientation::Vertical {
-    [spacing / 2., x]
+    [spacing / 2., item.pad_h]
   } else {
-    [y, spacing / 2.]
+    [item.pad_v, spacing / 2.]
   };
 
   let body = iced::widget::container(fill_cross(content, ctx.orientation)).padding(padding);
@@ -225,10 +225,13 @@ pub fn spaced_component<'a>(
     return body.into();
   }
 
-  let component_style = ctx.resolve_style(config);
-  let radius = component_style.number("hover.radius").unwrap_or(4.0);
+  let component_style = config.computed(ctx.classes());
+  let radius = component_style.length("hover-radius").unwrap_or(4.0);
 
-  match component_style.get_color(&config.theme, "hover.background") {
+  match component_style
+    .color("hover-background")
+    .map(|c| c.to_iced())
+  {
     Some(color) => HoverBackground::new(body, color, radius).into(),
     None => body.into(),
   }
@@ -237,7 +240,7 @@ pub fn spaced_component<'a>(
 pub fn menu_trigger<'a>(
   content: Element<'a, ItemMessage>,
   config: MenuConfig,
-  app_config: &Config,
+  app_config: &'a Config,
   ctx: &ComponentContext,
   wrapper: bool,
 ) -> Element<'a, ItemMessage> {
@@ -353,64 +356,23 @@ pub fn register_all(components: &mut Components) {
 }
 
 slowshell_registry::register_resources!(
-  component: Style(
-    slowshell_config::style! {
-      "color" => "text",
-      "color.faded" => "subtext",
-      "color.invert" => "base",
-      "color.primary" => "primary",
-      "font.size" => 12,
-      "icon.size" => 14,
-      "spacing" => 5,
-      "padding.x" => 9,
-      "padding.y" => 5,
-      "hover.background" => "primary",
-      "hover.background.opacity" => 0.18,
-      "hover.radius" => 4,
-    }
-  ),
+  component: Style(include_str!("./styles/components.icss").to_string()),
   app: Custom(|store| {
     slowshell_commons::desktop::DesktopEntries::initialize_unless(store);
   }),
+  audio: Command(
+    CommandEntry::payload("audio.toggle_mute").title("Toggle Mute"),
+  ),
+  audio: Command(
+    CommandEntry::payload("audio.play_pause").title("Play / Pause"),
+  ),
+  audio: Command(
+    CommandEntry::payload("audio.next").title("Next Track"),
+  ),
+  audio: Command(
+    CommandEntry::payload("audio.previous").title("Previous Track"),
+  ),
 );
-
-pub fn register_vertical_style() {
-  slowshell_config::style::new_default_style(
-    "component.vertical".into(),
-    slowshell_config::style! {
-      "color" => "text",
-      "color.faded" => "subtext",
-      "color.invert" => "base",
-      "color.primary" => "primary",
-      "font.size" => 15,
-      "icon.size" => 18,
-      "spacing" => 8,
-      "padding.x" => 5,
-      "padding.y" => 4,
-      "hover.background" => "primary",
-      "hover.background.opacity" => 0.18,
-      "hover.radius" => 4,
-    },
-  );
-}
-
-pub fn register_windows_style() {
-  slowshell_config::style::new_default_style(
-    "windows".into(),
-    slowshell_config::style! {
-      "color" => "text",
-      "color.faded" => "subtext",
-      "color.active" => "primary",
-      "background.active" => "primary/0.18",
-      "font.size" => 11,
-      "icon.size" => 22,
-      "spacing" => 3,
-      "radius" => 6,
-      "padding.x" => 4,
-      "padding.y" => 2,
-    },
-  );
-}
 
 #[cfg(test)]
 mod tests {

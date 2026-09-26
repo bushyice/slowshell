@@ -16,10 +16,10 @@ pub fn search_applications(query: &str, store: &Store) -> Vec<SpotlightItem> {
   let mut scored_matches: Vec<(u32, SpotlightItem)> = Vec::new();
 
   for app in apps.iter() {
-    let name_lower = app.name.to_lowercase();
+    let name_lower = &app.name_lower;
     let score = if q.is_empty() {
       Some(100)
-    } else if name_lower == q {
+    } else if name_lower == &q {
       Some(0)
     } else if name_lower.starts_with(&q) {
       Some(10)
@@ -30,16 +30,12 @@ pub fn search_applications(query: &str, store: &Store) -> Vec<SpotlightItem> {
       Some(20)
     } else if name_lower.contains(&q) {
       Some(30)
-    } else if app.keywords.iter().any(|kw| kw.to_lowercase().contains(&q)) {
+    } else if app.keywords_lower.iter().any(|kw| kw.contains(&q)) {
       Some(40)
-    } else if app.exec.to_lowercase().contains(&q) {
+    } else if app.exec_lower.contains(&q) {
       Some(50)
-    } else if let Some(ref c) = app.comment {
-      if c.to_lowercase().contains(&q) {
-        Some(60)
-      } else {
-        None
-      }
+    } else if let Some(c) = &app.comment_lower {
+      if c.contains(&q) { Some(60) } else { None }
     } else {
       None
     };

@@ -2,14 +2,14 @@ use std::collections::HashMap;
 
 use iced::{
   Alignment, Element, Length,
-  widget::{Space, column, container, row, text},
+  widget::{Space, column, container, row},
 };
 use slowshell_commons::panels::PanelOrientation;
 use slowshell_compositor::CompositorStore;
 use slowshell_config::{Config, Value};
 use slowshell_core::{
   Store,
-  listeners::ListenerAction,
+  listeners::{CompositorEvent, ListenerAction},
   message::{EventFilter, ItemMessage},
 };
 use slowshell_widgets::{Animated, clickable};
@@ -34,7 +34,9 @@ impl Default for Workspaces {
 
 impl Component for Workspaces {
   fn events(&self) -> Vec<slowshell_core::message::EventFilter> {
-    vec![EventFilter::UpdateCompositor]
+    vec![EventFilter::Compositor(
+      CompositorEvent::WORKSPACES | CompositorEvent::MONITORS,
+    )]
   }
 
   fn watch(&mut self, _store: &mut Store, options: Option<&ComponentOptions>) {
@@ -46,9 +48,9 @@ impl Component for Workspaces {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    store: &Store,
+    &'a self,
+    config: &'a Config,
+    store: &'a Store,
     ctx: &ComponentContext,
     _options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
@@ -59,40 +61,15 @@ impl Component for Workspaces {
 
     let show_text = if vertical { false } else { self.show_text };
 
-    let style = config.style("workspaces");
+    let style = config.computed(&["workspaces"]);
+    let size = config.sizing(&["workspaces"]);
 
-    let font_size = style.number("font.size").unwrap_or(12.);
+    let active_width = style.length("width-active").unwrap_or(24.0);
+    let inactive_width = style.length("width-inactive").unwrap_or(20.0);
+    let spacing = size.gap;
 
-    let spacing = style.number("spacing").unwrap_or(4.);
-
-    let active_width = style.number("width.active").unwrap_or(24.0);
-
-    let inactive_width = style.number("width.inactive").unwrap_or(20.0);
-
-    let color =
-      config
-        .style("component")
-        .color(&config.theme, "color.primary", config.theme.primary);
-
-    let color_inactive = config
-      .style("component")
-      .color(&config.theme, "text", config.theme.text);
-
-    let text_color =
-      config
-        .style("component")
-        .color(&config.theme, "color.invert", config.theme.text);
-
-    let text_color_inactive =
-      config
-        .style("component")
-        .color(&config.theme, "color.invert", config.theme.text);
-
-    let radius = style.number("radius").unwrap_or(999.0);
-    let border_width = style.number("border.width").unwrap_or(0.0);
-    let border_color = style.color(&config.theme, "border.color", config.theme.overlay);
     let horizontal = ctx.orientation == PanelOrientation::Horizontal;
-    let padding = style.padding([0., 4.]);
+    let padding = size.padding();
 
     let workspaces: Vec<Element<'a, ItemMessage>> = state
       .workspaces
@@ -119,18 +96,18 @@ impl Component for Workspaces {
           .map(|s| s.to_string())
           .unwrap_or(workspace.name.clone().unwrap_or(workspace.idx.to_string()));
 
-        let background = if active { color } else { color_inactive };
-        let text_color = if active {
-          text_color
+        let active_classes: &'static [&'static str] = if active {
+          &["workspaces", "active"]
         } else {
-          text_color_inactive
+          &["workspaces", "inactive"]
         };
 
         let widget = Animated::new(width, move |width| {
           let width = *width;
 
           let content: Element<'_, ItemMessage> = if show_text {
-            container(text(label.clone()).color(text_color).size(font_size))
+            let label = config.text(label.clone(), active_classes);
+            container(label)
               .padding(padding)
               .align_x(Alignment::Center)
               .align_y(Alignment::Center)
@@ -143,15 +120,7 @@ impl Component for Workspaces {
           };
 
           container(content)
-            .style(move |_t: &iced::Theme| container::Style {
-              background: Some(background.into()),
-              border: iced::Border {
-                radius: radius.into(),
-                width: border_width,
-                color: border_color,
-              },
-              ..Default::default()
-            })
+            .style(config.container_cached(active_classes))
             .into()
         })
         .animates_layout(true);

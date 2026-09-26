@@ -2,13 +2,13 @@ use std::time::Instant;
 
 use iced::{
   Alignment, Color, Element, Length,
-  widget::{Space, column, container, row, scrollable, text, text_input},
+  widget::{Space, column, container, row, scrollable, text_input},
 };
 use iced_layershell::reexport::IcedId;
 use slowshell_commons::notifications::{
   NotificationItem, NotificationPayload, SharedNotificationState, reply_action_key,
 };
-use slowshell_config::{Config, style::Style, style::Theme};
+use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
@@ -16,7 +16,9 @@ use slowshell_core::{
   types::{PayloadBox, ToUstr},
 };
 use slowshell_popups::PopupSettings;
-use slowshell_widgets::{Backdrop, Icon, Renderable, SizedPopup, clickable, notification_icon};
+use slowshell_widgets::{
+  Backdrop, Icon, Renderable, SizedPopup, clickable, hover_row, notification_icon,
+};
 
 pub struct NotificationsRenderable;
 
@@ -88,24 +90,21 @@ impl Renderable for NotificationsRenderable {
     data: &'a dyn std::any::Any,
   ) -> Element<'a, ItemMessage> {
     let data = data.downcast_ref::<PopupSettings>().unwrap();
-    let style = config.style("menu");
-    let theme = &config.theme;
 
     let mut children: Vec<Element<'a, ItemMessage>> = Vec::new();
 
     if let Some(shared) = store.borrow::<SharedNotificationState>() {
       let is_dnd = shared.dnd.load(std::sync::atomic::Ordering::Relaxed);
-      let (history, replies) = {
+      let (state, replies) = {
         let mut state = shared.state.lock().unwrap();
-        state.unread_count = 0;
-        let history = state.history.clone();
-        let replies = shared.ui.lock().unwrap().replies.clone();
-        (history, replies)
+        std::sync::Arc::make_mut(&mut state).unread_count = 0;
+        let replies = shared.ui.lock().unwrap().clone();
+        (state.clone(), replies)
       };
+      let history = &state.history;
 
       children.push(render_header(
-        &style,
-        theme,
+        config,
         id,
         is_dnd,
         history.is_empty(),
@@ -114,57 +113,48 @@ impl Renderable for NotificationsRenderable {
 
       if history.is_empty() {
         children.push(
-          container(
-            text("No notifications")
-              .size(style.number("name.font.size").unwrap_or(13.0))
-              .color(style.color(theme, "color.faded", theme.subtext)),
-          )
-          .padding(16)
-          .align_x(Alignment::Center)
-          .width(Length::Fill)
-          .into(),
+          container(config.text("No notifications", &["menu", "text-name", "text-faded"]))
+            .padding(16)
+            .align_x(Alignment::Center)
+            .width(Length::Fill)
+            .into(),
         );
       } else {
         let mut notif_items = Vec::new();
-        for item in history {
-          let reply = replies.get(&item.id).cloned().unwrap_or_default();
-          notif_items.push(render_notification_item(&item, reply, &style, theme, id));
+        for item in history.iter() {
+          let reply = replies.replies.get(&item.id).cloned().unwrap_or_default();
+          notif_items.push(render_notification_item(config, item, reply, id));
         }
 
         children.push(
-          scrollable(column(notif_items).spacing(style.number("list.spacing").unwrap_or(6.0)))
+          scrollable(column(notif_items).spacing(config.sizing(&["menu", "list"]).gap))
             .height(Length::Fixed(400.))
             .into(),
         );
       }
     } else {
       children.push(
-        text("Notifications service unavailable")
-          .size(style.number("status.font.size").unwrap_or(11.0))
-          .color(style.color(theme, "color.faded", theme.subtext))
+        config
+          .text(
+            "Notifications service unavailable",
+            &["menu", "text-status", "text-faded"],
+          )
           .into(),
       );
     }
 
-    let list_spacing = style.number("list.spacing").unwrap_or(6.0);
-    let list_width = style.number("list.width").unwrap_or(280.0);
+    let list_style = config.computed(&["menu", "list"]);
+    let list_spacing = config.sizing(&["menu", "list"]).gap;
+    let list_width = list_style.length("list-width").unwrap_or(220.0);
     let list = column(children)
       .spacing(list_spacing)
       .width(Length::Fixed(list_width));
 
-    let inner_padding = style.number("inner.padding").unwrap_or(6.0);
-    let mut popup_style = style.container_style(theme);
-    if let (Some(x), Some(y)) = (
-      style.number("shadow.offset.x"),
-      style.number("shadow.offset.y"),
-    ) {
-      popup_style.shadow.offset = iced::Vector::new(x, y);
-    }
+    let inner_padding = config.sizing(&["menu", "inner"]).padding();
+    let popup_style = config.container_cached(&["menu"]);
 
     SizedPopup::new(container(
-      container(list)
-        .padding(inner_padding)
-        .style(move |_| popup_style),
+      container(list).padding(inner_padding).style(popup_style),
     ))
     .with_width(120.)
     .with_backdrop(Backdrop::transparent().with_close_on_click(true))
@@ -177,41 +167,27 @@ impl Renderable for NotificationsRenderable {
 }
 
 fn render_header<'a>(
-  style: &Style,
-  theme: &Theme,
+  config: &'a Config,
   id: IcedId,
   is_dnd: bool,
   is_empty: bool,
   count: usize,
 ) -> Element<'a, ItemMessage> {
-  let title = text("Notifications")
-    .size(style.number("header.font.size").unwrap_or(17.0))
-    .color(style.color(theme, "color", theme.text));
+  let title = config.text("Notifications", &["menu", "text-header"]);
 
   let count_badge = if count == 0 {
     return row![
       title,
       Space::new().width(Length::Fill),
-      dnd_and_clear_buttons(style, theme, id, is_dnd, is_empty)
+      dnd_and_clear_buttons(config, id, is_dnd, is_empty)
     ]
     .align_y(Alignment::Center)
     .into();
   } else {
-    let bg_col = style.color(theme, "row.background", theme.mantle);
-    let badge = container(
-      text(format!("{count}"))
-        .size(style.number("status.font.size").unwrap_or(11.0))
-        .color(style.color(theme, "color.primary", theme.primary)),
-    )
-    .padding([2.0, 8.0])
-    .style(move |_| container::Style {
-      background: Some(bg_col.into()),
-      border: iced::Border {
-        radius: 8.0.into(),
-        ..Default::default()
-      },
-      ..Default::default()
-    });
+    let badge =
+      container(config.text(format!("{count}"), &["menu", "text-status", "text-primary"]))
+        .padding(config.sizing(&["menu", "badge"]).padding())
+        .style(config.container_cached(&["menu", "badge"]));
 
     row![title, badge].spacing(8).align_y(Alignment::Center)
   };
@@ -219,30 +195,27 @@ fn render_header<'a>(
   row![
     count_badge,
     Space::new().width(Length::Fill),
-    dnd_and_clear_buttons(style, theme, id, is_dnd, is_empty)
+    dnd_and_clear_buttons(config, id, is_dnd, is_empty)
   ]
   .align_y(Alignment::Center)
   .into()
 }
 
 fn dnd_and_clear_buttons<'a>(
-  style: &Style,
-  theme: &Theme,
+  config: &'a Config,
   id: IcedId,
   is_dnd: bool,
   is_empty: bool,
 ) -> Element<'a, ItemMessage> {
+  let theme = config.palette();
+
   let dnd_icon_name = if is_dnd {
     "notifications-disabled-symbolic"
   } else {
     "notification-symbolic"
   };
 
-  let dnd_color = if is_dnd {
-    style.color(theme, "color.primary", theme.primary)
-  } else {
-    style.color(theme, "color.faded", theme.subtext)
-  };
+  let dnd_color = if is_dnd { theme.primary } else { theme.subtext };
 
   let dnd_icon: Element<'a, ItemMessage> =
     Icon::new(dnd_icon_name).size(14).color(dnd_color).into();
@@ -251,11 +224,7 @@ fn dnd_and_clear_buttons<'a>(
     Some(NotifAction::ToggleDnd.message(id))
   });
 
-  let clear_color = if is_empty {
-    style.color(theme, "color.faded", theme.subtext)
-  } else {
-    style.color(theme, "color", theme.text)
-  };
+  let clear_color = if is_empty { theme.subtext } else { theme.text };
 
   let clear_icon: Element<'a, ItemMessage> = Icon::new("edit-clear-all-symbolic")
     .size(14)
@@ -285,37 +254,50 @@ fn relative_time(created: Instant) -> String {
 }
 
 fn render_notification_item<'a>(
+  config: &'a Config,
   item: &NotificationItem,
   reply: String,
-  style: &Style,
-  theme: &Theme,
   id: IcedId,
 ) -> Element<'a, ItemMessage> {
+  let theme = config.palette();
+
+  let icon_size = config
+    .computed(&["menu", "icon"])
+    .length("icon-size")
+    .unwrap_or(16.0) as u16;
+
   let app_icon: Element<'a, ItemMessage> = notification_icon(
     item.image.as_ref(),
     item.app_icon.as_deref(),
-    style.number("icon.size").unwrap_or(13.0) as u16,
-    style.color(theme, "color.faded", theme.subtext),
+    icon_size,
+    theme.subtext,
   );
 
-  let app_font = style.number("app.font.size").unwrap_or(11.0);
   let mut top_row_items: Vec<Element<'a, ItemMessage>> = vec![
     app_icon,
     Space::new().width(6).into(),
-    text(item.app_name.clone())
-      .size(app_font)
-      .color(style.color(theme, "color.faded", theme.subtext))
+    config
+      .text(
+        item.app_name.clone(),
+        &["menu", "text-status", "text-faded"],
+      )
       .into(),
     Space::new().width(Length::Fill).into(),
   ];
   if item.urgency >= 2 {
-    let critical = style.color(theme, "urgency.color", Color::from_rgb(0.9, 0.3, 0.3));
-    top_row_items.push(text("●").size(10).color(critical).into());
+    top_row_items.push(
+      config
+        .text("●", &["menu", "text-status"])
+        .color(Color::from_rgb(0.9, 0.3, 0.3))
+        .into(),
+    );
   }
   top_row_items.push(
-    text(relative_time(item.created_at))
-      .size(style.number("app.font.size").unwrap_or(10.0))
-      .color(style.color(theme, "color.faded", theme.subtext))
+    config
+      .text(
+        relative_time(item.created_at),
+        &["menu", "text-status", "text-faded"],
+      )
       .into(),
   );
   top_row_items.push(Space::new().width(8).into());
@@ -324,20 +306,16 @@ fn render_notification_item<'a>(
   let notif_id = item.id;
   let close_icon: Element<'a, ItemMessage> = Icon::new("window-close-symbolic")
     .size(12)
-    .color(style.color(theme, "color.faded", theme.subtext))
+    .color(theme.subtext)
     .into();
 
   let close_btn = clickable(close_icon, move |_, _, _| {
     Some(NotifAction::Dismiss(notif_id).message(id))
   });
 
-  let summary = text(item.summary.clone())
-    .size(style.number("name.font.size").unwrap_or(14.0))
-    .color(style.color(theme, "color", theme.text));
+  let summary = config.text(item.summary.clone(), &["menu", "text-name"]);
 
-  let body = text(item.body.clone())
-    .size(style.number("status.font.size").unwrap_or(12.0))
-    .color(style.color(theme, "color.faded", theme.subtext));
+  let body = config.text(item.body.clone(), &["menu", "text-status", "text-faded"]);
 
   let mut content_items: Vec<Element<'a, ItemMessage>> = vec![
     row![top_row, close_btn].align_y(Alignment::Center).into(),
@@ -347,13 +325,14 @@ fn render_notification_item<'a>(
 
   let reply_key = reply_action_key(item);
 
-  if let Some(actions) = render_action_buttons(item, reply_key.as_deref(), style, theme, id) {
+  if let Some(actions) = render_action_buttons(config, item, reply_key.as_deref(), id) {
     content_items.push(actions);
   }
 
   if let Some(reply_key) = reply_key {
+    let input_size = config.sizing(&["menu", "text-status"]).font_size;
     let input = text_input("Reply…", &reply)
-      .size(style.number("status.font.size").unwrap_or(12.0))
+      .size(input_size)
       .width(Length::Fill)
       .padding(6)
       .on_input(move |value| NotifAction::SetReply(notif_id, value).message(id))
@@ -361,7 +340,7 @@ fn render_notification_item<'a>(
 
     let submit_icon: Element<'a, ItemMessage> = Icon::new("mail-send-symbolic")
       .size(12)
-      .color(style.color(theme, "color.faded", theme.subtext))
+      .color(theme.subtext)
       .into();
     let submit_btn = clickable(submit_icon, move |_, _, _| {
       Some(NotifAction::Reply(notif_id, reply_key.clone(), reply.clone()).message(id))
@@ -374,31 +353,21 @@ fn render_notification_item<'a>(
     );
   }
 
-  let bg = style.color(theme, "row.background", Color::TRANSPARENT);
-  let row_radius = style.number("row.radius").unwrap_or(10.0);
-
-  container(column(content_items).spacing(6))
-    .padding(style.padding([10.0, 12.0]))
-    .width(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(bg.into()),
-      border: iced::Border {
-        radius: row_radius.into(),
-        ..Default::default()
-      },
-      ..Default::default()
-    })
-    .into()
+  hover_row(
+    config,
+    &["menu", "row"],
+    container(column(content_items).spacing(6))
+      .padding(config.sizing(&["menu", "row"]).padding())
+      .width(Length::Fill),
+  )
 }
 
 fn render_action_buttons<'a>(
+  config: &'a Config,
   item: &NotificationItem,
   reply_key: Option<&str>,
-  style: &Style,
-  theme: &Theme,
   id: IcedId,
 ) -> Option<Element<'a, ItemMessage>> {
-  let button_font = style.number("status.font.size").unwrap_or(11.0);
   let mut buttons: Vec<Element<'a, ItemMessage>> = Vec::new();
   let from_plugin = item.plugin.is_some();
 
@@ -410,25 +379,16 @@ fn render_action_buttons<'a>(
     let notif_id = item.id;
     let key = key.clone();
     let label = label.clone();
-    let bg = style.color(theme, "row.background", theme.mantle);
 
-    let pill = container(
-      text(label)
-        .size(button_font)
-        .color(style.color(theme, "color", theme.text)),
-    )
-    .padding([4.0, 10.0])
-    .style(move |_| container::Style {
-      background: Some(bg.into()),
-      border: iced::Border {
-        radius: 10.0.into(),
-        ..Default::default()
-      },
-      ..Default::default()
-    });
+    let pill = hover_row(
+      config,
+      &["menu", "chip"],
+      container(config.text(label, &["menu", "text-status"]))
+        .padding(config.sizing(&["menu", "chip"]).padding()),
+    );
 
     buttons.push(
-      clickable(pill.into(), move |_, _, _| {
+      clickable(pill, move |_, _, _| {
         Some(if from_plugin {
           ItemMessage::EffectAction(
             id,

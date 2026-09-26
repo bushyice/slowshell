@@ -8,7 +8,7 @@ use iced_anim::{Animated as AnimatedValue, Easing};
 
 use iced::{
   Alignment, Element, Length,
-  widget::{Space, column, container, mouse_area, row, space, text},
+  widget::{Space, column, container, mouse_area, row, space},
 };
 use iced_layershell::reexport::{
   Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
@@ -24,6 +24,7 @@ use slowshell_config::{
 };
 use slowshell_core::{
   Store,
+  commands::CommandEntry,
   listeners::ListenerAction,
   types::{OptionalPayloadBox, PayloadBox, PayloadBuilder, ToUstr, Ustr, Void},
 };
@@ -451,6 +452,7 @@ pub struct PanelSections {
 pub struct Panel {
   cached_id: Ustr,
   event_prefix: String,
+  base_events: Vec<EventFilter>,
   name: Ustr,
   position: Position,
   height: u32,
@@ -473,9 +475,20 @@ impl Panel {
     let name = name.into();
     let cached_id = format!("panel/{}", name.to_lowercase().replace(' ', "-")).to_ustr();
     let event_prefix = format!("panel.{}", name.to_lowercase().replace(' ', "-"));
+    let base_events = vec![
+      EventFilter::Payload(format!("{event_prefix}.add").into()),
+      EventFilter::Payload(format!("{event_prefix}.remove").into()),
+      EventFilter::Payload(format!("{event_prefix}.configure").into()),
+      EventFilter::Named(format!("{event_prefix}.destroy").into()),
+      EventFilter::Named(format!("{event_prefix}.hide").into()),
+      EventFilter::Named(format!("{event_prefix}.show").into()),
+      EventFilter::Named(format!("{event_prefix}.toggle").into()),
+      EventFilter::Named("config.reload".into()),
+    ];
     Self {
       cached_id,
       event_prefix,
+      base_events,
       name,
       position,
       height: 32,
@@ -516,7 +529,6 @@ impl Panel {
 
   pub fn with_autohide(mut self, autohide: bool) -> Self {
     self.autohide = autohide;
-    // Autohide panels launch collapsed, so the first hover animates outwards.
     self.autohide_current = if autohide { 1.0 } else { 0.0 };
     self.autohide_target = self.autohide_current;
     self
@@ -1034,62 +1046,31 @@ impl Panel {
   }
 
   fn create_item<'a>(
-    config: &Config,
-    store: &Store,
+    config: &'a Config,
+    store: &'a Store,
     ctx: &ComponentContext,
     item: &'a PanelItem,
-    style: &slowshell_config::style::Style,
   ) -> Element<'a, ItemMessage> {
-    let theme = &config.theme;
-    let font_size = style.number("font.size").unwrap_or(13.0);
-    let color = style.color(&theme, "color", theme.text);
-
     match &item.component {
-      Some(comp) => container(comp.view(config, store, ctx, item.options.as_ref()))
-        // .style(|_| container::Style {
-        //   background: Some(iced::Color::from_rgb(1.0, 1.0, 0.5).into()),
-        //   ..Default::default()
-        // })
-        .into(),
+      Some(comp) => container(comp.view(config, store, ctx, item.options.as_ref())).into(),
       None => spaced_component(
         config,
         ctx,
-        text(&item.label).size(font_size).color(color).into(),
+        config.text(item.label.as_str(), &["item"]).into(),
         false,
       ),
     }
   }
 
   fn render_item<'a>(
-    config: &Config,
-    store: &Store,
+    config: &'a Config,
+    store: &'a Store,
     ctx: &ComponentContext,
     item: &'a PanelItemCell,
     horizontal: bool,
   ) -> Element<'a, ItemMessage> {
-    let style = config.style("item");
-    let theme = &config.theme;
-
-    let bg = style.color(&theme, "background", theme.mantle);
-    let prefix_bg = style.color(&theme, "prefix.background", theme.base);
-    let radius = style.number("radius").unwrap_or(4.0);
-    let prefix_radius = style.number("prefix.radius").unwrap_or(4.0);
-    let padding = style.padding([4.0, 8.0]);
-    // let spacing = style.number("spacing").unwrap_or(4.0);
-    let margin = style.number("margin").unwrap_or(4.0);
-
-    let border_width = style.number("border.width").unwrap_or(0.0);
-    let border_color = style.color(&theme, "border.color", theme.overlay);
-
-    let container_style = move |_t: &iced::Theme| container::Style {
-      background: Some(bg.into()),
-      border: iced::Border {
-        radius: radius.into(),
-        width: border_width,
-        color: border_color,
-      },
-      ..Default::default()
-    };
+    let item_size = config.sizing(&["item"]);
+    let margin = config.computed(&["item"]).length("margin").unwrap_or(4.0);
 
     let mut has_prefix: Option<Element<'a, ItemMessage>> = None;
 
@@ -1100,7 +1081,7 @@ impl Panel {
             return space().into();
           }
         }
-        Self::create_item(config, store, ctx, item, &style)
+        Self::create_item(config, store, ctx, item)
       }
 
       PanelItemCell::Group { items, prefix, .. } if item.has_items() => {
@@ -1108,7 +1089,7 @@ impl Panel {
           row(
             items
               .iter()
-              .map(|item| Self::create_item(config, store, ctx, item, &style)),
+              .map(|item| Self::create_item(config, store, ctx, item)),
           )
           .align_y(Alignment::Center)
           .width(if horizontal {
@@ -1127,7 +1108,7 @@ impl Panel {
           column(
             items
               .iter()
-              .map(|item| Self::create_item(config, store, ctx, item, &style)),
+              .map(|item| Self::create_item(config, store, ctx, item)),
           )
           .width(if horizontal {
             Length::Shrink
@@ -1145,45 +1126,49 @@ impl Panel {
         };
 
         if let Some(prefix) = prefix {
-          let bg = prefix
+          let highlight = prefix
             .options
             .as_ref()
             .and_then(|x| x.str("highlight"))
-            .and_then(|name| theme.color(name))
-            .unwrap_or(prefix_bg);
+            .and_then(|name| config.palette().color(name));
 
           let prefix_content: Element<'a, ItemMessage> =
-            Self::create_item(config, store, ctx, prefix, &style);
+            Self::create_item(config, store, ctx, prefix);
 
-          has_prefix = Some(
-            container(prefix_content)
+          let prefix_container = container(prefix_content)
+            .padding(if ctx.orientation == PanelOrientation::Vertical {
+              [item_size.pad_v / 2., 0.0]
+            } else {
+              [0.0, item_size.pad_h / 2.]
+            })
+            .width(if horizontal {
+              Length::Shrink
+            } else {
+              Length::Fill
+            })
+            .height(if horizontal {
+              Length::Fill
+            } else {
+              Length::Shrink
+            })
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
+
+          has_prefix = Some(match highlight {
+            Some(bg) => prefix_container
               .style(move |_t: &iced::Theme| container::Style {
                 background: Some(bg.into()),
                 border: iced::Border {
-                  radius: prefix_radius.into(),
+                  radius: 4.0.into(),
                   ..Default::default()
                 },
                 ..Default::default()
               })
-              .padding(if ctx.orientation == PanelOrientation::Vertical {
-                [padding[0] / 2., 0.0]
-              } else {
-                [0.0, padding[1] / 2.]
-              })
-              .width(if horizontal {
-                Length::Shrink
-              } else {
-                Length::Fill
-              })
-              .height(if horizontal {
-                Length::Fill
-              } else {
-                Length::Shrink
-              })
-              .align_x(Alignment::Center)
-              .align_y(Alignment::Center)
               .into(),
-          );
+            None => prefix_container
+              .style(config.container_cached(&["item"]))
+              .into(),
+          });
         };
 
         main
@@ -1198,9 +1183,9 @@ impl Panel {
           .height(Length::Fill)
           .align_y(Alignment::Center)
           .padding(if ctx.orientation == PanelOrientation::Vertical {
-            [padding[0] / 2., 0.0]
+            [item_size.pad_v / 2., 0.0]
           } else {
-            [0.0, padding[1] / 2.]
+            [0.0, item_size.pad_h / 2.]
           })
           .into()
       } else {
@@ -1208,23 +1193,23 @@ impl Panel {
           .width(Length::Fill)
           .align_x(Alignment::Center)
           .padding(if ctx.orientation == PanelOrientation::Vertical {
-            [padding[0] / 2., 0.0]
+            [item_size.pad_v / 2., 0.0]
           } else {
-            [0.0, padding[1] / 2.]
+            [0.0, item_size.pad_h / 2.]
           })
           .into()
       }
     } else {
       container(content)
         .padding(if ctx.orientation == PanelOrientation::Vertical {
-          [padding[0] / 2., 0.0]
+          [item_size.pad_v / 2., 0.0]
         } else {
-          [0.0, padding[1] / 2.]
+          [0.0, item_size.pad_h / 2.]
         })
         .into()
     };
 
-    let mut content = container(inner).style(container_style);
+    let mut content = container(inner).style(config.container_cached(&["item"]));
 
     if horizontal {
       content = content.height(Length::Fill).align_y(Alignment::Center);
@@ -1240,8 +1225,8 @@ impl Panel {
   }
 
   fn render_section<'a>(
-    config: &Config,
-    store: &Store,
+    config: &'a Config,
+    store: &'a Store,
     ctx: &ComponentContext,
     items: &'a [PanelItemCell],
     horizontal: bool,
@@ -1250,34 +1235,22 @@ impl Panel {
       return Space::new().into();
     }
 
+    let item_spacing = config.sizing(&["panel", "items"]).gap;
+
     let children: Vec<Element<'a, ItemMessage>> = items
       .iter()
       .map(|i| Self::render_item(config, store, ctx, i, horizontal))
       .collect();
 
     if horizontal {
-      row(children)
-        .spacing(config.style("panel").number("item.spacing").unwrap_or(4.0))
-        .into()
+      row(children).spacing(item_spacing).into()
     } else {
-      column(children)
-        .spacing(config.style("panel").number("item.spacing").unwrap_or(4.0))
-        .into()
+      column(children).spacing(item_spacing).into()
     }
   }
 
   fn all_events(&self) -> Vec<EventFilter> {
-    let prefix = self.event_prefix();
-    let mut events = vec![
-      EventFilter::Payload(format!("{}.add", prefix).into()),
-      EventFilter::Payload(format!("{}.remove", prefix).into()),
-      EventFilter::Payload(format!("{}.configure", prefix).into()),
-      EventFilter::Named(format!("{}.destroy", prefix).into()),
-      EventFilter::Named(format!("{}.hide", prefix).into()),
-      EventFilter::Named(format!("{}.show", prefix).into()),
-      EventFilter::Named(format!("{}.toggle", prefix).into()),
-      EventFilter::Named("config.reload".into()),
-    ];
+    let mut events = self.base_events.clone();
     if self.autohide_anim.is_some() {
       events.push(EventFilter::Frame);
     }
@@ -1637,8 +1610,6 @@ impl DesktopItem for Panel {
       self.position.is_horizontal(),
     );
 
-    let style = config.style("panel");
-
     let bar_content: Element<'_, ItemMessage> = if self.position.is_horizontal() {
       row![
         container(left).width(Length::Fill).align_left(Length::Fill),
@@ -1667,41 +1638,22 @@ impl DesktopItem for Panel {
       .into()
     };
 
-    let background = style.color(
-      &config.theme,
-      "background",
-      config
-        .theme
-        .overlay_opacity(style.number("background.opacity").unwrap_or(0.4)),
-    );
+    let panel_size = config.sizing(&["panel"]);
 
-    let pad = style.number("padding").unwrap_or(8.0);
-    let border_width = style.number("border.width").unwrap_or(0.0);
-    let border_color = style.color(&config.theme, "border.color", config.theme.overlay);
-    let bar = mouse_area(
-      container(bar_content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(if self.position.is_horizontal() {
-          [0.0, pad]
-        } else {
-          [pad, 0.0]
-        })
-        .style(move |_t: &iced::Theme| container::Style {
-          background: if self.transparent {
-            None
-          } else {
-            Some(background.into())
-          },
-          border: iced::Border {
-            width: border_width,
-            color: border_color,
-            ..Default::default()
-          },
-          ..container::Style::default()
-        }),
-    )
-    .interaction(iced::mouse::Interaction::None);
+    let mut bar_container = container(bar_content)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .padding(if self.position.is_horizontal() {
+        [0.0, panel_size.pad_h]
+      } else {
+        [panel_size.pad_v, 0.0]
+      });
+
+    if !self.transparent {
+      bar_container = bar_container.style(config.container_cached(&["panel"]));
+    }
+
+    let bar = mouse_area(bar_container).interaction(iced::mouse::Interaction::None);
 
     let bar = if self.autohide {
       let expanded = WindowSettings {
@@ -1946,31 +1898,12 @@ slowshell_registry::register_resources!(
     )
   }),
   panel: Style(
-    slowshell_config::style! {
-      "background" => "base",
-      "background.opacity" => 0.45,
-      "border.width" => 0,
-      "border.color" => "overlay",
-      "border.color.opacity" => 0.15,
-      "padding" => 8,
-      "spacing" => 4,
-      "item.spacing" => 4,
-    }
+    include_str!("./style.icss").into()
   ),
-  item: Style(
-    slowshell_config::style! {
-      "background" => "mantle",
-      "background.opacity" => 0.6,
-      "radius" => 4,
-      "border.width" => 0,
-      "border.color" => "overlay",
-      "border.color.opacity" => 0.15,
-      "padding.x" => 8,
-      "padding.y" => 4,
-      "margin" => 4,
-      "font.size" => 13,
-      "color" => "text",
-      "spacing" => 8.0,
-    }
+  command: Command(
+    CommandEntry::payload("popup.close").title("Close Popup")
+  ),
+  command: Command(
+    CommandEntry::payload("panel.create").title("Create Panel")
   ),
 );

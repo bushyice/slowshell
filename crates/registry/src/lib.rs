@@ -4,11 +4,12 @@ use std::{
 };
 
 use iced::Task;
-use slowshell_config::{
-  Config,
-  style::{Style, new_default_style},
+use slowshell_config::{Config, style::new_default_style};
+use slowshell_core::{
+  Store,
+  commands::{CommandEntry, register_default},
+  message::Message,
 };
-use slowshell_core::{Store, message::Message};
 use slowshell_desktop::{DeployableDesktopItem, DesktopItem, DesktopItems};
 use slowshell_widgets::Renderable;
 
@@ -28,7 +29,8 @@ pub enum ResourceRegistration {
   CustomConfig(fn(&Config, store: &mut Store)),
   CustomRegistry(fn(reg: &mut GlobalRegistry, store: &mut Store)),
   Unknown(Box<dyn Any + Send + Sync>),
-  Style(Style),
+  Style(String),
+  Command(CommandEntry),
 }
 
 impl ResourceRegistration {
@@ -114,8 +116,11 @@ pub struct GlobalRegistry {
 impl GlobalRegistry {
   pub fn include_in(&mut self, group: &'static str, res: ResourceRegistration) {
     match res {
-      ResourceRegistration::Style(style) => {
-        new_default_style(group.into(), style);
+      ResourceRegistration::Style(css) => {
+        new_default_style(css);
+      }
+      ResourceRegistration::Command(cmd) => {
+        register_default(cmd);
       }
       _ => self.items.entry(group).or_default().push(res),
     }
@@ -125,7 +130,6 @@ impl GlobalRegistry {
     self.items.remove(group).unwrap_or_default()
   }
 }
-
 #[macro_export]
 macro_rules! register_resources {
   (
@@ -140,12 +144,35 @@ macro_rules! register_resources {
       registry: &mut ::slowshell_registry::GlobalRegistry,
     ) {
       $(
-        registry.include_in(
-          stringify!($group),
-          ::slowshell_registry::ResourceRegistration::$kind $body,
-        );
+        $crate::__register_single_resource!($group, $kind, $body, registry);
       )*
     }
+  };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __register_single_resource {
+  (command, command, $body:tt, $registry:expr) => {
+    $registry.include_in(
+      stringify!(command),
+      ::slowshell_registry::ResourceRegistration::Command $body,
+    );
+  };
+
+  ($group:ident, command, $body:tt, $registry:expr) => {
+    #[cfg(feature = stringify!($group))]
+    $registry.include_in(
+      stringify!($group),
+      ::slowshell_registry::ResourceRegistration::Command $body,
+    );
+  };
+
+  ($group:ident, $kind:ident, $body:tt, $registry:expr) => {
+    $registry.include_in(
+      stringify!($group),
+      ::slowshell_registry::ResourceRegistration::$kind $body,
+    );
   };
 }
 

@@ -8,7 +8,7 @@ use std::{
 
 use iced::{
   Alignment, Element, Event, mouse,
-  widget::{container, row, text},
+  widget::{container, row},
 };
 use nix::{
   fcntl::{FcntlArg, OFlag, fcntl},
@@ -199,20 +199,36 @@ impl Component for Power {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = config.style("component");
-    let theme = &config.theme;
+    let style = config.computed(&["component"]);
+    let theme = config.palette();
 
-    let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(13.0);
-    let color = style.color(theme, "color", theme.text);
-    let faded = style.color(theme, "color.faded", theme.subtext);
-    let sec_color = style.color(theme, "color.secondary", theme.yellow);
+    let icon_size = style.length("icon-size").unwrap_or(14.0) as u16;
+    let color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
+    let faded = style
+      .color("color-faded")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.subtext);
+    let sec_color = style
+      .color("color-secondary")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.yellow);
+    let primary = style
+      .color("color-primary")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.primary);
+    let danger = style
+      .color("color-danger")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.red);
 
     let opt_battery = options.and_then(|o| o.bool("battery"));
     let opt_brightness = options.and_then(|o| o.bool("brightness"));
@@ -232,8 +248,8 @@ impl Component for Power {
       let b_icon = Icon::new(brightness_icon(data.brightness_percent))
         .size(icon_size)
         .color(sec_color);
-      let b_label = text(format!("{}%", data.brightness_percent))
-        .size(font_size)
+      let b_label = config
+        .text(format!("{}%", data.brightness_percent), &["component"])
         .color(color);
       row_items.push(b_icon.into());
       row_items.push(b_label.into());
@@ -242,13 +258,9 @@ impl Component for Power {
     if show_battery {
       let icon_name = battery_icon(data.charging, data.percent);
       let icon_color = if data.charging {
-        style.color(theme, "color.primary", theme.primary)
+        primary
       } else if let Some(p) = data.percent {
-        if p <= 20 {
-          style.color(theme, "color.danger", theme.red)
-        } else {
-          color
-        }
+        if p <= 20 { danger } else { color }
       } else {
         color
       };
@@ -258,7 +270,7 @@ impl Component for Power {
         .percent
         .map(|p| format!("{p}%"))
         .unwrap_or_else(|| "AC".into());
-      let bat_label = text(pct_str).size(font_size).color(faded);
+      let bat_label = config.text(pct_str, &["component"]).color(faded);
 
       row_items.push(bat_icon.into());
       row_items.push(bat_label.into());
@@ -268,7 +280,7 @@ impl Component for Power {
 
     let content = container(
       row(row_items)
-        .spacing(style.number("spacing").unwrap_or(4.0))
+        .spacing(config.sizing(&["component"]).gap)
         .align_y(Alignment::Center)
         .wrap(),
     );

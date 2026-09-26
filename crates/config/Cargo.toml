@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 slowshell-core = { path = "../core" }
 iced.workspace = true
+icss.workspace = true
 
 miette.workspace = true
 thiserror.workspace = true

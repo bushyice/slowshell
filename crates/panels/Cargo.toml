@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+icss.workspace = true
 iced.workspace = true
 iced_anim.workspace = true
 iced_layershell.workspace = true

@@ -84,8 +84,8 @@ pub mod close_reason {
 
 pub struct NotificationState {
   pub dnd: AtomicBool,
-  pub state: Mutex<NotificationStoreInner>,
-  pub ui: Mutex<NotificationUi>,
+  pub state: Mutex<Arc<NotificationStoreInner>>,
+  pub ui: Mutex<Arc<NotificationUi>>,
   pub revision: AtomicU64,
   pub cmd_tx: tokio::sync::mpsc::UnboundedSender<NotificationCmd>,
   pub notify_fd: AtomicI32,

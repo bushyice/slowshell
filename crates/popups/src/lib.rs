@@ -9,6 +9,7 @@ pub use slowshell_commons::{
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
+  commands::CommandEntry,
   listeners::ListenerAction,
   types::{PayloadBox, PayloadBuilder, ToUstr},
 };
@@ -132,7 +133,6 @@ impl DesktopItem for Popup {
         if available {
           self.current = Some(settings.clone());
 
-          // Let the renderable set itself up (timers, fds, ...).
           self.with_renderable(store, |renderable, store| {
             renderable.initialize(config, store);
           });
@@ -254,5 +254,8 @@ slowshell_registry::register_resources!(
     build: |_, args| {
       settings_from_payload(&args.as_map()).map(PayloadBox::new)
     }
-  }.into_boxed())
+  }.into_boxed()),
+  command: Command(
+    CommandEntry::payload("popup.close").title("Close Popup")
+  ),
 );

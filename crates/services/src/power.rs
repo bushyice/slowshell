@@ -1,4 +1,4 @@
-use std::{fs, os::fd::OwnedFd, time::Duration};
+use std::{fs, os::fd::OwnedFd, sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
 use slowshell_commons::power::{PowerCmd, PowerData, PowerProfile, SharedPowerState};
@@ -332,7 +332,7 @@ async fn refresh_all(
     || lock.time_remaining != new_data.time_remaining
     || lock.power_w != new_data.power_w;
 
-  *lock = new_data;
+  *lock = Arc::new(new_data);
   changed
 }
 

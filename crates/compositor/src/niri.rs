@@ -2,21 +2,22 @@ use std::{
   collections::HashMap,
   io::{BufRead, BufReader, Write},
   os::{fd::AsRawFd, unix::net::UnixStream},
+  time::{Duration, Instant},
 };
 
-use futures_channel::mpsc::UnboundedSender;
 use miette::{Context, IntoDiagnostic, Result};
 use niri_ipc::state::{EventStreamState, EventStreamStatePart};
 use nix::sys::epoll::EpollFlags;
 use slowshell_config::Config;
 use slowshell_core::{
   Monitor, Store, Window, Workspace,
-  listeners::{ListenerAction, Listeners},
-  message::Message,
+  listeners::{CompositorEvent, ListenerAction, Listeners},
   types::{Ustr, Void},
 };
 
 use crate::{Compositor, CompositorState};
+
+const GEOMETRY_TTL: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 pub struct NiriCompositor {
@@ -24,6 +25,8 @@ pub struct NiriCompositor {
   _state: EventStreamState,
   reader: Option<BufReader<UnixStream>>,
   cmd_socket: Option<niri_ipc::socket::Socket>,
+  geometry: HashMap<String, (u32, u32, f64)>,
+  geometry_updated_at: Option<Instant>,
 }
 
 impl Compositor for NiriCompositor {
@@ -136,7 +139,7 @@ impl Compositor for NiriCompositor {
 
     let fd = reader.get_ref().as_raw_fd();
     listeners.flag(fd, EpollFlags::EPOLLIN | EpollFlags::EPOLLET);
-    listeners.action(fd, ListenerAction::UpdateCompositor);
+    listeners.action(fd, ListenerAction::UpdateCompositor(CompositorEvent::ALL));
 
     self.reader = Some(reader);
     self.apply_compositor_state()?;
@@ -144,8 +147,52 @@ impl Compositor for NiriCompositor {
     Ok(Void)
   }
 
-  fn update_state(&mut self, _store: Option<&Store>, tx: UnboundedSender<Message>) -> Result<Void> {
-    self.update_state_inner(Some(tx))
+  fn update_state(&mut self, _store: Option<&Store>) -> Result<CompositorEvent> {
+    let reader = self
+      .reader
+      .as_mut()
+      .ok_or_else(|| miette::miette!("Stream not initialized"))?;
+
+    let mut line = String::new();
+    let mut changed = CompositorEvent::NONE;
+
+    loop {
+      line.clear();
+      match reader.read_line(&mut line) {
+        Ok(0) => {
+          // EOF: socket was closed by niri
+          self.reader = None;
+          return Err(miette::miette!("Niri stream closed (EOF)"));
+        }
+
+        Ok(_) => match serde_json::from_str::<niri_ipc::Event>(&line) {
+          Ok(event) => {
+            if !accepts(&self._state, &event) {
+              eprintln!("skipping niri event for unknown workspace: {event:?}");
+              continue;
+            }
+
+            changed |= event_mask(&event);
+            self._state.apply(event);
+          }
+          Err(e) => eprintln!("[compositor] failed to parse niri event ({e}): {line}"),
+        },
+
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+          break;
+        }
+
+        Err(e) => return Err(e).into_diagnostic(),
+      }
+    }
+
+    if changed.is_empty() {
+      return Ok(CompositorEvent::NONE);
+    }
+
+    self.apply_compositor_event(changed)?;
+
+    Ok(changed)
   }
 }
 
@@ -168,89 +215,41 @@ impl NiriCompositor {
     Ok(self.cmd_socket.as_mut().unwrap())
   }
 
-  #[inline]
-  fn update_state_inner(&mut self, tx: Option<UnboundedSender<Message>>) -> Result<Void> {
-    let reader = self
-      .reader
-      .as_mut()
-      .ok_or_else(|| miette::miette!("Stream not initialized"))?;
+  fn apply_compositor_event(&mut self, changed: CompositorEvent) -> Result<Void> {
+    let workspaces_changed = changed.contains(CompositorEvent::WORKSPACES);
+    let monitors_changed = changed.contains(CompositorEvent::MONITORS);
 
-    let mut line = String::new();
-    let mut dirty = false;
-
-    loop {
-      line.clear();
-      match reader.read_line(&mut line) {
-        Ok(0) => {
-          // EOF: socket was closed by niri
-          self.reader = None;
-          return Err(miette::miette!("Niri stream closed (EOF)"));
-        }
-
-        Ok(_) => {
-          if let Ok(event) = serde_json::from_str::<niri_ipc::Event>(&line) {
-            if match &event {
-              niri_ipc::Event::WorkspaceActivated { id, .. }
-              | niri_ipc::Event::WorkspaceActiveWindowChanged {
-                workspace_id: id, ..
-              } => self._state.workspaces.workspaces.contains_key(id),
-              _ => true,
-            } {
-              match (&event, &tx) {
-                (niri_ipc::Event::WorkspacesChanged { workspaces: _ }, Some(tx)) => {
-                  let _ = tx.unbounded_send(Message::UpdateMonitors);
-                }
-                // (niri_ipc::Event::WindowClosed { .. }, Some(tx)) => {
-                //   tx.unbounded_send(Message::FdUpdate(ListenerAction::Named(
-                //     "spotlight.toggle".into(),
-                //   )))?;
-                // }
-                // (_, Some(tx)) => tx.unbounded_send(Message::FdUpdate(ListenerAction::Named(
-                //   "notification.new".into(),
-                // )))?,
-                _ => {}
-              }
-              dirty = is_important(&event);
-              self._state.apply(event);
-            } else {
-              eprintln!("skipping niri event for unknown workspace: {event:?}");
-            }
-          }
-        }
-
-        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-          break;
-        }
-
-        Err(e) => return Err(e).into_diagnostic(),
-      }
+    if workspaces_changed {
+      self.apply_workspaces();
     }
 
-    if dirty {
-      self.apply_compositor_state()
-    } else {
-      Ok(Void)
+    if monitors_changed || self.geometry_is_stale() {
+      self.refresh_geometry();
     }
+
+    if workspaces_changed || monitors_changed {
+      self.apply_monitors();
+    }
+
+    if changed.contains(CompositorEvent::WINDOWS) {
+      self.apply_windows();
+    } else if changed.contains(CompositorEvent::FOCUS) {
+      self.apply_focus();
+    }
+
+    if changed.contains(CompositorEvent::OVERVIEW) {
+      self.state.overview_active = self._state.overview.is_open;
+    }
+
+    Ok(Void)
   }
 
   #[inline]
   fn apply_compositor_state(&mut self) -> Result<Void> {
-    let geometry = self.output_geometry();
+    self.apply_compositor_event(CompositorEvent::ALL)
+  }
 
-    self.state.active_window = self
-      ._state
-      .windows
-      .windows
-      .values()
-      .find(|w| w.is_focused)
-      .map(|w| Window {
-        id: w.id,
-        title: w.title.clone().unwrap_or_default(),
-        class: w.app_id.clone().unwrap_or_default(),
-        is_active: true,
-        metadata: Default::default(),
-      });
-
+  fn apply_windows(&mut self) {
     self.state.active_windows = self
       ._state
       .windows
@@ -268,9 +267,33 @@ impl NiriCompositor {
       .collect();
 
     self.state.active_windows.sort_unstable_by_key(|w| w.id);
+    self.apply_focus();
+  }
 
-    self.state.overview_active = self._state.overview.is_open;
+  fn apply_focus(&mut self) {
+    let focused = self
+      ._state
+      .windows
+      .windows
+      .values()
+      .find(|w| w.is_focused)
+      .map(|w| Window {
+        id: w.id,
+        title: w.title.clone().unwrap_or_default(),
+        class: w.app_id.clone().unwrap_or_default(),
+        is_active: true,
+        metadata: Default::default(),
+      });
 
+    let focused_id = focused.as_ref().map(|window| window.id);
+    for window in &mut self.state.active_windows {
+      window.is_active = Some(window.id) == focused_id;
+    }
+
+    self.state.active_window = focused;
+  }
+
+  fn apply_workspaces(&mut self) {
     self.state.workspaces = self
       ._state
       .workspaces
@@ -291,7 +314,9 @@ impl NiriCompositor {
       .state
       .workspaces
       .sort_unstable_by(|a, b| a.output.cmp(&b.output).then_with(|| a.idx.cmp(&b.idx)));
+  }
 
+  fn apply_monitors(&mut self) {
     self.state.monitors = self
       ._state
       .workspaces
@@ -301,7 +326,7 @@ impl NiriCompositor {
         if let Some(name) = &ws.output
           && ws.is_active
         {
-          let (width, height, scale) = geometry.get(name).copied().unwrap_or((0, 0, 1.0));
+          let (width, height, scale) = self.geometry.get(name).copied().unwrap_or((0, 0, 1.0));
           Some((
             Ustr::from(name),
             Monitor {
@@ -317,20 +342,28 @@ impl NiriCompositor {
         }
       })
       .collect();
-
-    Ok(Void)
   }
 
-  fn output_geometry(&mut self) -> HashMap<String, (u32, u32, f64)> {
+  fn geometry_is_stale(&self) -> bool {
+    self
+      .geometry_updated_at
+      .map_or(true, |updated| updated.elapsed() > GEOMETRY_TTL)
+  }
+
+  fn refresh_geometry(&mut self) {
+    if let Some(geometry) = self.query_output_geometry() {
+      self.geometry = geometry;
+      self.geometry_updated_at = Some(Instant::now());
+    }
+  }
+
+  fn query_output_geometry(&mut self) -> Option<HashMap<String, (u32, u32, f64)>> {
     let mut geometry = HashMap::new();
 
-    let Ok(socket) = self.get_or_connect_cmd_socket() else {
-      return geometry;
-    };
-
+    let socket = self.get_or_connect_cmd_socket().ok()?;
     let Ok(Ok(niri_ipc::Response::Outputs(outputs))) = socket.send(niri_ipc::Request::Outputs)
     else {
-      return geometry;
+      return None;
     };
 
     for (name, output) in outputs {
@@ -339,24 +372,90 @@ impl NiriCompositor {
       }
     }
 
-    geometry
+    Some(geometry)
   }
 }
 
-fn is_important(event: &niri_ipc::Event) -> bool {
+fn accepts(state: &EventStreamState, event: &niri_ipc::Event) -> bool {
+  match event {
+    niri_ipc::Event::WorkspaceActivated { id, .. }
+    | niri_ipc::Event::WorkspaceActiveWindowChanged {
+      workspace_id: id, ..
+    } => state.workspaces.workspaces.contains_key(id),
+    _ => true,
+  }
+}
+
+fn event_mask(event: &niri_ipc::Event) -> CompositorEvent {
   use niri_ipc::Event;
 
-  matches!(
-    event,
-    Event::WorkspacesChanged { .. }
-      | Event::WorkspaceUrgencyChanged { .. }
-      | Event::WorkspaceActivated { .. }
-      | Event::WorkspaceActiveWindowChanged { .. }
-      | Event::WindowsChanged { .. }
-      | Event::WindowOpenedOrChanged { .. }
-      | Event::WindowClosed { .. }
-      | Event::WindowFocusChanged { .. }
-      | Event::WindowUrgencyChanged { .. }
-      | Event::OverviewOpenedOrClosed { .. }
-  )
+  match event {
+    Event::WorkspacesChanged { .. } => CompositorEvent::WORKSPACES | CompositorEvent::MONITORS,
+    Event::WorkspaceUrgencyChanged { .. } | Event::WorkspaceActivated { .. } => {
+      CompositorEvent::WORKSPACES
+    }
+    Event::WorkspaceActiveWindowChanged { .. } => CompositorEvent::NONE,
+    Event::WindowsChanged { .. }
+    | Event::WindowOpenedOrChanged { .. }
+    | Event::WindowClosed { .. }
+    | Event::WindowFocusChanged { .. } => CompositorEvent::WINDOWS | CompositorEvent::FOCUS,
+    Event::OverviewOpenedOrClosed { .. } => CompositorEvent::OVERVIEW,
+    _ => CompositorEvent::NONE,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use niri_ipc::Event;
+
+  #[test]
+  fn event_masks_only_touch_affected_areas() {
+    assert_eq!(
+      event_mask(&Event::WorkspacesChanged {
+        workspaces: Vec::new()
+      }),
+      CompositorEvent::WORKSPACES | CompositorEvent::MONITORS
+    );
+    assert_eq!(
+      event_mask(&Event::WorkspaceActivated {
+        id: 1,
+        focused: true
+      }),
+      CompositorEvent::WORKSPACES
+    );
+    assert_eq!(
+      event_mask(&Event::WorkspaceActiveWindowChanged {
+        workspace_id: 1,
+        active_window_id: Some(2)
+      }),
+      CompositorEvent::NONE
+    );
+    assert_eq!(
+      event_mask(&Event::WindowsChanged {
+        windows: Vec::new()
+      }),
+      CompositorEvent::WINDOWS | CompositorEvent::FOCUS
+    );
+    assert_eq!(
+      event_mask(&Event::WindowFocusChanged { id: Some(1) }),
+      CompositorEvent::WINDOWS | CompositorEvent::FOCUS
+    );
+    assert_eq!(
+      event_mask(&Event::WindowClosed { id: 1 }),
+      CompositorEvent::WINDOWS | CompositorEvent::FOCUS
+    );
+    assert_eq!(
+      event_mask(&Event::OverviewOpenedOrClosed { is_open: true }),
+      CompositorEvent::OVERVIEW
+    );
+    assert_eq!(
+      event_mask(&Event::KeyboardLayoutSwitched { idx: 1 }),
+      CompositorEvent::NONE
+    );
+    assert_eq!(
+      event_mask(&Event::ConfigLoaded { failed: false }),
+      CompositorEvent::NONE
+    );
+  }
 }

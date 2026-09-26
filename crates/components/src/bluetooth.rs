@@ -241,16 +241,29 @@ impl Component for Bluetooth {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     _options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = config.style("component");
-    let theme = &config.theme;
+    let style = config.computed(&["component"]);
+    let theme = config.palette();
 
-    let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
+    let icon_size = style.length("icon-size").unwrap_or(14.0) as u16;
+
+    let text_color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
+    let faded = style
+      .color("color-faded")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.subtext);
+    let primary = style
+      .color("color-primary")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.primary);
 
     let powered = self.shared.powered.load(Ordering::Relaxed);
     let connected_count = {
@@ -261,11 +274,11 @@ impl Component for Bluetooth {
     let icon_name = bluetooth_icon(powered, connected_count);
 
     let color = if !powered {
-      style.color(theme, "color.faded", theme.subtext)
+      faded
     } else if connected_count > 0 {
-      style.color(theme, "color.primary", theme.primary)
+      primary
     } else {
-      style.color(theme, "color", theme.text)
+      text_color
     };
 
     let icon: Element<'a, ItemMessage> =

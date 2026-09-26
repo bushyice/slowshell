@@ -1,13 +1,10 @@
 [package]
-name = "slowshell-plugin-sdk"
+name = "slowshell-plugin-abi"
 version.workspace = true
 edition = "2024"
 
 [dependencies]
-slowshell-plugin = { path = "../plugin" }
+abi_stable = "0.11.3"
 kdl.workspace = true
 serde.workspace = true
 ron.workspace = true
-
-[features]
-test-host = []

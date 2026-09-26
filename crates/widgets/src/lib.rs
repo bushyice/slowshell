@@ -26,6 +26,37 @@ pub use animation::{
   HoverBackground, HoverTransition, Mode, Motion, SlideIn, Spring, Transition,
 };
 
+mod pseudo;
+pub use pseudo::HoverFlag;
+
+pub fn hover_row<'a>(
+  config: &Config,
+  classes: &[&str],
+  content: impl Into<Element<'a, ItemMessage>>,
+) -> Element<'a, ItemMessage> {
+  let style = config.computed(classes);
+  let radius = style.length("border-radius").unwrap_or(0.0);
+  let base = style.color("background-color").map(|c| c.to_iced());
+  let hover = style
+    .color("hover-background")
+    .map(|c| c.to_iced())
+    .unwrap_or(Color::TRANSPARENT);
+  let border_width = style.length("border-width").unwrap_or(0.0) as f32;
+  let border_color = style.color("border-color").map(|c| c.to_iced());
+
+  let mut widget = HoverBackground::new(content, hover, radius);
+
+  if let Some(base) = base {
+    widget = widget.with_base(base);
+  }
+
+  if border_width > 0.0 {
+    widget = widget.with_border(border_width, border_color.unwrap_or(Color::TRANSPARENT));
+  }
+
+  widget.into()
+}
+
 mod systemmon;
 pub use systemmon::{SystemMonOptions, SystemMonWidget, render_system_mon_widget};
 
@@ -136,7 +167,7 @@ pub fn sl_slider<'a>(
   value: f32,
   range: std::ops::RangeInclusive<f32>,
   disabled: bool,
-  style: &slowshell_config::style::Style,
+  style: &icss::theme::resolve::computed::ComputedStyle,
   theme: &slowshell_config::style::Theme,
 ) -> Element<'a, ItemMessage> {
   use iced::Length;
@@ -144,17 +175,32 @@ pub fn sl_slider<'a>(
   use iced::widget::slider;
   use slowshell_core::types::ToUstr;
 
-  let bg = style.color(theme, "background", theme.subtext);
-  let bg_rail = style.color(theme, "background.rail", theme.mantle);
-  let bg_rail_filled = style.color(theme, "background.rail.filled", theme.primary);
-  let border_color = style.color(theme, "border.color", Color::TRANSPARENT);
-  let border_width = style.number("border.width").unwrap_or(0.0);
-  let rail_width = style.number("rail.width").unwrap_or(4.0);
-  let rail_border_width = style.number("rail.border.width").unwrap_or(0.0);
-  let rail_border_radius = style.number("rail.border.radius").unwrap_or(2.0);
-  let rail_border_color = style.color(theme, "rail.border.color", Color::TRANSPARENT);
-  let shape = style.bool("rect");
-  let shape_size = style.number("slider.size").unwrap_or(7.0);
+  let bg = style
+    .color("background-color")
+    .map(|c| c.to_iced())
+    .unwrap_or(theme.subtext);
+  let bg_rail = style
+    .color("background-rail")
+    .map(|c| c.to_iced())
+    .unwrap_or(theme.mantle);
+  let bg_rail_filled = style
+    .color("background-rail-filled")
+    .map(|c| c.to_iced())
+    .unwrap_or(theme.primary);
+  let border_color = style
+    .color("border-color")
+    .map(|c| c.to_iced())
+    .unwrap_or(Color::TRANSPARENT);
+  let border_width = style.length("border-width").unwrap_or(0.0);
+  let rail_width = style.length("rail-width").unwrap_or(4.0);
+  let rail_border_width = style.length("rail-border-width").unwrap_or(0.0);
+  let rail_border_radius = style.length("rail-border-radius").unwrap_or(2.0);
+  let rail_border_color = style
+    .color("rail-border-color")
+    .map(|c| c.to_iced())
+    .unwrap_or(Color::TRANSPARENT);
+  let shape = style.keyword("rect") == Some("true");
+  let shape_size = style.length("slider-size").unwrap_or(7.0);
 
   let slider = slider(range, value, move |v| {
     ItemMessage::Action(ListenerAction::Payload {

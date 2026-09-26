@@ -25,6 +25,8 @@ pub struct EventLoop {
   rx: Receiver<FdCommand>,
   tx: UnboundedSender<Message>,
   oneshot_fds: HashSet<i32>,
+  removed_scratch: Vec<i32>,
+  unwatched_scratch: Vec<i32>,
 }
 
 impl EventLoop {
@@ -70,6 +72,8 @@ impl EventLoop {
         rx,
         tx,
         oneshot_fds: HashSet::new(),
+        removed_scratch: Vec::new(),
+        unwatched_scratch: Vec::new(),
       },
       wake_write,
     ))
@@ -83,7 +87,9 @@ impl EventLoop {
     let mut events = [EpollEvent::empty(); 16];
 
     loop {
-      for fd in self.listeners.removed_fds() {
+      self.removed_scratch.clear();
+      self.listeners.drain_removed_fds(&mut self.removed_scratch);
+      for &fd in &self.removed_scratch {
         let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
         let _ = self.epoll.delete(borrowed);
         if !self.listeners.is_paused(fd) {
@@ -93,7 +99,11 @@ impl EventLoop {
         }
       }
 
-      for fd in self.listeners.unwatched_fds() {
+      self.unwatched_scratch.clear();
+      self
+        .listeners
+        .drain_unwatched_fds(&mut self.unwatched_scratch);
+      for &fd in &self.unwatched_scratch {
         let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
         match self.epoll.add(
           borrowed,

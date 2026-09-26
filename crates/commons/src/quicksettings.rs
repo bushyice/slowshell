@@ -140,11 +140,7 @@ impl QuickSettingsRegistry {
       .flat_map(|provider| provider.tiles(config, store))
       .collect();
 
-    tiles.sort_by(|a, b| {
-      a.order
-        .cmp(&b.order)
-        .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
-    });
+    tiles.sort_by_cached_key(|tile| (tile.order, tile.title.to_lowercase()));
 
     tiles
   }

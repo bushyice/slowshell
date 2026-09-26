@@ -1,4 +1,4 @@
-use std::os::fd::OwnedFd;
+use std::{os::fd::OwnedFd, sync::Arc};
 
 use slowshell_commons::tray::{SharedTrayState, TrayCmd};
 
@@ -75,7 +75,7 @@ fn sync(client: &system_tray::client::Client, shared: &SharedTrayState, notify: 
 
   let mut state = shared.state.lock().unwrap();
   let mut menus = shared.menus.lock().unwrap();
-  state.items.clear();
+  let mut items = Vec::new();
   menus.clear();
   for (address, (item, menu)) in map.iter() {
     let pixmap = item.icon_pixmap.as_ref().and_then(|pm| {
@@ -84,7 +84,7 @@ fn sync(client: &system_tray::client::Client, shared: &SharedTrayState, notify: 
         .map(|p| (p.width as u32, p.height as u32, argb_to_rgba(&p.pixels)))
     });
     let title = item.title.clone().unwrap_or_else(|| item.id.clone());
-    state.items.push(slowshell_commons::tray::TrayItem {
+    items.push(slowshell_commons::tray::TrayItem {
       address: address.clone(),
       title,
       icon_name: item.icon_name.clone(),
@@ -92,9 +92,10 @@ fn sync(client: &system_tray::client::Client, shared: &SharedTrayState, notify: 
       menu_path: item.menu.clone(),
     });
     if let Some(menu) = menu {
-      menus.insert(address.clone(), menu.clone());
+      menus.insert(address.clone(), Arc::new(menu.clone()));
     }
   }
+  state.items = Arc::new(items);
   drop(map);
 
   shared.revision.fetch_add(1, Ordering::Relaxed);

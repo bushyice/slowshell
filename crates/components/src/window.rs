@@ -1,6 +1,6 @@
 use iced::{
   Element,
-  widget::{container, row, text, text::Wrapping},
+  widget::{container, row, text::Wrapping},
 };
 use slowshell_commons::desktop::DesktopEntries;
 use slowshell_commons::panels::PanelOrientation;
@@ -8,6 +8,7 @@ use slowshell_compositor::CompositorStore;
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
+  listeners::CompositorEvent,
   message::{EventFilter, ItemMessage},
 };
 use slowshell_widgets::{Icon, separator};
@@ -19,7 +20,9 @@ pub struct Window;
 
 impl Component for Window {
   fn events(&self) -> Vec<EventFilter> {
-    vec![EventFilter::UpdateCompositor]
+    vec![EventFilter::Compositor(
+      CompositorEvent::WINDOWS | CompositorEvent::FOCUS,
+    )]
   }
 
   fn check_view(&self, store: &Store, _options: Option<&ComponentOptions>) -> bool {
@@ -31,9 +34,9 @@ impl Component for Window {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    store: &Store,
+    &'a self,
+    config: &'a Config,
+    store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
@@ -47,12 +50,14 @@ impl Component for Window {
 
     let show_icon = options.and_then(|o| o.bool("icon")).unwrap_or(true);
 
-    let style = ctx.resolve_style(config);
-    let theme = &config.theme;
+    let style = config.computed(ctx.classes());
+    let theme = config.palette();
 
-    let font_size = style.number("font.size").unwrap_or(13.0);
-    let icon_size = style.number("icon.size").unwrap_or(14.0);
-    let color = style.color(&theme, "color", theme.text);
+    let icon_size = style.length("icon-size").unwrap_or(14.0);
+    let color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
     let name_width = options
       .and_then(|o| o.number("name-width"))
       .unwrap_or(180.0);
@@ -83,21 +88,19 @@ impl Component for Window {
     let title = window.title.clone();
 
     if show_name {
-      let name = text(
-        if let Some(name) = store
-          .borrow::<DesktopEntries>()
-          .map(|d| d.resolve_name(&class))
-        {
-          name.to_string()
-        } else {
-          class
-        },
-      )
-      .size(font_size)
-      .color(color)
-      .wrapping(Wrapping::None);
+      let name = if let Some(name) = store
+        .borrow::<DesktopEntries>()
+        .map(|d| d.resolve_name(&class))
+      {
+        name.to_string()
+      } else {
+        class
+      };
 
-      content = content.push(clipped(name, name_width));
+      content = content.push(clipped(
+        config.text(name, ctx.classes()).wrapping(Wrapping::None),
+        name_width,
+      ));
     }
 
     if show_title {
@@ -111,10 +114,7 @@ impl Component for Window {
         );
       }
       content = content.push(clipped(
-        text(title)
-          .size(font_size)
-          .color(color)
-          .wrapping(Wrapping::None),
+        config.text(title, ctx.classes()).wrapping(Wrapping::None),
         title_width,
       ));
     }

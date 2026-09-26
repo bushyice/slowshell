@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use crate::{listeners::IpcCommand, types::Ustr};
 
-use super::listeners::ListenerAction;
+use super::listeners::{CompositorEvent, ListenerAction};
 use iced_layershell::{
   reexport::{IcedId, NewLayerShellSettings, Task},
   to_layer_message,
@@ -11,6 +11,7 @@ use iced_layershell::{
 #[derive(Debug, Clone, Eq)]
 pub enum EventFilter {
   UpdateCompositor,
+  Compositor(CompositorEvent),
   Named(Ustr),
   Payload(Ustr),
   Ipc(IpcCommand),
@@ -24,6 +25,7 @@ impl PartialEq for EventFilter {
   fn eq(&self, other: &Self) -> bool {
     match (self, other) {
       (Self::UpdateCompositor, Self::UpdateCompositor) => true,
+      (Self::Compositor(a), Self::Compositor(b)) => a == b,
       (Self::Named(a), Self::Named(b)) => a == b,
       (Self::Payload(a), Self::Payload(b)) => a == b,
       (Self::Tick, Self::Tick) => true,
@@ -43,6 +45,9 @@ impl std::hash::Hash for EventFilter {
 
     match self {
       EventFilter::UpdateCompositor => {}
+      EventFilter::Compositor(events) => {
+        events.hash(state);
+      }
       EventFilter::Named(name) => {
         name.hash(state);
       }
@@ -63,7 +68,10 @@ impl std::hash::Hash for EventFilter {
 impl EventFilter {
   pub fn matches(&self, action: &ListenerAction) -> bool {
     match self {
-      EventFilter::UpdateCompositor => matches!(action, ListenerAction::UpdateCompositor),
+      EventFilter::UpdateCompositor => matches!(action, ListenerAction::UpdateCompositor(_)),
+      EventFilter::Compositor(events) => {
+        matches!(action, ListenerAction::UpdateCompositor(changed) if changed.intersects(*events))
+      }
       EventFilter::Named(name) => {
         matches!(
           action,
@@ -71,6 +79,9 @@ impl EventFilter {
             | ListenerAction::Timer { name: n, .. }
             | ListenerAction::Signal { name: n, .. }
             if n == name
+        ) || matches!(
+          action,
+          ListenerAction::Payload { name: n, payload: None } if n == name
         )
       }
       EventFilter::Payload(name) => {
@@ -90,8 +101,9 @@ impl EventFilter {
 impl From<EventFilter> for ListenerAction {
   fn from(val: EventFilter) -> Self {
     match val {
-      EventFilter::All => ListenerAction::UpdateCompositor,
-      EventFilter::UpdateCompositor => ListenerAction::UpdateCompositor,
+      EventFilter::All => ListenerAction::UpdateCompositor(CompositorEvent::ALL),
+      EventFilter::UpdateCompositor => ListenerAction::UpdateCompositor(CompositorEvent::ALL),
+      EventFilter::Compositor(events) => ListenerAction::UpdateCompositor(events),
       EventFilter::Tick => ListenerAction::None,
       EventFilter::Frame => ListenerAction::Frame,
       EventFilter::Named(n) => ListenerAction::Named(n),
@@ -111,7 +123,7 @@ impl Into<EventFilter> for &ListenerAction {
       ListenerAction::Named(n) => EventFilter::Named(n.clone()),
       ListenerAction::Timer { name, .. } => EventFilter::Named(name.clone()),
       ListenerAction::Signal { name, .. } => EventFilter::Named(name.clone()),
-      ListenerAction::UpdateCompositor => EventFilter::UpdateCompositor,
+      ListenerAction::UpdateCompositor(_) => EventFilter::UpdateCompositor,
       ListenerAction::Frame => EventFilter::Frame,
       ListenerAction::None => EventFilter::Tick,
       ListenerAction::StartUp => EventFilter::StartUp,
@@ -188,5 +200,65 @@ pub enum Message {
 impl Message {
   pub fn open_layer(settings: NewLayerShellSettings) -> (IcedId, Task<Message>) {
     Self::layershell_open(settings)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::listeners::{CompositorEvent, ListenerAction};
+
+  #[test]
+  fn compositor_event_masks_compose() {
+    let mut mask = CompositorEvent::NONE;
+    assert!(mask.is_empty());
+
+    mask.insert(CompositorEvent::WINDOWS);
+    mask |= CompositorEvent::FOCUS;
+    assert!(mask.contains(CompositorEvent::WINDOWS));
+    assert!(mask.contains(CompositorEvent::WINDOWS | CompositorEvent::FOCUS));
+    assert!(!mask.contains(CompositorEvent::WORKSPACES));
+    assert!(mask.intersects(CompositorEvent::FOCUS | CompositorEvent::MONITORS));
+    assert!(!mask.intersects(CompositorEvent::MONITORS));
+    assert!(CompositorEvent::ALL.contains(mask));
+  }
+
+  #[test]
+  fn compositor_filters_match_changed_areas() {
+    let any = EventFilter::UpdateCompositor;
+    let workspaces = EventFilter::Compositor(CompositorEvent::WORKSPACES);
+
+    assert!(any.matches(&ListenerAction::UpdateCompositor(CompositorEvent::FOCUS)));
+    assert!(workspaces.matches(&ListenerAction::UpdateCompositor(
+      CompositorEvent::WORKSPACES
+    )));
+    assert!(workspaces.matches(&ListenerAction::UpdateCompositor(
+      CompositorEvent::WORKSPACES | CompositorEvent::MONITORS
+    )));
+    assert!(!workspaces.matches(&ListenerAction::UpdateCompositor(CompositorEvent::MONITORS)));
+    assert!(!workspaces.matches(&ListenerAction::Named("other".into())));
+  }
+
+  #[test]
+  fn named_filters_match_payload_actions_without_a_payload() {
+    let bare = ListenerAction::Payload {
+      name: "fixture.toggle".into(),
+      payload: None,
+    };
+    let with_payload = ListenerAction::Payload {
+      name: "fixture.toggle".into(),
+      payload: Some(crate::types::PayloadBox::new("value")),
+    };
+
+    assert!(EventFilter::Named("fixture.toggle".into()).matches(&bare));
+    assert!(!EventFilter::Named("fixture.toggle".into()).matches(&with_payload));
+    assert!(!EventFilter::Named("other".into()).matches(&bare));
+  }
+
+  #[test]
+  fn compositor_actions_map_back_to_the_catch_all_filter() {
+    let action = ListenerAction::UpdateCompositor(CompositorEvent::ALL);
+    let filter: EventFilter = (&action).into();
+    assert_eq!(filter, EventFilter::UpdateCompositor);
   }
 }

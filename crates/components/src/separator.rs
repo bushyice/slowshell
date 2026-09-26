@@ -11,9 +11,9 @@ pub struct Separator;
 
 impl Component for Separator {
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
@@ -23,11 +23,11 @@ impl Component for Separator {
       .circle(options.and_then(|x| x.bool("circle")).unwrap_or(false))
       .size(options.and_then(|x| x.number("size")).unwrap_or(2.0))
       .opacity(options.and_then(|x| x.number("opacity")).unwrap_or(0.1))
-      .color(config.style("component").color(
-        &config.theme,
-        "color.faded",
-        Color::from_rgb(0., 0., 0.),
-      ))
+      .color(
+        config
+          .color(&["component"], "color-faded")
+          .unwrap_or(Color::from_rgb(0., 0., 0.)),
+      )
       .into();
 
     spaced_component(config, ctx, divider, false)

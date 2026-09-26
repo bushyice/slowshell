@@ -1,15 +1,21 @@
-use std::collections::{HashMap, hash_map::Entry};
+use std::{
+  borrow::Cow,
+  cell::RefCell,
+  collections::{HashMap, hash_map::Entry},
+  hash::{Hash, Hasher},
+  sync::Arc,
+};
 
 use iced::{
   Alignment, Element, mouse,
-  widget::{column, container, row, text},
+  widget::{column, container, row},
 };
 use slowshell_commons::{desktop::DesktopEntries, panels::PanelOrientation};
 use slowshell_compositor::CompositorStore;
 use slowshell_config::Config;
 use slowshell_core::{
   Store, Window,
-  listeners::ListenerAction,
+  listeners::{CompositorEvent, ListenerAction},
   message::{EventFilter, ItemEffect, ItemMessage},
   persistence,
   types::{PayloadBox, Ustr},
@@ -31,11 +37,16 @@ struct PinState {
 struct DockApp {
   class: String,
   title: String,
-  icon_names: Vec<String>,
+  icon_names: Vec<Cow<'static, str>>,
   windows: Vec<(u64, bool)>,
   active: bool,
   has_windows: bool,
   pinned: bool,
+}
+
+struct AppsCache {
+  key: u64,
+  apps: Arc<Vec<DockApp>>,
 }
 
 pub struct Windows {
@@ -44,6 +55,7 @@ pub struct Windows {
   title_length: usize,
   config_pinned: Vec<String>,
   pin_state: PinState,
+  apps_cache: RefCell<Option<AppsCache>>,
 }
 
 impl Default for Windows {
@@ -54,6 +66,7 @@ impl Default for Windows {
       title_length: 8,
       config_pinned: Vec::new(),
       pin_state: PinState::default(),
+      apps_cache: RefCell::new(None),
     }
   }
 }
@@ -61,7 +74,7 @@ impl Default for Windows {
 impl Component for Windows {
   fn events(&self) -> Vec<EventFilter> {
     vec![
-      EventFilter::UpdateCompositor,
+      EventFilter::Compositor(CompositorEvent::WINDOWS | CompositorEvent::FOCUS),
       EventFilter::Payload(PIN_ACTION.into()),
       EventFilter::Payload(LAUNCH_ACTION.into()),
     ]
@@ -120,13 +133,13 @@ impl Component for Windows {
       .and_then(|compositor| compositor.state().ok())
       .is_some_and(|state| !state.active_windows.is_empty());
 
-    has_windows || !self.pinned_classes().is_empty()
+    has_windows || self.has_pinned()
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    store: &Store,
+    &'a self,
+    config: &'a Config,
+    store: &'a Store,
     ctx: &ComponentContext,
     _options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
@@ -134,34 +147,26 @@ impl Component for Windows {
       return row![].into();
     };
 
-    let style = config.style("windows");
-    let theme = &config.theme;
+    let style = config.computed(&["windows"]);
+    let size = config.sizing(&["windows"]);
 
     let icon_size = self
       .icon_size
-      .unwrap_or_else(|| style.number("icon.size").unwrap_or(22.0)) as u16;
-    let font_size = style.number("font.size").unwrap_or(11.0);
-    let spacing = style.number("spacing").unwrap_or(3.0);
-    let radius = style.number("radius").unwrap_or(6.0);
-    let padding = style.padding([2.0, 4.0]);
-
-    let color = style.color(theme, "color", theme.text);
-    let faded = style.color(theme, "color.faded", theme.subtext);
-    let active_color = style.color(theme, "color.active", theme.primary);
-    let active_bg = style.color(theme, "background.active", theme.primary);
-    let bg = style.color(theme, "background", theme.crust);
+      .unwrap_or_else(|| style.length("icon-size").unwrap_or(22.0)) as u16;
+    let spacing = size.gap;
+    let padding = size.padding();
 
     let desktop = store.borrow::<DesktopEntries>();
-    let apps = self.build_apps(&state.active_windows, desktop);
+    let apps = self.build_apps_cached(&state.active_windows, desktop);
 
     let horizontal = ctx.orientation == PanelOrientation::Horizontal;
 
-    let separator_opacity = style.number("separator.opacity").unwrap_or(0.25);
+    let separator_opacity = 0.25;
 
     let mut items: Vec<Element<'a, ItemMessage>> = Vec::with_capacity(apps.len());
     let mut previous_pinned: Option<bool> = None;
 
-    for app in apps {
+    for app in apps.iter() {
       if matches!(previous_pinned, Some(true)) && !app.pinned {
         let sep: Element<'static, ItemMessage> = if horizontal {
           container(
@@ -188,20 +193,28 @@ impl Component for Windows {
       }
       previous_pinned = Some(app.pinned);
 
-      let icon = Icon::any(app.icon_names.iter().map(String::as_str)).size(icon_size);
+      let icon = Icon::any(app.icon_names.iter().map(Cow::as_ref)).size(icon_size);
       let symbolic = icon
         .resolved_name()
         .is_some_and(|name| name.contains("symbolic"));
-      let icon_color = if app.active {
-        active_color
+
+      let icon_classes: &[&str] = if app.active {
+        &["windows", "active"]
       } else if app.has_windows {
-        color
+        &["windows", "open"]
       } else {
-        faded
+        &["windows", "closed"]
       };
 
       let icon_el: Element<'a, ItemMessage> = if symbolic {
-        icon.color(icon_color).into_element()
+        let color = config
+          .computed(icon_classes)
+          .color("color")
+          .map(|c| c.to_iced());
+        match color {
+          Some(color) => icon.color(color).into_element(),
+          None => icon.into_element(),
+        }
       } else {
         icon.into_element()
       };
@@ -209,9 +222,7 @@ impl Component for Windows {
       let body: Element<'a, ItemMessage> = if self.show_titles {
         column![
           icon_el,
-          text(truncate_label(&app.title, self.title_length))
-            .size(font_size)
-            .color(icon_color),
+          config.text(truncate_label(&app.title, self.title_length), icon_classes),
         ]
         .spacing(1)
         .align_x(Alignment::Center)
@@ -220,24 +231,17 @@ impl Component for Windows {
         icon_el
       };
 
-      let background = if app.active {
-        Some(active_bg)
+      let item_classes: &'static [&'static str] = if app.active {
+        &["windows", "item", "active"]
       } else if app.has_windows {
-        Some(bg)
+        &["windows", "item", "open"]
       } else {
-        None
+        &["windows", "item"]
       };
 
       let button = container(body)
         .padding(padding)
-        .style(move |_theme: &iced::Theme| container::Style {
-          background: background.map(|color| color.into()),
-          border: iced::Border {
-            radius: radius.into(),
-            ..Default::default()
-          },
-          ..Default::default()
-        });
+        .style(config.container_cached(item_classes));
 
       let ids: Vec<u64> = app.windows.iter().map(|(id, _)| *id).collect();
       let active_idx = app.windows.iter().position(|(_, active)| *active);
@@ -293,6 +297,53 @@ impl Windows {
     let unpinned = self.pin_state.unpinned.iter().any(|pinned| pinned == class);
 
     (configured || pinned) && !unpinned
+  }
+
+  fn has_pinned(&self) -> bool {
+    self
+      .config_pinned
+      .iter()
+      .chain(self.pin_state.pinned.iter())
+      .any(|class| self.is_pinned(class))
+  }
+
+  fn build_apps_cached(
+    &self,
+    windows: &[Window],
+    desktop: Option<&DesktopEntries>,
+  ) -> Arc<Vec<DockApp>> {
+    let key = self.apps_key(windows, desktop);
+
+    if let Some(cache) = self.apps_cache.borrow().as_ref()
+      && cache.key == key
+    {
+      return Arc::clone(&cache.apps);
+    }
+
+    let apps = Arc::new(self.build_apps(windows, desktop));
+    *self.apps_cache.borrow_mut() = Some(AppsCache {
+      key,
+      apps: Arc::clone(&apps),
+    });
+    apps
+  }
+
+  fn apps_key(&self, windows: &[Window], desktop: Option<&DesktopEntries>) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    windows.len().hash(&mut hasher);
+    for window in windows {
+      window.id.hash(&mut hasher);
+      window.class.hash(&mut hasher);
+      window.is_active.hash(&mut hasher);
+    }
+    self.config_pinned.hash(&mut hasher);
+    self.pin_state.pinned.hash(&mut hasher);
+    self.pin_state.unpinned.hash(&mut hasher);
+    desktop.is_some().hash(&mut hasher);
+    if desktop.is_some() {
+      DesktopEntries::global_version().hash(&mut hasher);
+    }
+    hasher.finish()
   }
 
   fn pinned_classes(&self) -> Vec<String> {
@@ -360,17 +411,14 @@ impl Windows {
           .filter(|name| !name.is_empty())
           .unwrap_or_else(|| class.clone());
 
-        let mut icon_names = vec![class.clone(), title.to_lowercase()];
-        icon_names.extend(
-          [
-            "window",
-            "application-x-executable",
-            "window-symbolic",
-            "application-x-executable-symbolic",
-          ]
-          .into_iter()
-          .map(String::from),
-        );
+        let mut icon_names: Vec<Cow<'static, str>> =
+          vec![Cow::Owned(class.clone()), Cow::Owned(title.to_lowercase())];
+        icon_names.extend([
+          Cow::Borrowed("window"),
+          Cow::Borrowed("application-x-executable"),
+          Cow::Borrowed("window-symbolic"),
+          Cow::Borrowed("application-x-executable-symbolic"),
+        ]);
 
         DockApp {
           pinned: self.is_pinned(&class),

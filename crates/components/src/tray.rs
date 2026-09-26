@@ -9,7 +9,7 @@ use std::{
 
 use iced::{
   Color, Element, Length,
-  widget::{Row, container, image, text},
+  widget::{Row, container, image},
 };
 use nix::{
   fcntl::{FcntlArg, OFlag, fcntl},
@@ -50,7 +50,7 @@ fn global() -> &'static GlobalTray {
         revision: AtomicU64::new(0),
         selected: Mutex::new(None),
         menus: Mutex::new(HashMap::new()),
-        nav: Mutex::new(Vec::new()),
+        nav: Mutex::new(Arc::new(Vec::new())),
         cmd_tx,
       }),
       rx: Mutex::new(Some(cmd_rx)),
@@ -170,31 +170,33 @@ impl Component for SystemTray {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = config.style("component");
-    let color = style.color(&config.theme, "color", config.theme.text);
-    let icon_size = style.number("icon.size").unwrap_or(16.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(12.0);
+    let style = config.computed(&["component"]);
+    let color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(config.palette().text);
+    let icon_size = style.length("icon-size").unwrap_or(16.0) as u16;
     let spacing = options
       .and_then(|o| o.number("spacing"))
-      .unwrap_or(style.number("spacing").unwrap_or(4.0));
+      .unwrap_or_else(|| config.sizing(&["component"]).gap);
 
     let items = global().shared.state.lock().unwrap().items.clone();
 
     let mut tray = Row::<ItemMessage>::new().spacing(spacing);
     if items.is_empty() {
-      tray = tray.push(text("󰓄").size(font_size).color(color));
+      tray = tray.push(config.text("󰓄", &["component"]).color(color));
     }
 
     let shared = global().shared.clone();
     let position = ctx.position;
-    for item in items {
-      if let Some(el) = render_item(&item, icon_size, color) {
+    for item in items.iter() {
+      if let Some(el) = render_item(item, icon_size, color) {
         let shared = shared.clone();
         let address = item.address.clone();
         let menu_path = item.menu_path.clone();

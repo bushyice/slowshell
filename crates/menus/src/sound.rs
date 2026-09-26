@@ -1,10 +1,10 @@
 use iced::{
-  Alignment, Color, Element, Length,
-  widget::{Space, column, container, row, slider, text},
+  Alignment, Element, Length,
+  widget::{Space, column, container, row, slider},
 };
 use iced_layershell::reexport::IcedId;
 use slowshell_commons::audio::{AudioSink, MprisPlayer, SharedAudioState, volume_icon};
-use slowshell_config::{Config, style::Style, style::Theme};
+use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
@@ -12,7 +12,7 @@ use slowshell_core::{
   types::{PayloadBox, ToUstr},
 };
 use slowshell_popups::PopupSettings;
-use slowshell_widgets::{Backdrop, Icon, Renderable, SizedPopup, clickable};
+use slowshell_widgets::{Backdrop, Icon, Renderable, SizedPopup, clickable, hover_row};
 
 pub struct SoundRenderable;
 
@@ -59,35 +59,27 @@ impl Renderable for SoundRenderable {
     data: &'a dyn std::any::Any,
   ) -> Element<'a, ItemMessage> {
     let data = data.downcast_ref::<PopupSettings>().unwrap();
-    let style = config.style("menu");
-    let theme = &config.theme;
 
     let mut children: Vec<Element<'a, ItemMessage>> = Vec::new();
 
     if let Some(shared) = store.borrow::<SharedAudioState>() {
-      let (vol, muted, sinks) = {
-        let state = shared.state.lock().unwrap();
-        (state.volume, state.muted, state.sinks.clone())
-      };
+      let state = shared.state.lock().unwrap().clone();
+      let player = shared.player.lock().unwrap().clone();
 
-      let player = {
-        let p = shared.player.lock().unwrap();
-        p.clone()
-      };
+      let (vol, muted) = (state.volume, state.muted);
 
-      children.push(render_header(&style, theme, id, vol, muted));
-      children.push(render_volume_slider(vol, muted, id, &style, theme));
+      children.push(render_header(config, id, vol, muted));
+      children.push(render_volume_slider(config, vol, muted, id));
 
       if let Some(player) = player {
         if !player.title.is_empty() {
-          children.push(render_mpris_card(&player, &style, theme, id));
+          children.push(render_mpris_card(config, &player, id));
         } else {
           children.push(
-            container(
-              text("Nothing playing right now")
-                .size(style.number("status.font.size").unwrap_or(12.0))
-                .color(style.color(theme, "color.faded", theme.subtext)),
-            )
+            container(config.text(
+              "Nothing playing right now",
+              &["menu", "text-status", "text-faded"],
+            ))
             .padding(14)
             .align_x(Alignment::Center)
             .width(Length::Fill)
@@ -96,46 +88,37 @@ impl Renderable for SoundRenderable {
         }
       }
 
-      if !sinks.is_empty() {
+      if !state.sinks.is_empty() {
         children.push(
-          text("Output Device")
-            .size(style.number("status.font.size").unwrap_or(11.0))
-            .color(style.color(theme, "color.faded", theme.subtext))
+          config
+            .text("Output Device", &["menu", "text-status", "text-faded"])
             .into(),
         );
 
-        for sink in sinks {
-          children.push(render_sink(&sink, &style, theme, id));
+        for sink in state.sinks.iter() {
+          children.push(render_sink(config, sink, id));
         }
       }
     } else {
       children.push(
-        text("Audio unavailable")
-          .size(style.number("status.font.size").unwrap_or(11.0))
-          .color(style.color(theme, "color.faded", theme.subtext))
+        config
+          .text("Audio unavailable", &["menu", "text-status", "text-faded"])
           .into(),
       );
     }
 
-    let list_spacing = style.number("list.spacing").unwrap_or(6.0);
-    let list_width = style.number("list.width").unwrap_or(240.0);
+    let list_style = config.computed(&["menu", "list"]);
+    let list_spacing = config.sizing(&["menu", "list"]).gap;
+    let list_width = list_style.length("list-width").unwrap_or(220.0);
     let list = column(children)
       .spacing(list_spacing)
       .width(Length::Fixed(list_width));
 
-    let inner_padding = style.number("inner.padding").unwrap_or(6.0);
-    let mut popup_style = style.container_style(theme);
-    if let (Some(x), Some(y)) = (
-      style.number("shadow.offset.x"),
-      style.number("shadow.offset.y"),
-    ) {
-      popup_style.shadow.offset = iced::Vector::new(x, y);
-    }
+    let inner_padding = config.sizing(&["menu", "inner"]).padding();
+    let popup_style = config.container_cached(&["menu"]);
 
     SizedPopup::new(container(
-      container(list)
-        .padding(inner_padding)
-        .style(move |_| popup_style),
+      container(list).padding(inner_padding).style(popup_style),
     ))
     .with_width(120.)
     .with_backdrop(Backdrop::transparent().with_close_on_click(true))
@@ -148,22 +131,17 @@ impl Renderable for SoundRenderable {
 }
 
 fn render_header<'a>(
-  style: &Style,
-  theme: &Theme,
+  config: &'a Config,
   id: IcedId,
   vol: f32,
   muted: bool,
 ) -> Element<'a, ItemMessage> {
-  let color = style.color(theme, "color", theme.text);
+  let theme = config.palette();
   let icon_name = volume_icon(vol, muted);
 
   let mute_icon: Element<'a, ItemMessage> = Icon::new(icon_name)
     .size(16)
-    .color(if muted {
-      style.color(theme, "color.faded", theme.subtext)
-    } else {
-      style.color(theme, "color.primary", theme.primary)
-    })
+    .color(if muted { theme.subtext } else { theme.primary })
     .into();
 
   let mute_btn = clickable(mute_icon, move |_, _, _| {
@@ -171,13 +149,11 @@ fn render_header<'a>(
   });
 
   let pct_str = format!("{}%", (vol * 100.0).round() as u32);
-  let vol_text = text(pct_str)
-    .size(style.number("header.font.size").unwrap_or(14.0))
-    .color(color);
+  let vol_text = config.text(pct_str, &["menu", "text-header"]);
 
   let minus_icon: Element<'a, ItemMessage> = Icon::new("list-remove-symbolic")
     .size(12)
-    .color(style.color(theme, "color.faded", theme.subtext))
+    .color(theme.subtext)
     .into();
   let minus_btn = clickable(minus_icon, move |_, _, _| {
     Some(SoundAction::StepVolume(-0.05).message(id))
@@ -185,16 +161,14 @@ fn render_header<'a>(
 
   let plus_icon: Element<'a, ItemMessage> = Icon::new("list-add-symbolic")
     .size(12)
-    .color(style.color(theme, "color.faded", theme.subtext))
+    .color(theme.subtext)
     .into();
   let plus_btn = clickable(plus_icon, move |_, _, _| {
     Some(SoundAction::StepVolume(0.05).message(id))
   });
 
   row![
-    text("Sound")
-      .size(style.number("header.font.size").unwrap_or(15.0))
-      .color(color),
+    config.text("Sound", &["menu", "text-header"]),
     Space::new().width(Length::Fill),
     mute_btn,
     Space::new().width(8),
@@ -209,20 +183,16 @@ fn render_header<'a>(
 }
 
 fn render_volume_slider<'a>(
+  config: &'a Config,
   vol: f32,
   muted: bool,
   id: IcedId,
-  style: &Style,
-  theme: &Theme,
 ) -> Element<'a, ItemMessage> {
-  let bar_color = if muted {
-    style.color(theme, "color.faded", theme.subtext)
-  } else {
-    style.color(theme, "color.primary", theme.primary)
-  };
+  let theme = config.palette();
+  let bar_color = if muted { theme.subtext } else { theme.primary };
   let track_bg = theme.mantle;
-  let handle_color = style.color(theme, "color", theme.text);
-  let handle_border = style.color(theme, "color.border", theme.overlay);
+  let handle_color = theme.text;
+  let handle_border = theme.overlay;
 
   let slider = slider(0.0..=1.5, vol, move |v| {
     SoundAction::SetVolume(v).message(id)
@@ -248,32 +218,32 @@ fn render_volume_slider<'a>(
 
   container(slider)
     .width(Length::Fill)
-    .padding(style.padding([2.0, 0.0]))
+    .padding(config.sizing(&["menu"]).padding())
     .into()
 }
 
 fn render_mpris_card<'a>(
+  config: &'a Config,
   player: &MprisPlayer,
-  style: &Style,
-  theme: &Theme,
   id: IcedId,
 ) -> Element<'a, ItemMessage> {
-  let title = text(player.title.clone())
-    .size(style.number("font.size").unwrap_or(13.0))
-    .color(style.color(theme, "color", theme.text));
+  let theme = config.palette();
 
-  let artist = text(if !player.artist.is_empty() {
-    player.artist.clone()
-  } else {
-    player.identity.clone()
-  })
-  .size(style.number("status.font.size").unwrap_or(12.0))
-  .color(style.color(theme, "color.faded", theme.subtext));
+  let title = config.text(player.title.clone(), &["menu", "text-body"]);
+
+  let artist = config.text(
+    if !player.artist.is_empty() {
+      player.artist.clone()
+    } else {
+      player.identity.clone()
+    },
+    &["menu", "text-status", "text-faded"],
+  );
 
   let prev_color = if player.can_go_previous {
-    style.color(theme, "color", theme.text)
+    theme.text
   } else {
-    style.color(theme, "color.faded", theme.subtext)
+    theme.subtext
   };
   let prev_icon: Element<'a, ItemMessage> = Icon::new("media-skip-backward-symbolic")
     .size(14)
@@ -290,16 +260,16 @@ fn render_mpris_card<'a>(
   };
   let play_icon: Element<'a, ItemMessage> = Icon::new(play_icon_name)
     .size(18)
-    .color(style.color(theme, "color.primary", theme.primary))
+    .color(theme.primary)
     .into();
   let play_btn = clickable(play_icon, move |_, _, _| {
     Some(SoundAction::PlayPause.message(id))
   });
 
   let next_color = if player.can_go_next {
-    style.color(theme, "color", theme.text)
+    theme.text
   } else {
-    style.color(theme, "color.faded", theme.subtext)
+    theme.subtext
   };
   let next_icon: Element<'a, ItemMessage> = Icon::new("media-skip-forward-symbolic")
     .size(14)
@@ -315,49 +285,34 @@ fn render_mpris_card<'a>(
 
   let mut media_lines = column![title, artist].spacing(2);
   if !player.album.is_empty() {
-    media_lines = media_lines.push(
-      text(player.album.clone())
-        .size(style.number("status.font.size").unwrap_or(11.0))
-        .color(style.color(theme, "color.faded", theme.subtext)),
-    );
+    media_lines =
+      media_lines.push(config.text(player.album.clone(), &["menu", "text-status", "text-faded"]));
   }
 
-  let bg = style.color(theme, "row.background", Color::TRANSPARENT);
-  let row_radius = style.number("row.radius").unwrap_or(10.0);
-
-  container(
-    column![
-      media_lines,
-      container(controls)
-        .align_x(Alignment::Center)
-        .width(Length::Fill),
-    ]
-    .spacing(8),
+  hover_row(
+    config,
+    &["menu", "row"],
+    container(
+      column![
+        media_lines,
+        container(controls)
+          .align_x(Alignment::Center)
+          .width(Length::Fill),
+      ]
+      .spacing(8),
+    )
+    .padding(config.sizing(&["menu", "row"]).padding())
+    .width(Length::Fill),
   )
-  .padding(style.padding([10.0, 12.0]))
-  .width(Length::Fill)
-  .style(move |_| container::Style {
-    background: Some(bg.into()),
-    border: iced::Border {
-      radius: row_radius.into(),
-      ..Default::default()
-    },
-    ..Default::default()
-  })
-  .into()
 }
 
-fn render_sink<'a>(
-  sink: &AudioSink,
-  style: &Style,
-  theme: &Theme,
-  id: IcedId,
-) -> Element<'a, ItemMessage> {
+fn render_sink<'a>(config: &'a Config, sink: &AudioSink, id: IcedId) -> Element<'a, ItemMessage> {
+  let theme = config.palette();
   let is_default = sink.is_default;
   let color = if is_default {
-    style.color(theme, "color.primary", theme.primary)
+    theme.primary
   } else {
-    style.color(theme, "color", theme.text)
+    theme.text
   };
 
   let icon_name = if is_default {
@@ -366,7 +321,12 @@ fn render_sink<'a>(
     "checkbox-symbolic"
   };
 
-  let check_icon: Element<'a, ItemMessage> = Icon::new(icon_name).size(14).color(color).into();
+  let checkbox_size = config
+    .computed(&["menu", "checkbox"])
+    .length("checkbox-size")
+    .unwrap_or(14.0) as u16;
+  let check_icon: Element<'a, ItemMessage> =
+    Icon::new(icon_name).size(checkbox_size).color(color).into();
 
   let desc = if sink.description.chars().count() > 24 {
     format!("{}…", sink.description.chars().take(22).collect::<String>())
@@ -374,31 +334,27 @@ fn render_sink<'a>(
     sink.description.clone()
   };
 
-  let sink_name = text(desc)
-    .size(style.number("name.font.size").unwrap_or(12.0))
-    .color(color);
+  let name_classes: &[&str] = if is_default {
+    &["menu", "text-name", "text-primary"]
+  } else {
+    &["menu", "text-name"]
+  };
+  let sink_name = config.text(desc, name_classes);
 
   let content = row![check_icon, Space::new().width(6), sink_name]
     .align_y(Alignment::Center)
     .width(Length::Fill);
 
   let sink_id = sink.id;
-  let bg = style.color(theme, "row.background", Color::TRANSPARENT);
-  let row_radius = style.number("row.radius").unwrap_or(6.0);
+  let wrapped = hover_row(
+    config,
+    &["menu", "row"],
+    container(content)
+      .padding(config.sizing(&["menu", "row"]).padding())
+      .width(Length::Fill),
+  );
 
-  let wrapped = container(content)
-    .padding(style.padding([7.0, 12.0]))
-    .width(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(bg.into()),
-      border: iced::Border {
-        radius: row_radius.into(),
-        ..Default::default()
-      },
-      ..Default::default()
-    });
-
-  clickable(wrapped.into(), move |_, _, _| {
+  clickable(wrapped, move |_, _, _| {
     Some(SoundAction::SetSink(sink_id).message(id))
   })
 }

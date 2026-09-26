@@ -3,14 +3,13 @@ name = "slowshell-plugin-host"
 version.workspace = true
 edition = "2024"
 
-
 [features]
 default = ["spotlight", "panels"]
 spotlight = ["slowshell-spotlight"]
 panels = ["slowshell-components"]
 
 [dependencies]
-slowshell-plugin = { path = "../plugin" }
+slowshell-plugin-abi = { path = "../plugin-abi" }
 slowshell-registry = { path = "../registry" }
 slowshell-core = { path = "../core" }
 slowshell-config = { path = "../config" }
@@ -20,11 +19,13 @@ slowshell-compositor = { path = "../compositor", default-features = false }
 slowshell-desktop = { path = "../desktop" }
 slowshell-spotlight = { path = "../spotlight", optional = true }
 slowshell-widgets = { path = "../widgets" }
+abi_stable = "0.11.3"
+icss.workspace = true
 iced.workspace = true
 iced_layershell.workspace = true
 kdl.workspace = true
-libloading.workspace = true
 miette.workspace = true
+semver.workspace = true
 futures-channel.workspace = true
 image.workspace = true
 nix.workspace = true

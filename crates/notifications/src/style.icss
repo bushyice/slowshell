@@ -1,0 +1,35 @@
+.notifications {
+  background-color: var(--crust-a90);
+  border-radius: 10px;
+  border-width: 1px;
+  border-color: var(--overlay-a15);
+  padding-v: 12px;
+  padding-h: 12px;
+  gap: 4px;
+}
+
+.notifications.list { gap: 8px; }
+
+.notifications.icon { icon-size: 20px; }
+.notifications.app { color: var(--overlay); }
+.notifications.app.icon-color { icon-size: 18px; }
+
+.notifications.text-app { color: var(--overlay); font-size: 10px; }
+.notifications.text-summary { font-size: 13px; }
+.notifications.text-body { font-size: 11px; }
+
+.notifications.input { font-size: 11px; padding: 6px; }
+
+.notifications.action {
+  background-color: var(--mantle);
+  color: var(--text);
+  border-radius: 8px;
+  border-width: 0px;
+  border-color: var(--overlay-a15);
+  font-size: 11px;
+  font-weight: 400;
+  padding-v: 7px;
+  padding-h: 10px;
+}
+.notifications.action:hover { background-color: var(--overlay-a15); }
+.notifications.action:active { background-color: var(--overlay-a25); }

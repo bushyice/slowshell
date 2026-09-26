@@ -1,4 +1,9 @@
-use std::{any::TypeId, cell::RefCell, collections::HashMap, sync::atomic::Ordering};
+use std::{
+  any::TypeId,
+  cell::RefCell,
+  collections::HashMap,
+  sync::{Arc, atomic::Ordering},
+};
 
 use iced::{
   Alignment, Color, Element, Length, Vector,
@@ -11,9 +16,10 @@ use slowshell_commons::notifications::{
   NOTIF_CHANGED, NotificationCmd, NotificationItem, NotificationPayload, NotificationSettings,
   SharedNotificationState, reply_action_key,
 };
-use slowshell_config::{Config, ConfigParser, style::Style, style::Theme};
+use slowshell_config::{Config, ConfigParser};
 use slowshell_core::{
   Store,
+  commands::CommandEntry,
   listeners::ListenerAction,
   types::{PayloadBox, ToUstr},
 };
@@ -235,7 +241,8 @@ impl DesktopItem for NotificationManager {
             .as_this::<NotificationPayload>()
             .and_then(|p| Some((p.id, p.text.clone()?)))
           {
-            shared.ui.lock().unwrap().replies.insert(id, text);
+            let mut ui = shared.ui.lock().unwrap();
+            Arc::make_mut(&mut ui).replies.insert(id, text);
           }
         }
         Ok(ItemEffect::Redraw)
@@ -252,15 +259,14 @@ impl DesktopItem for NotificationManager {
     id: IcedId,
     _monitor: &str,
   ) -> Element<'a, ItemMessage> {
-    let style = config.style("notifications");
-    let theme = &config.theme;
+    let list_spacing = config.sizing(&["notifications", "list"]).gap;
 
     let mut cache = self.cache.borrow_mut();
 
     let notif_elements: Vec<Element<'a, ItemMessage>> =
       if let Some(shared) = store.borrow::<SharedNotificationState>() {
-        let state = shared.state.lock().unwrap();
-        let ui = shared.ui.lock().unwrap();
+        let state = shared.state.lock().unwrap().clone();
+        let ui = shared.ui.lock().unwrap().clone();
 
         let revision = shared.revision.load(Ordering::Relaxed);
         if revision != cache.revision {
@@ -268,15 +274,10 @@ impl DesktopItem for NotificationManager {
           cache.by_id.clear();
         }
 
-        let items: Vec<NotificationItem> = if self.closing {
-          self.last_items.clone()
+        let items: Vec<&NotificationItem> = if self.closing {
+          self.last_items.iter().collect()
         } else {
-          state
-            .popups
-            .iter()
-            .take(self.max_visible)
-            .cloned()
-            .collect()
+          state.popups.iter().take(self.max_visible).collect()
         };
 
         items
@@ -291,24 +292,16 @@ impl DesktopItem for NotificationManager {
             } else {
               None
             };
-            render_popup_item(
-              n,
-              reply_text.as_deref().unwrap_or(""),
-              cached,
-              &style,
-              theme,
-              id,
-            )
+            render_popup_item(n, reply_text.as_deref().unwrap_or(""), cached, config, id)
           })
           .collect()
       } else {
         Vec::new()
       };
 
-    let content: Element<'a, ItemMessage> =
-      container(column(notif_elements).spacing(style.number("list.spacing").unwrap_or(8.0)))
-        .style(container::transparent)
-        .into();
+    let content: Element<'a, ItemMessage> = container(column(notif_elements).spacing(list_spacing))
+      .style(container::transparent)
+      .into();
 
     let close = ItemMessage::Action(ListenerAction::Payload {
       name: "notifications.closed".into(),
@@ -326,27 +319,30 @@ fn render_popup_item<'a>(
   item: &NotificationItem,
   reply_text: &str,
   cached: &CachedMessages,
-  style: &Style,
-  theme: &Theme,
+  config: &'a Config,
   id: IcedId,
 ) -> Element<'a, ItemMessage> {
+  let app_style = config.computed(&["notifications", "app"]);
+  let app_color = app_style
+    .color("color")
+    .map(|c| c.to_iced())
+    .unwrap_or(config.palette().overlay);
+
   let app_icon: Element<'a, ItemMessage> = notification_icon(
     item.image.as_ref(),
     item.app_icon.as_deref(),
-    style.number("icon.size").unwrap_or(18.0) as u16,
-    style.color(theme, "app.color", theme.overlay),
+    app_style.length("icon-size").unwrap_or(18.0) as u16,
+    app_color,
   );
 
-  let app_font = style.number("app.font.size").unwrap_or(10.0);
-  let app: Element<'a, ItemMessage> = text(item.app_name.clone())
-    .size(app_font)
-    .color(style.color(theme, "app.color", theme.overlay))
+  let app: Element<'a, ItemMessage> = config
+    .text(item.app_name.clone(), &["notifications", "text-app"])
     .into();
 
   let notif_id = item.id;
   let close_icon: Element<'a, ItemMessage> = Icon::new("window-close-symbolic")
     .size(12)
-    .color(style.color(theme, "app.color", theme.overlay))
+    .color(app_color)
     .into();
 
   let dismiss_msg = cached.dismiss.clone();
@@ -359,21 +355,21 @@ fn render_popup_item<'a>(
     Space::new().width(Length::Fill).into(),
   ];
   if item.urgency >= 2 {
-    let critical = style.color(theme, "urgency.color", Color::from_rgb(0.9, 0.3, 0.3));
+    let critical = Color::from_rgb(0.9, 0.3, 0.3);
     header_items.push(text("●").size(10).color(critical).into());
   }
   header_items.push(close_btn);
   let header_row = row(header_items).align_y(Alignment::Center);
 
-  let summary = text(item.summary.clone()).size(style.number("summary.font.size").unwrap_or(13.0));
-  let body = text(item.body.clone()).size(style.number("body.font.size").unwrap_or(11.0));
+  let summary = config.text(item.summary.clone(), &["notifications", "text-summary"]);
+  let body = config.text(item.body.clone(), &["notifications", "text-body"]);
 
   let mut content_items: Vec<Element<'a, ItemMessage>> =
     vec![header_row.into(), summary.into(), body.into()];
 
   let reply_key = reply_action_key(item);
 
-  if let Some(actions) = render_popup_actions(item, cached, reply_key.as_deref(), style, theme) {
+  if let Some(actions) = render_popup_actions(item, cached, reply_key.as_deref(), config) {
     content_items.push(actions);
   }
 
@@ -381,7 +377,7 @@ fn render_popup_item<'a>(
     let reply_string = reply_text.to_string();
     let reply_key_submit = reply_key.clone();
     let input = text_input("Reply…", reply_text)
-      .size(style.number("body.font.size").unwrap_or(11.0))
+      .size(11.0)
       .width(Length::Fill)
       .padding(6)
       .on_input(move |value| {
@@ -413,7 +409,7 @@ fn render_popup_item<'a>(
 
     let submit_icon: Element<'a, ItemMessage> = Icon::new("mail-send-symbolic")
       .size(12)
-      .color(style.color(theme, "app.color", theme.overlay))
+      .color(app_color)
       .into();
 
     let reply_msg = ItemMessage::EffectAction(
@@ -437,14 +433,14 @@ fn render_popup_item<'a>(
     );
   }
 
-  let inner_spacing = style.number("spacing").unwrap_or(4.0);
-  let padding = style.number("padding").unwrap_or(10.0);
-  let popup_style = style.container_style(theme);
+  let size = config.sizing(&["notifications"]);
+  let inner_spacing = size.gap;
+  let padding = size.padding();
 
   container(column(content_items).spacing(inner_spacing))
     .width(Length::Fill)
     .padding(padding)
-    .style(move |_| popup_style)
+    .style(config.container_cached(&["notifications"]))
     .into()
 }
 
@@ -452,14 +448,8 @@ fn render_popup_actions<'a>(
   item: &NotificationItem,
   cached: &CachedMessages,
   reply_key: Option<&str>,
-  style: &Style,
-  theme: &Theme,
+  config: &'a Config,
 ) -> Option<Element<'a, ItemMessage>> {
-  let button_font = style.number("body.font.size").unwrap_or(11.0);
-  let border_width = style.number("action.border.width").unwrap_or(0.0);
-  let border_color = style.color(theme, "action.border.color", theme.overlay);
-  let bg = style.color(theme, "action.background", theme.overlay);
-
   let actions = item
     .actions
     .iter()
@@ -472,21 +462,11 @@ fn render_popup_actions<'a>(
     let invoke_msg = cached.invoke.get(key).unwrap().clone();
     let label = label.clone();
 
-    let pill = container(text(label).size(button_font))
+    let button = config
+      .theme()
+      .btn(label, &["notifications", "action"])
       .width(Length::Fill)
-      .padding([7.0, 10.0])
-      .style(move |_| container::Style {
-        background: Some(bg.into()),
-        border: iced::Border {
-          radius: 8.0.into(),
-          color: border_color,
-          width: border_width,
-        },
-        ..Default::default()
-      })
-      .width(Length::Fill);
-
-    let button = clickable(pill.into(), move |_, _, _| Some(invoke_msg.clone()));
+      .on_press(invoke_msg);
 
     if let Some(first) = pending.take() {
       rows.push(row![first, button].spacing(6).width(Length::Fill).into());
@@ -546,23 +526,12 @@ slowshell_registry::register_resources!(
     store.insert(NotificationSettings { enabled });
   }),
   notifications: Style(
-    slowshell_config::style! {
-      "background" => "crust",
-      "background.opacity" => 0.9,
-      "radius" => 10,
-      "border.width" => 1,
-      "border.color" => "overlay",
-      "border.color.opacity" => 0.15,
-      "padding" => 12,
-      "spacing" => 4,
-      "list.spacing" => 8,
-      "summary.font.size" => 13,
-      "body.font.size" => 11,
-      "app.font.size" => 10,
-      "app.color" => "overlay",
-      "icon.size" => 20,
-      "action.border.width" => 0,
-      "action.background" => "mantle"
-    }
-  )
+    include_str!("./style.icss").into()
+  ),
+  command: Command(
+    CommandEntry::payload("notifications.toggle_dnd").title("Toggle Do Not Disturb"),
+  ),
+  command: Command(
+    CommandEntry::payload("notifications.clear_all").title("Clear Notifications"),
+  ),
 );

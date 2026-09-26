@@ -4,10 +4,10 @@ use std::time::Duration;
 use chrono::{Datelike, Local, NaiveDate, Weekday};
 use iced::{
   Alignment, Element, Length,
-  widget::{Space, column, container, row, text},
+  widget::{Space, column, container, row},
 };
 use iced_layershell::reexport::IcedId;
-use slowshell_config::{Config, style::Style, style::Theme};
+use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::{FdHandle, ListenerAction},
@@ -111,38 +111,29 @@ impl Renderable for ClockRenderable {
     data: &'a dyn std::any::Any,
   ) -> Element<'a, ItemMessage> {
     let data = data.downcast_ref::<PopupSettings>().unwrap();
-    let style = config.style("menu");
-    let theme = &config.theme;
 
     let now = Local::now();
     let month_offset = self.current_offset();
     let month = shift_month(now.year(), now.month(), month_offset);
 
     let mut children: Vec<Element<'a, ItemMessage>> = Vec::new();
-    children.push(render_clock_face(now, &style, theme));
-    children.push(render_calendar_nav(month, month_offset, id, &style, theme));
-    children.push(render_weekday_header(&style, theme));
-    children.push(render_month_grid(month, now.date_naive(), &style, theme));
+    children.push(render_clock_face(now, config));
+    children.push(render_calendar_nav(month, month_offset, id, config));
+    children.push(render_weekday_header(config));
+    children.push(render_month_grid(month, now.date_naive(), config));
 
-    let list_spacing = style.number("list.spacing").unwrap_or(6.0);
-    let list_width = style.number("list.width").unwrap_or(240.0);
+    let list_style = config.computed(&["menu", "list"]);
+    let list_spacing = config.sizing(&["menu", "list"]).gap;
+    let list_width = list_style.length("list-width").unwrap_or(220.0);
     let list = column(children)
       .spacing(list_spacing)
       .width(Length::Fixed(list_width));
 
-    let inner_padding = style.number("inner.padding").unwrap_or(10.0);
-    let mut popup_style = style.container_style(theme);
-    if let (Some(x), Some(y)) = (
-      style.number("shadow.offset.x"),
-      style.number("shadow.offset.y"),
-    ) {
-      popup_style.shadow.offset = iced::Vector::new(x, y);
-    }
+    let inner_padding = config.sizing(&["menu", "inner"]).padding();
+    let popup_style = config.container_cached(&["menu"]);
 
     SizedPopup::new(container(
-      container(list)
-        .padding(inner_padding)
-        .style(move |_| popup_style),
+      container(list).padding(inner_padding).style(popup_style),
     ))
     .with_width(120.)
     .with_backdrop(Backdrop::transparent().with_close_on_click(true))
@@ -160,11 +151,16 @@ fn navigation_message(id: IcedId, kind: usize) -> ItemMessage {
 
 fn render_clock_face<'a>(
   now: chrono::DateTime<Local>,
-  style: &Style,
-  theme: &Theme,
+  config: &'a Config,
 ) -> Element<'a, ItemMessage> {
-  let color = style.color(theme, "color", theme.text);
-  let faded = style.color(theme, "color.faded", theme.subtext);
+  let time_size = config
+    .computed(&["menu", "clock", "time"])
+    .length("clock-time-size")
+    .unwrap_or(38.0);
+  let seconds_size = config
+    .computed(&["menu", "clock", "seconds"])
+    .length("clock-seconds-size")
+    .unwrap_or(15.0);
 
   let time = now.format("%H:%M").to_string();
   let seconds = now.format("%S").to_string();
@@ -172,24 +168,18 @@ fn render_clock_face<'a>(
   let zone = now.format("%Z").to_string();
 
   let big_time = row![
-    text(time)
-      .size(style.number("clock.time.size").unwrap_or(38.0))
-      .color(color),
-    text(seconds)
-      .size(style.number("clock.seconds.size").unwrap_or(15.0))
-      .color(faded),
+    config.text(time, &["menu"]).size(time_size),
+    config
+      .text(seconds, &["menu", "text-faded"])
+      .size(seconds_size),
   ]
   .align_y(Alignment::End)
   .spacing(6);
 
   column![
     big_time,
-    text(date)
-      .size(style.number("name.font.size").unwrap_or(13.0))
-      .color(color),
-    text(zone)
-      .size(style.number("status.font.size").unwrap_or(11.0))
-      .color(faded),
+    config.text(date, &["menu", "text-name"]),
+    config.text(zone, &["menu", "text-status", "text-faded"]),
   ]
   .spacing(2)
   .into()
@@ -199,14 +189,17 @@ fn render_calendar_nav<'a>(
   month: (i32, u32),
   offset: i32,
   id: IcedId,
-  style: &Style,
-  theme: &Theme,
+  config: &'a Config,
 ) -> Element<'a, ItemMessage> {
-  let color = style.color(theme, "color", theme.text);
-  let faded = style.color(theme, "color.faded", theme.subtext);
+  let faded = config.palette().subtext;
+
+  let arrow_size = config
+    .computed(&["menu", "arrow-size"])
+    .length("arrow-size")
+    .unwrap_or(12.0) as u16;
 
   let prev_icon: Element<'a, ItemMessage> = Icon::new("go-previous-symbolic")
-    .size(style.number("arrow.size").unwrap_or(12.0) as u16)
+    .size(arrow_size)
     .color(faded)
     .into();
   let prev = clickable(prev_icon, move |_, _, _| {
@@ -214,7 +207,7 @@ fn render_calendar_nav<'a>(
   });
 
   let next_icon: Element<'a, ItemMessage> = Icon::new("go-next-symbolic")
-    .size(style.number("arrow.size").unwrap_or(12.0) as u16)
+    .size(arrow_size)
     .color(faded)
     .into();
   let next = clickable(next_icon, move |_, _, _| {
@@ -224,15 +217,11 @@ fn render_calendar_nav<'a>(
   let label = month_label(month);
 
   let title: Element<'a, ItemMessage> = if offset == 0 {
-    text(label)
-      .size(style.number("header.font.size").unwrap_or(15.0))
-      .color(color)
-      .into()
+    config.text(label, &["menu", "text-header"]).into()
   } else {
     clickable(
-      text(label)
-        .size(style.number("header.font.size").unwrap_or(15.0))
-        .color(style.color(theme, "color.primary", theme.primary))
+      config
+        .text(label, &["menu", "text-header", "text-primary"])
         .into(),
       move |_, _, _| Some(navigation_message(id, ClockRenderable::TODAY)),
     )
@@ -249,15 +238,13 @@ fn render_calendar_nav<'a>(
   .into()
 }
 
-fn render_weekday_header<'a>(style: &Style, theme: &Theme) -> Element<'a, ItemMessage> {
-  let faded = style.color(theme, "color.faded", theme.subtext);
-  let size = style.number("status.font.size").unwrap_or(11.0);
+fn render_weekday_header<'a>(config: &'a Config) -> Element<'a, ItemMessage> {
   let labels = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
   let cells: Vec<Element<'a, ItemMessage>> = labels
     .iter()
     .map(|label| {
-      container(text(*label).size(size).color(faded))
+      container(config.text(*label, &["menu", "text-status", "text-faded"]))
         .width(Length::FillPortion(1))
         .align_x(Alignment::Center)
         .into()
@@ -270,9 +257,13 @@ fn render_weekday_header<'a>(style: &Style, theme: &Theme) -> Element<'a, ItemMe
 fn render_month_grid<'a>(
   month: (i32, u32),
   today: NaiveDate,
-  style: &Style,
-  theme: &Theme,
+  config: &'a Config,
 ) -> Element<'a, ItemMessage> {
+  let calendar_spacing = config
+    .computed(&["menu", "calendar"])
+    .length("calendar-spacing")
+    .unwrap_or(2.0);
+
   let (year, month_num) = month;
   let first = NaiveDate::from_ymd_opt(year, month_num, 1).unwrap_or(today);
   let days_in_month = days_in_month(year, month_num);
@@ -287,7 +278,7 @@ fn render_month_grid<'a>(
 
   for day in 1..=days_in_month {
     let date = NaiveDate::from_ymd_opt(year, month_num, day).unwrap_or(first);
-    cells.push(day_cell(date, today, style, theme));
+    cells.push(day_cell(date, today, config));
 
     if cells.len() == 7 {
       rows.push(row(std::mem::take(&mut cells)).into());
@@ -301,55 +292,43 @@ fn render_month_grid<'a>(
     rows.push(row(cells).into());
   }
 
-  container(column(rows).spacing(style.number("calendar.spacing").unwrap_or(2.0)))
+  container(column(rows).spacing(calendar_spacing))
     .width(Length::Fill)
     .into()
 }
 
-fn day_cell<'a>(
-  date: NaiveDate,
-  today: NaiveDate,
-  style: &Style,
-  theme: &Theme,
-) -> Element<'a, ItemMessage> {
+fn day_cell<'a>(date: NaiveDate, today: NaiveDate, config: &'a Config) -> Element<'a, ItemMessage> {
   let is_today = date == today;
   let is_weekend = matches!(date.weekday(), Weekday::Sat | Weekday::Sun);
 
-  let color = if is_today {
-    style.color(theme, "color.invert", theme.base)
+  let classes: &[&str] = if is_today {
+    &["menu", "text-invert"]
   } else if is_weekend {
-    style.color(theme, "color.faded", theme.subtext)
+    &["menu", "text-faded"]
   } else {
-    style.color(theme, "color", theme.text)
+    &["menu"]
   };
 
-  let font_size = style.number("font.size").unwrap_or(13.0);
+  let height = Length::Fixed(
+    config
+      .computed(&["menu", "calendar", "cell"])
+      .length("calendar-cell-height")
+      .unwrap_or(28.0),
+  );
+  let label = config.text(date.day().to_string(), classes);
 
   let cell: Element<'a, ItemMessage> = if is_today {
-    let bg = style.color(theme, "color.primary", theme.primary);
-    let radius = style.number("calendar.today.radius").unwrap_or(999.0);
-    container(text(date.day().to_string()).size(font_size).color(color))
+    container(label)
       .width(Length::FillPortion(1))
-      .height(Length::Fixed(
-        style.number("calendar.cell.height").unwrap_or(28.0),
-      ))
+      .height(height)
       .align_x(Alignment::Center)
       .align_y(Alignment::Center)
-      .style(move |_| container::Style {
-        background: Some(bg.into()),
-        border: iced::Border {
-          radius: radius.into(),
-          ..Default::default()
-        },
-        ..Default::default()
-      })
+      .style(config.container_cached(&["menu", "calendar", "today", "fill"]))
       .into()
   } else {
-    container(text(date.day().to_string()).size(font_size).color(color))
+    container(label)
       .width(Length::FillPortion(1))
-      .height(Length::Fixed(
-        style.number("calendar.cell.height").unwrap_or(28.0),
-      ))
+      .height(height)
       .align_x(Alignment::Center)
       .align_y(Alignment::Center)
       .into()

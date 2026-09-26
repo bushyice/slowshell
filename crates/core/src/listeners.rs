@@ -26,9 +26,87 @@ impl Default for IpcCommand {
   }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct CompositorEvent(u8);
+
+impl std::fmt::Debug for CompositorEvent {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    if self.is_empty() {
+      return f.write_str("NONE");
+    }
+
+    let mut first = true;
+    for (bit, name) in [
+      (Self::WINDOWS, "WINDOWS"),
+      (Self::FOCUS, "FOCUS"),
+      (Self::WORKSPACES, "WORKSPACES"),
+      (Self::MONITORS, "MONITORS"),
+      (Self::OVERVIEW, "OVERVIEW"),
+    ] {
+      if self.contains(bit) {
+        if !first {
+          f.write_str("|")?;
+        }
+        f.write_str(name)?;
+        first = false;
+      }
+    }
+
+    Ok(())
+  }
+}
+
+impl CompositorEvent {
+  pub const NONE: Self = Self(0);
+  pub const WINDOWS: Self = Self(1 << 0);
+  pub const FOCUS: Self = Self(1 << 1);
+  pub const WORKSPACES: Self = Self(1 << 2);
+  pub const MONITORS: Self = Self(1 << 3);
+  pub const OVERVIEW: Self = Self(1 << 4);
+  pub const ALL: Self = Self(0b1_1111);
+
+  pub const fn is_empty(self) -> bool {
+    self.0 == 0
+  }
+
+  pub const fn bits(self) -> u8 {
+    self.0
+  }
+
+  pub const fn from_bits(bits: u8) -> Self {
+    Self(bits)
+  }
+
+  pub const fn contains(self, other: Self) -> bool {
+    self.0 & other.0 == other.0
+  }
+
+  pub const fn intersects(self, other: Self) -> bool {
+    self.0 & other.0 != 0
+  }
+
+  pub fn insert(&mut self, other: Self) {
+    self.0 |= other.0;
+  }
+}
+
+impl std::ops::BitOr for CompositorEvent {
+  type Output = Self;
+
+  fn bitor(self, rhs: Self) -> Self {
+    Self(self.0 | rhs.0)
+  }
+}
+
+impl std::ops::BitOrAssign for CompositorEvent {
+  fn bitor_assign(&mut self, rhs: Self) {
+    self.0 |= rhs.0;
+  }
+}
+
 #[derive(Debug, Clone)]
 pub enum ListenerAction {
-  UpdateCompositor,
+  UpdateCompositor(CompositorEvent),
   Named(Ustr),
   Timer {
     name: Ustr,
@@ -99,12 +177,12 @@ impl Listeners {
     self.watched_fds.insert(res);
   }
 
-  pub fn unwatched_fds(&mut self) -> std::collections::HashSet<i32> {
-    std::mem::take(&mut self.unwatched_fds)
+  pub fn drain_unwatched_fds(&mut self, out: &mut Vec<i32>) {
+    out.extend(self.unwatched_fds.drain());
   }
 
-  pub fn removed_fds(&mut self) -> std::collections::HashSet<i32> {
-    std::mem::take(&mut self.removed_fds)
+  pub fn drain_removed_fds(&mut self, out: &mut Vec<i32>) {
+    out.extend(self.removed_fds.drain());
   }
 
   pub fn action(&mut self, res: i32, act: impl Into<ListenerAction>) {

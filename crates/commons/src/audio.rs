@@ -47,8 +47,8 @@ pub enum AudioCmd {
 }
 
 pub struct AudioState {
-  pub state: Mutex<AudioInner>,
-  pub player: Mutex<Option<MprisPlayer>>,
+  pub state: Mutex<Arc<AudioInner>>,
+  pub player: Mutex<Option<Arc<MprisPlayer>>>,
   pub revision: AtomicU64,
   pub cmd_tx: tokio::sync::mpsc::UnboundedSender<AudioCmd>,
 }

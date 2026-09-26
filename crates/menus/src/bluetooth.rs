@@ -1,10 +1,10 @@
 use iced::{
   Alignment, Color, Element, Length,
-  widget::{Space, column, container, row, space, text},
+  widget::{Space, column, container, row, space},
 };
 use iced_layershell::reexport::IcedId;
 use slowshell_commons::bluetooth::{BluetoothDevice, SharedBluetoothState};
-use slowshell_config::{Config, style::Style, style::Theme};
+use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
@@ -12,7 +12,7 @@ use slowshell_core::{
   types::{PayloadBox, ToUstr},
 };
 use slowshell_popups::PopupSettings;
-use slowshell_widgets::{Backdrop, Icon, Renderable, SizedPopup, clickable};
+use slowshell_widgets::{Backdrop, Icon, Renderable, SizedPopup, clickable, hover_row};
 
 pub struct BluetoothRenderable;
 
@@ -65,8 +65,7 @@ impl Renderable for BluetoothRenderable {
     data: &'a dyn std::any::Any,
   ) -> Element<'a, ItemMessage> {
     let data = data.downcast_ref::<PopupSettings>().unwrap();
-    let style = config.style("menu");
-    let theme = &config.theme;
+    let theme = config.palette();
 
     let mut children: Vec<Element<'a, ItemMessage>> = Vec::new();
 
@@ -75,16 +74,13 @@ impl Renderable for BluetoothRenderable {
       let discovering = shared
         .discovering
         .load(std::sync::atomic::Ordering::Relaxed);
-      let devices = {
-        let state = shared.state.lock().unwrap();
-        state.devices.clone()
-      };
+      let inner = shared.state.lock().unwrap().clone();
       let confirming_remove = {
         let menu = shared.menu.lock().unwrap();
         menu.confirming_remove.clone()
       };
 
-      children.push(render_toggle_row(&style, theme, id, powered));
+      children.push(render_toggle_row(config, id, powered));
 
       if !powered {
         children.push(
@@ -92,11 +88,9 @@ impl Renderable for BluetoothRenderable {
             column![
               Icon::new("bluetooth-disabled-symbolic")
                 .size(22)
-                .color(style.color(theme, "color.faded", theme.subtext)),
+                .color(theme.subtext),
               space().height(6),
-              text("Bluetooth is off")
-                .size(style.number("name.font.size").unwrap_or(13.0))
-                .color(style.color(theme, "color.faded", theme.subtext)),
+              config.text("Bluetooth is off", &["menu", "text-name", "text-faded"]),
             ]
             .align_x(Alignment::Center),
           )
@@ -105,7 +99,7 @@ impl Renderable for BluetoothRenderable {
           .width(Length::Fill)
           .into(),
         );
-      } else if devices.is_empty() {
+      } else if inner.devices.is_empty() {
         children.push(
           container(
             column![
@@ -115,15 +109,16 @@ impl Renderable for BluetoothRenderable {
                 "bluetooth-symbolic"
               })
               .size(22)
-              .color(style.color(theme, "color.faded", theme.subtext)),
+              .color(theme.subtext),
               space().height(6),
-              text(if discovering {
-                "Scanning for devices…"
-              } else {
-                "No devices found"
-              })
-              .size(style.number("name.font.size").unwrap_or(13.0))
-              .color(style.color(theme, "color.faded", theme.subtext)),
+              config.text(
+                if discovering {
+                  "Scanning for devices…"
+                } else {
+                  "No devices found"
+                },
+                &["menu", "text-name", "text-faded"],
+              ),
             ]
             .align_x(Alignment::Center),
           )
@@ -133,69 +128,51 @@ impl Renderable for BluetoothRenderable {
           .into(),
         );
       } else {
-        let connected_devs: Vec<BluetoothDevice> =
-          devices.iter().filter(|d| d.connected).cloned().collect();
-        let other_devs: Vec<BluetoothDevice> =
-          devices.iter().filter(|d| !d.connected).cloned().collect();
-
-        if !connected_devs.is_empty() {
-          children.push(section_header("Connected", &style, theme));
-          for dev in connected_devs {
-            children.push(render_device(
-              &dev,
-              &style,
-              theme,
-              id,
-              confirming_remove.as_deref(),
-            ));
+        let mut has_connected = false;
+        for dev in inner.devices.iter().filter(|d| d.connected) {
+          if !has_connected {
+            children.push(section_header(config, "Connected"));
+            has_connected = true;
           }
+          children.push(render_device(config, dev, id, confirming_remove.as_deref()));
         }
 
-        if !other_devs.is_empty() {
-          children.push(section_header("Devices", &style, theme));
-          for dev in other_devs {
-            children.push(render_device(
-              &dev,
-              &style,
-              theme,
-              id,
-              confirming_remove.as_deref(),
-            ));
+        let mut has_other = false;
+        for dev in inner.devices.iter().filter(|d| !d.connected) {
+          if !has_other {
+            children.push(section_header(config, "Devices"));
+            has_other = true;
           }
+          children.push(render_device(config, dev, id, confirming_remove.as_deref()));
         }
       }
 
       if powered {
-        children.push(scan_footer_row(discovering, id, &style, theme));
+        children.push(scan_footer_row(config, discovering, id));
       }
     } else {
       children.push(
-        text("Bluetooth unavailable")
-          .size(style.number("status.font.size").unwrap_or(11.0))
-          .color(style.color(theme, "color.faded", theme.subtext))
+        config
+          .text(
+            "Bluetooth unavailable",
+            &["menu", "text-status", "text-faded"],
+          )
           .into(),
       );
     }
 
-    let list_spacing = style.number("list.spacing").unwrap_or(4.0);
-    let list_width = style.number("list.width").unwrap_or(220.0);
+    let list_style = config.computed(&["menu", "list"]);
+    let list_spacing = config.sizing(&["menu", "list"]).gap;
+    let list_width = list_style.length("list-width").unwrap_or(220.0);
     let list = column(children)
       .spacing(list_spacing)
       .width(Length::Fixed(list_width));
 
-    let inner_padding = style.number("inner.padding").unwrap_or(6.0);
-    let mut popup_style = style.container_style(theme);
-    if let (Some(x), Some(y)) = (
-      style.number("shadow.offset.x"),
-      style.number("shadow.offset.y"),
-    ) {
-      popup_style.shadow.offset = iced::Vector::new(x, y);
-    }
+    let inner_padding = config.sizing(&["menu", "inner"]).padding();
+    let popup_style = config.container_cached(&["menu"]);
 
     SizedPopup::new(container(
-      container(list)
-        .padding(inner_padding)
-        .style(move |_| popup_style),
+      container(list).padding(inner_padding).style(popup_style),
     ))
     .with_width(120.)
     .with_backdrop(Backdrop::transparent().with_close_on_click(true))
@@ -208,18 +185,17 @@ impl Renderable for BluetoothRenderable {
 }
 
 fn render_toggle_row<'a>(
-  style: &Style,
-  theme: &Theme,
+  config: &'a Config,
   id: IcedId,
   powered: bool,
 ) -> Element<'a, ItemMessage> {
-  let color = style.color(theme, "color", theme.text);
-  let checkbox_size = style.number("checkbox.size").unwrap_or(14.0) as u16;
-  let toggle_color = if powered {
-    style.color(theme, "color.primary", theme.primary)
-  } else {
-    color
-  };
+  let theme = config.palette();
+
+  let checkbox_size = config
+    .computed(&["menu", "checkbox"])
+    .length("checkbox-size")
+    .unwrap_or(14.0) as u16;
+  let toggle_color = if powered { theme.primary } else { theme.text };
   let toggle = Icon::new(if powered {
     "checkbox-checked-symbolic"
   } else {
@@ -228,99 +204,77 @@ fn render_toggle_row<'a>(
   .size(checkbox_size)
   .color(toggle_color);
 
-  let faded = style.color(theme, "color.faded", theme.subtext);
-  let trailing = text(if powered { "On" } else { "Off" })
-    .size(style.number("status.font.size").unwrap_or(12.0))
-    .color(faded);
+  let trailing = config.text(
+    if powered { "On" } else { "Off" },
+    &["menu", "text-status", "text-faded"],
+  );
 
-  let row_spacing = style.number("row.spacing").unwrap_or(10.0);
-  let bg = style.color(theme, "row.background", Color::TRANSPARENT);
-  let row_radius = style.number("row.radius").unwrap_or(10.0);
-  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
-  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
+  let row_spacing = config.sizing(&["menu", "row"]).gap;
 
-  let content: Element<'a, ItemMessage> = container(
-    row![
-      toggle,
-      text("Bluetooth")
-        .size(style.number("font.size").unwrap_or(14.0))
-        .color(color),
-      Space::new().width(Length::Fill),
-      trailing
-    ]
-    .spacing(row_spacing)
-    .align_y(Alignment::Center),
-  )
-  .padding(style.padding([7.0, 12.0]))
-  .width(Length::Fill)
-  .style(move |_t: &iced::Theme| container::Style {
-    background: Some(bg.into()),
-    border: iced::Border {
-      radius: row_radius.into(),
-      width: row_border_width,
-      color: row_border_color,
-    },
-    ..container::Style::default()
-  })
-  .into();
+  let content: Element<'a, ItemMessage> = hover_row(
+    config,
+    &["menu", "row"],
+    container(
+      row![
+        toggle,
+        config.text("Bluetooth", &["menu", "text-body"]),
+        Space::new().width(Length::Fill),
+        trailing
+      ]
+      .spacing(row_spacing)
+      .align_y(Alignment::Center),
+    )
+    .padding(config.sizing(&["menu", "row"]).padding())
+    .width(Length::Fill),
+  );
 
   clickable(content, move |_, _, _| Some(BtAction::Toggle.message(id)))
 }
 
-fn section_header<'a>(
-  title: &'static str,
-  style: &Style,
-  theme: &Theme,
-) -> Element<'a, ItemMessage> {
-  text(title)
-    .size(style.number("status.font.size").unwrap_or(12.0))
-    .color(style.color(theme, "color.faded", theme.subtext))
+fn section_header<'a>(config: &'a Config, title: &'static str) -> Element<'a, ItemMessage> {
+  config
+    .text(title, &["menu", "text-status", "text-faded"])
     .into()
 }
 
 fn scan_footer_row<'a>(
+  config: &'a Config,
   discovering: bool,
   id: IcedId,
-  style: &Style,
-  theme: &Theme,
 ) -> Element<'a, ItemMessage> {
-  let faded = style.color(theme, "color.faded", theme.subtext);
+  let theme = config.palette();
+
+  let icon_size = config
+    .computed(&["menu", "icon"])
+    .length("icon-size")
+    .unwrap_or(16.0) as u16;
   let content = row![
     Icon::new("view-refresh-symbolic")
-      .size(style.number("icon.size").unwrap_or(16.0) as u16)
-      .color(faded),
+      .size(icon_size)
+      .color(theme.subtext),
     Space::new().width(6),
-    text(if discovering {
-      "Scanning…"
-    } else {
-      "Scan for devices…"
-    })
-    .size(style.number("name.font.size").unwrap_or(14.0))
-    .color(faded),
+    config.text(
+      if discovering {
+        "Scanning…"
+      } else {
+        "Scan for devices…"
+      },
+      &["menu", "text-name", "text-faded"],
+    ),
     Space::new().width(Length::Fill),
   ]
   .align_y(Alignment::Center);
 
-  let bg = style.color(theme, "row.background", Color::TRANSPARENT);
-  let row_radius = style.number("row.radius").unwrap_or(10.0);
-  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
-  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
-
-  let wrapped = container(content)
-    .padding(style.padding([10.0, 12.0]))
-    .width(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(bg.into()),
-      border: iced::Border {
-        radius: row_radius.into(),
-        width: row_border_width,
-        color: row_border_color,
-      },
-      ..Default::default()
-    });
+  let wrapped = hover_row(
+    config,
+    &["menu", "row"],
+    container(content)
+      .padding(config.sizing(&["menu", "row"]).padding())
+      .width(Length::Fill),
+  );
 
   if discovering {
-    return wrapped.into();
+    return wrapped;
   }
   clickable(wrapped.into(), move |_, _, _| {
     Some(BtAction::Scan.message(id))
@@ -329,12 +283,13 @@ fn scan_footer_row<'a>(
 }
 
 fn render_device<'a>(
+  config: &'a Config,
   dev: &BluetoothDevice,
-  style: &Style,
-  theme: &Theme,
   id: IcedId,
   confirming_remove: Option<&str>,
 ) -> Element<'a, ItemMessage> {
+  let theme = config.palette();
+
   let dev_icon_name = dev.icon.as_deref().unwrap_or_else(|| {
     let lower = dev.name.to_lowercase();
     if lower.contains("mouse") {
@@ -353,25 +308,22 @@ fn render_device<'a>(
   });
 
   let icon_color = if dev.connected {
-    style.color(theme, "color.primary", theme.primary)
+    theme.primary
   } else {
-    style.color(theme, "color.faded", theme.subtext)
+    theme.subtext
   };
 
   let dev_icon: Element<'a, ItemMessage> =
     Icon::new(dev_icon_name).size(14).color(icon_color).into();
 
-  let dev_name = text(dev.name.clone())
-    .size(style.number("name.font.size").unwrap_or(13.0))
-    .color(style.color(theme, "color", theme.text));
+  let dev_name = config.text(dev.name.clone(), &["menu", "text-name"]);
 
   let mut right_items: Vec<Element<'a, ItemMessage>> = Vec::new();
 
   if let Some(bat) = dev.battery {
     right_items.push(
-      text(format!("{bat}%"))
-        .size(style.number("status.font.size").unwrap_or(10.0))
-        .color(style.color(theme, "color.faded", theme.subtext))
+      config
+        .text(format!("{bat}%"), &["menu", "text-status", "text-faded"])
         .into(),
     );
   }
@@ -385,12 +337,12 @@ fn render_device<'a>(
   let action_icon: Element<'a, ItemMessage> = if dev.connected {
     Icon::new("media-playback-stop-symbolic")
       .size(12)
-      .color(style.color(theme, "color.faded", theme.subtext))
+      .color(theme.subtext)
       .into()
   } else {
     Icon::new("network-connect-symbolic")
       .size(12)
-      .color(style.color(theme, "color.primary", theme.primary))
+      .color(theme.primary)
       .into()
   };
 
@@ -406,9 +358,9 @@ fn render_device<'a>(
       "list-remove-symbolic"
     };
     let remove_color = if is_confirming {
-      style.color(theme, "color.error", Color::from_rgb(0.9, 0.3, 0.3))
+      Color::from_rgb(0.9, 0.3, 0.3)
     } else {
-      style.color(theme, "color.faded", theme.subtext)
+      theme.subtext
     };
     let remove_icon: Element<'a, ItemMessage> = Icon::new(remove_icon_name)
       .size(12)
@@ -430,7 +382,7 @@ fn render_device<'a>(
     let addr = dev.address.clone();
     let pair_icon: Element<'a, ItemMessage> = Icon::new("bluetooth-symbolic")
       .size(12)
-      .color(style.color(theme, "color.primary", theme.primary))
+      .color(theme.primary)
       .into();
     right_items.push(clickable(pair_icon, move |_, _, _| {
       Some(BtAction::Pair(addr.clone()).message(id))
@@ -441,9 +393,9 @@ fn render_device<'a>(
 
   let confirm_row = if confirming_remove == Some(dev.address.as_str()) {
     let addr = dev.address.clone();
-    let confirm_text: Element<'a, ItemMessage> = text("Confirm removal?")
-      .size(style.number("status.font.size").unwrap_or(11.0))
-      .color(style.color(theme, "color.error", Color::from_rgb(0.9, 0.3, 0.3)))
+    let confirm_text: Element<'a, ItemMessage> = config
+      .text("Confirm removal?", &["menu", "text-status"])
+      .color(Color::from_rgb(0.9, 0.3, 0.3))
       .into();
     Some(clickable(confirm_text, move |_, _, _| {
       Some(BtAction::Remove(addr.clone()).message(id))
@@ -482,22 +434,11 @@ fn render_device<'a>(
     .into()
   };
 
-  let bg = style.color(theme, "row.background", Color::TRANSPARENT);
-  let row_radius = style.number("row.radius").unwrap_or(6.0);
-  let row_border_width = style.number("row.border.width").unwrap_or(0.0);
-  let row_border_color = style.color(theme, "row.border.color", theme.overlay);
-
-  container(full_row)
-    .padding(style.padding([4.0, 8.0]))
-    .width(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(bg.into()),
-      border: iced::Border {
-        radius: row_radius.into(),
-        width: row_border_width,
-        color: row_border_color,
-      },
-      ..Default::default()
-    })
-    .into()
+  hover_row(
+    config,
+    &["menu", "row"],
+    container(full_row)
+      .padding(config.sizing(&["menu", "row"]).padding())
+      .width(Length::Fill),
+  )
 }

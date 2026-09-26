@@ -2,7 +2,7 @@ use std::{
   collections::HashMap,
   io::{BufRead, BufReader},
   os::fd::OwnedFd,
-  sync::atomic::Ordering,
+  sync::{Arc, atomic::Ordering},
   time::Duration,
 };
 
@@ -227,12 +227,13 @@ fn refresh_audio_wpctl(shared: &SharedAudioState) -> bool {
     }
   }
 
-  let mut state = shared.state.lock().unwrap();
-  let changed = (state.volume - default_vol).abs() > 0.005
-    || state.muted != default_muted
-    || state.sinks.len() != sinks.len()
-    || state.default_sink_name != default_name;
+  let mut guard = shared.state.lock().unwrap();
+  let changed = (guard.volume - default_vol).abs() > 0.005
+    || guard.muted != default_muted
+    || guard.sinks.len() != sinks.len()
+    || guard.default_sink_name != default_name;
 
+  let state = Arc::make_mut(&mut guard);
   state.volume = default_vol;
   state.muted = default_muted;
   state.default_sink_name = default_name;
@@ -388,7 +389,7 @@ async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> mi
     _ => true,
   };
 
-  *cur = chosen_player;
+  *cur = chosen_player.map(Arc::new);
   Ok(changed)
 }
 

@@ -67,7 +67,7 @@ pub struct NetworkState {
   pub wifi_hardware_enabled: AtomicBool,
   pub scanning: AtomicBool,
   pub busy: AtomicBool,
-  pub state: Mutex<NetworkInner>,
+  pub state: Mutex<Arc<NetworkInner>>,
   pub menu: Mutex<MenuUi>,
   pub saved_ssids: Mutex<Option<HashSet<String>>>,
   pub revision: AtomicU64,

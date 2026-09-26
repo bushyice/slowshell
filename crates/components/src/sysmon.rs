@@ -119,14 +119,14 @@ impl Component for SystemMon {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = ctx.resolve_style(config);
-    let theme = &config.theme;
+    let style = config.computed(ctx.classes());
+    let theme = config.palette();
 
     let icon_names: [Option<&str>; 3] = options
       .and_then(|o| o.strings("icon_names"))
@@ -149,9 +149,12 @@ impl Component for SystemMon {
       .and_then(|o| o.str("progress-direction"))
       .unwrap_or("horizontal");
 
-    let icon_size = style.number("icon.size").unwrap_or(16.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(12.0);
-    let color = style.color(theme, "color", theme.text);
+    let icon_size = style.length("icon-size").unwrap_or(16.0) as u16;
+    let font_size = config.sizing(ctx.classes()).font_size;
+    let color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
 
     let items = Self::items(options);
     let snapshot = self.shared.snapshot.lock().unwrap().clone();

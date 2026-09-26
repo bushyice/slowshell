@@ -147,7 +147,7 @@ pub mod tray {
 
   #[derive(Default)]
   pub struct TrayStateInner {
-    pub items: Vec<TrayItem>,
+    pub items: Arc<Vec<TrayItem>>,
   }
 
   #[derive(Debug, Clone)]
@@ -170,14 +170,14 @@ pub mod tray {
     pub state: Mutex<TrayStateInner>,
     pub revision: AtomicU64,
     pub selected: Mutex<Option<String>>,
-    pub menus: Mutex<HashMap<String, system_tray::menu::TrayMenu>>,
-    pub nav: Mutex<Vec<NavFrame>>,
+    pub menus: Mutex<HashMap<String, Arc<system_tray::menu::TrayMenu>>>,
+    pub nav: Mutex<Arc<Vec<NavFrame>>>,
     pub cmd_tx: tokio::sync::mpsc::UnboundedSender<TrayCmd>,
   }
 
   impl TrayState {
     pub fn reset_nav(&self) {
-      *self.nav.lock().unwrap() = Vec::new();
+      *self.nav.lock().unwrap() = Arc::new(Vec::new());
     }
   }
 
@@ -221,10 +221,14 @@ pub mod desktop {
   #[derive(Clone, Debug)]
   pub struct AppEntry {
     pub name: String,
+    pub name_lower: String,
     pub comment: Option<String>,
+    pub comment_lower: Option<String>,
     pub icon: Option<String>,
     pub exec: String,
+    pub exec_lower: String,
     pub keywords: Vec<String>,
+    pub keywords_lower: Vec<String>,
     pub categories: Vec<String>,
     pub actions: Vec<DesktopAction>,
   }
@@ -309,7 +313,7 @@ pub mod desktop {
 
           let comment = entry.comment::<&str>(&[]).map(|s| s.into_owned());
           let icon = entry.icon().map(|s| s.to_string());
-          let keywords = entry
+          let keywords: Vec<String> = entry
             .keywords::<&str>(&[])
             .unwrap_or_default()
             .into_iter()
@@ -345,12 +349,24 @@ pub mod desktop {
             })
             .collect();
 
+          let name_lower = name.to_lowercase();
+          let comment_lower = comment.as_ref().map(|comment| comment.to_lowercase());
+          let exec_lower = exec.to_lowercase();
+          let keywords_lower = keywords
+            .iter()
+            .map(|keyword| keyword.to_lowercase())
+            .collect();
+
           apps.push(AppEntry {
             name,
+            name_lower,
             comment,
+            comment_lower,
             icon,
             exec,
+            exec_lower,
             keywords,
+            keywords_lower,
             categories,
             actions,
           });
@@ -358,7 +374,7 @@ pub mod desktop {
       }
     }
 
-    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps.sort_by(|a, b| a.name_lower.cmp(&b.name_lower));
 
     DesktopEntriesData {
       all_entries,
