@@ -48,6 +48,7 @@ pub mod popups {
     pub position: (PopupPosition, PopupPosition),
     pub content: Ustr,
     pub panel_edge: Option<PanelEdge>,
+    pub insets: bool,
   }
 
   impl PopupPosition {

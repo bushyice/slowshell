@@ -125,6 +125,7 @@ impl Renderable for QuickSettingsRenderable {
       id,
       &mut allocator,
       &self.slots,
+      Some(data),
     );
     children.push(grid);
 
@@ -137,6 +138,7 @@ impl Renderable for QuickSettingsRenderable {
           id,
           &mut allocator,
           &self.slots,
+          Some(data),
         ));
       }
     }
@@ -245,13 +247,14 @@ fn render_tile_grid<'a>(
   id: IcedId,
   allocator: &mut SlotAllocator,
   slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
+  settings: Option<&PopupSettings>,
 ) -> Element<'a, ItemMessage> {
   let mut rows: Vec<Element<'a, ItemMessage>> = Vec::new();
   let mut current: Vec<Element<'a, ItemMessage>> = Vec::new();
 
   for tile in tiles {
     let is_expanded = expanded == Some(tile.id.as_str());
-    let rendered = tile_element(config, tile, is_expanded, id, allocator, slots);
+    let rendered = tile_element(config, tile, is_expanded, id, allocator, slots, settings);
     current.push(rendered);
 
     if current.len() == 2 {
@@ -274,6 +277,7 @@ fn tile_element<'a>(
   id: IcedId,
   allocator: &mut SlotAllocator,
   slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
+  settings: Option<&PopupSettings>,
 ) -> Element<'a, ItemMessage> {
   let base = render_tile(tile, expanded, config);
 
@@ -281,7 +285,7 @@ fn tile_element<'a>(
     TileAction::None => base,
     TileAction::Command(command) => render_action_tile(base, action_message(command)),
     TileAction::Commands(commands) => render_action_tile(base, commands_message(commands)),
-    TileAction::Menu(menu) => render_action_tile(base, menu_open_message(id, menu)),
+    TileAction::Menu(menu) => render_action_tile(base, menu_open_message(id, menu, settings)),
     TileAction::Expand => {
       let slot = allocator.allocate(&tile.id, slots);
       clickable(base, move |_, _, _| {
@@ -320,20 +324,28 @@ fn commands_message(commands: Vec<String>) -> ItemMessage {
   }))
 }
 
-fn menu_open_message(id: IcedId, content: String) -> ItemMessage {
+fn menu_open_message(id: IcedId, content: String, settings: Option<&PopupSettings>) -> ItemMessage {
   ItemMessage::EffectAction(
     id,
     ItemEffect::Hide,
     ListenerAction::Payload {
       name: "popup.open".to_ustr(),
-      payload: Some(slowshell_core::types::PayloadBox::new(PopupSettings {
-        content: content.to_ustr(),
-        panel_edge: None,
-        position: (
-          slowshell_commons::popups::PopupPosition::Fixed(0.0),
-          slowshell_commons::popups::PopupPosition::Fixed(0.0),
-        ),
-      })),
+      payload: Some(slowshell_core::types::PayloadBox::new(
+        settings
+          .map(|p| PopupSettings {
+            content: content.to_ustr(),
+            ..p.clone()
+          })
+          .unwrap_or(PopupSettings {
+            content: content.to_ustr(),
+            panel_edge: None,
+            position: (
+              slowshell_commons::popups::PopupPosition::Fixed(0.0),
+              slowshell_commons::popups::PopupPosition::Fixed(0.0),
+            ),
+            insets: false,
+          }),
+      )),
     },
   )
 }
@@ -351,10 +363,11 @@ fn render_expanded<'a>(
   id: IcedId,
   allocator: &mut SlotAllocator,
   slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
+  settings: Option<&PopupSettings>,
 ) -> Element<'a, ItemMessage> {
   let mut items: Vec<Element<'a, ItemMessage>> = tiles
     .iter()
-    .map(|tile| tile_element(config, tile, false, id, allocator, slots))
+    .map(|tile| tile_element(config, tile, false, id, allocator, slots, settings))
     .collect();
 
   if items.is_empty() {

@@ -26,6 +26,7 @@ pub struct Popup {
 impl Popup {
   fn base_events() -> Vec<EventFilter> {
     vec![
+      EventFilter::Payload("popup.toggle".into()),
       EventFilter::Payload("popup.open".into()),
       EventFilter::Payload("popup.close".into()),
     ]
@@ -73,6 +74,33 @@ impl Popup {
 
     Some(result)
   }
+
+  fn open(
+    &mut self,
+    config: &Config,
+    store: &mut Store,
+    settings: &PopupSettings,
+  ) -> miette::Result<ItemEffect> {
+    let available = store
+      .borrow::<Renderables>()
+      .is_some_and(|x| x.contains_key(&settings.content));
+
+    if available {
+      self.current = Some(settings.clone());
+
+      self.with_renderable(store, |renderable, store| {
+        renderable.initialize(config, store);
+      });
+
+      Ok(ItemEffect::ShowAndSubscribe(self.events_for(store)))
+    } else {
+      eprintln!(
+        "[popup] no renderable registered for content '{}'",
+        settings.content
+      );
+      Ok(ItemEffect::None)
+    }
+  }
 }
 
 impl DesktopItem for Popup {
@@ -81,8 +109,13 @@ impl DesktopItem for Popup {
   }
 
   fn layer(&self, _config: &Config, _monitor: &str) -> NewLayerShellSettings {
+    let layer = match &self.current {
+      Some(current) if current.insets => Layer::Top,
+      _ => Layer::Overlay,
+    };
+
     NewLayerShellSettings {
-      layer: Layer::Overlay,
+      layer,
       anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
       exclusive_zone: Some(-1),
       size: None,
@@ -113,6 +146,30 @@ impl DesktopItem for Popup {
     event: &ListenerAction,
   ) -> miette::Result<ItemEffect> {
     match event {
+      ListenerAction::Payload { name, payload } if name.as_ref() == "popup.toggle" => {
+        let Some(payload) = payload else {
+          return Ok(ItemEffect::None);
+        };
+
+        let _ = payload.enforce::<PopupSettings>();
+
+        let settings = payload.as_this::<PopupSettings>();
+
+        let Some(settings) = settings else {
+          return Ok(ItemEffect::None);
+        };
+
+        if self
+          .current
+          .as_ref()
+          .is_some_and(|c| c.content == settings.content)
+        {
+          self.close_current(store);
+          Ok(ItemEffect::Subscribe(Self::base_events()))
+        } else {
+          self.open(config, store, settings)
+        }
+      }
       ListenerAction::Payload { name, payload } if name.as_ref() == "popup.open" => {
         let Some(payload) = payload else {
           return Ok(ItemEffect::None);
@@ -126,25 +183,7 @@ impl DesktopItem for Popup {
           return Ok(ItemEffect::None);
         };
 
-        let available = store
-          .borrow::<Renderables>()
-          .is_some_and(|x| x.contains_key(&settings.content));
-
-        if available {
-          self.current = Some(settings.clone());
-
-          self.with_renderable(store, |renderable, store| {
-            renderable.initialize(config, store);
-          });
-
-          Ok(ItemEffect::ShowAndSubscribe(self.events_for(store)))
-        } else {
-          eprintln!(
-            "[popup] no renderable registered for content '{}'",
-            settings.content
-          );
-          Ok(ItemEffect::None)
-        }
+        self.open(config, store, settings)
       }
       ListenerAction::Payload { name, payload } if name.as_ref() == "popup.close" => {
         let _ = payload;
@@ -245,12 +284,13 @@ fn settings_from_payload(payload: &HashMap<&str, &str>) -> Option<PopupSettings>
     position: (x, y),
     content: payload.get("content").map(|s| (*s).to_ustr())?,
     panel_edge,
+    insets: payload.get("insets").is_some(),
   })
 }
 
 slowshell_registry::register_resources!(
   payload: Unknown(PayloadBuilder {
-    commands: &["popup.open"],
+    commands: &["popup.open", "popup.toggle"],
     build: |_, args| {
       settings_from_payload(&args.as_map()).map(PayloadBox::new)
     }

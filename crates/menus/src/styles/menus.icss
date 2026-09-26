@@ -3,7 +3,6 @@
   border-radius: 12px;
   border-width: 1px;
   border-color: var(--overlay-a15);
-  box-shadow: 0px 4px 28px var(--base-a50);
   padding-v: 16px;
   padding-h: 16px;
   gap: 12px;

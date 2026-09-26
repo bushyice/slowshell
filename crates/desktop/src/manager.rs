@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{Element, Task};
-use iced_layershell::reexport::IcedId;
+use iced_layershell::reexport::{IcedId, Layer};
 use slowshell_config::Config;
 use slowshell_core::listeners::ListenerAction;
 use slowshell_core::message::Message;
@@ -20,6 +20,7 @@ pub struct DesktopItems {
   active: HashSet<usize>,
   windows: HashMap<IcedId, usize>,
   window_monitors: HashMap<IcedId, Ustr>,
+  window_layers: HashMap<IcedId, Layer>,
   reverse_windows: HashMap<usize, HashSet<IcedId>>,
   subscriptions: HashMap<EventFilter, HashSet<usize>>,
   monitors: Vec<Ustr>,
@@ -38,6 +39,7 @@ impl Default for DesktopItems {
       active: HashSet::new(),
       windows: HashMap::new(),
       window_monitors: HashMap::new(),
+      window_layers: HashMap::new(),
       reverse_windows: HashMap::new(),
       subscriptions: HashMap::new(),
       monitors: Vec::new(),
@@ -140,6 +142,7 @@ impl DesktopItems {
 
     for wid in wids {
       self.window_monitors.remove(&wid);
+      self.window_layers.remove(&wid);
       if let Some(idx) = self.windows.remove(&wid) {
         if let Some(set) = self.reverse_windows.get_mut(&idx) {
           set.remove(&wid);
@@ -165,9 +168,11 @@ impl DesktopItems {
         None => return Task::none(),
       }
     };
+    let layer = settings.layer;
     let (id, task) = Message::open_layer(settings);
     self.windows.insert(id, idx);
     self.window_monitors.insert(id, monitor.clone());
+    self.window_layers.insert(id, layer);
     self.reverse_windows.entry(idx).or_default().insert(id);
     task
   }
@@ -498,6 +503,50 @@ impl DesktopItems {
     Task::none()
   }
 
+  fn show_or_sync(&mut self, config: &Config, idx: usize) -> Task<Message> {
+    if self.reverse_windows.contains_key(&idx) {
+      self.sync_window_layers(config, idx)
+    } else {
+      self.launch_all(config, idx)
+    }
+  }
+
+  fn sync_window_layers(&mut self, config: &Config, idx: usize) -> Task<Message> {
+    let Some(wids) = self.reverse_windows.get(&idx).cloned() else {
+      return Task::none();
+    };
+
+    let mut tasks = Vec::new();
+
+    for wid in wids {
+      let monitor = self
+        .window_monitors
+        .get(&wid)
+        .map(|m| m.to_string())
+        .unwrap_or_default();
+
+      let desired = self
+        .items
+        .get(idx)
+        .and_then(|slot| slot.as_ref())
+        .map(|item| item.layer(config, &monitor).layer);
+
+      let Some(desired) = desired else {
+        continue;
+      };
+
+      if self.window_layers.get(&wid) != Some(&desired) {
+        self.window_layers.insert(wid, desired);
+        tasks.push(Task::done(Message::LayerChange {
+          id: wid,
+          layer: desired,
+        }));
+      }
+    }
+
+    Task::batch(tasks)
+  }
+
   fn apply_effect(
     &mut self,
     config: &Config,
@@ -515,11 +564,7 @@ impl DesktopItems {
         task
       }
       ItemEffect::ShowAndSubscribe(new_filters) => {
-        let task = if !self.reverse_windows.contains_key(&idx) {
-          Some(self.launch_all(config, idx))
-        } else {
-          None
-        };
+        let task = Some(self.show_or_sync(config, idx));
         self.active.insert(idx);
 
         self.remove_subscriptions(idx);
@@ -597,6 +642,7 @@ impl DesktopItems {
       for wid in wids {
         self.windows.remove(&wid);
         self.window_monitors.remove(&wid);
+        self.window_layers.remove(&wid);
         tasks.push(Task::done(Message::RemoveWindow(wid)));
       }
     }
@@ -809,6 +855,102 @@ mod tests {
     assert!(
       !items.wants_frames(),
       "the frame loop must stop once the last frame subscriber unsubscribes"
+    );
+  }
+
+  struct MockLayer {
+    id: &'static str,
+    layer: Layer,
+    layer_calls: Arc<Mutex<usize>>,
+  }
+
+  impl DesktopItem for MockLayer {
+    fn id(&self) -> &str {
+      self.id
+    }
+
+    fn layer(&self, _config: &Config, _monitor: &str) -> NewLayerShellSettings {
+      *self.layer_calls.lock().unwrap() += 1;
+      NewLayerShellSettings {
+        layer: self.layer,
+        ..Default::default()
+      }
+    }
+
+    fn visibility(&self) -> Visibility {
+      Visibility::Toggleable(false)
+    }
+
+    fn update_strategy(&self) -> UpdateWhen {
+      UpdateWhen::OnDemand
+    }
+
+    fn init_events(&self) -> Vec<EventFilter> {
+      Vec::new()
+    }
+
+    fn update(
+      &mut self,
+      _config: &Config,
+      _store: &mut Store,
+      _event: &ListenerAction,
+    ) -> miette::Result<ItemEffect> {
+      Ok(ItemEffect::None)
+    }
+
+    fn view<'a>(
+      &'a self,
+      _config: &'a Config,
+      _store: &'a Store,
+      _id: IcedId,
+      _monitor: &str,
+    ) -> Element<'a, ItemMessage> {
+      iced::widget::Space::new().into()
+    }
+  }
+
+  #[test]
+  fn only_show_and_subscribe_resyncs_window_layers() {
+    let config = Config::default();
+    let mut items = DesktopItems::new();
+    let calls = Arc::new(Mutex::new(0));
+
+    let _ = items.register(
+      &config,
+      Box::new(MockLayer {
+        id: "mock-layer",
+        layer: Layer::Top,
+        layer_calls: Arc::clone(&calls),
+      }),
+    );
+
+    let idx = items.index["mock-layer"];
+    let wid = IcedId::unique();
+    items.windows.insert(wid, idx);
+    items.reverse_windows.entry(idx).or_default().insert(wid);
+    items.window_monitors.insert(wid, "monitor".into());
+    items.window_layers.insert(wid, Layer::Overlay);
+
+    let _ = items.apply_effect(&config, idx, ItemEffect::Show);
+
+    assert_eq!(
+      *calls.lock().unwrap(),
+      0,
+      "plain Show must not re-read the item layer"
+    );
+    assert_eq!(items.window_layers[&wid], Layer::Overlay);
+
+    let _ = items.apply_effect(&config, idx, ItemEffect::ShowAndSubscribe(Vec::new()));
+
+    assert_eq!(
+      *calls.lock().unwrap(),
+      1,
+      "ShowAndSubscribe must re-read the item layer"
+    );
+    assert_eq!(
+      items.window_layers[&wid],
+      Layer::Top,
+      "the new layer must be remembered so it is only sent once"
     );
   }
 }

@@ -68,6 +68,16 @@ impl Component for SystemMon {
   }
 
   fn watch(&mut self, store: &mut Store, options: Option<&ComponentOptions>) {
+    if options
+      .and_then(|o| o.bool("processes"))
+      .is_some_and(|x| x == false)
+    {
+      let mut shared = SystemState::default();
+      shared.sample_processes = false.into();
+
+      self.shared = Arc::new(shared);
+    }
+
     store.insert(self.shared.clone());
 
     if self.timer_fd.is_some() {

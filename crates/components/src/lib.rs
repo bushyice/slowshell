@@ -163,7 +163,7 @@ pub struct MenuConfig {
 
 pub fn popup_open_action(config: &MenuConfig, cursor: iced::Point) -> ListenerAction {
   ListenerAction::Payload {
-    name: "popup.open".to_ustr(),
+    name: "popup.toggle".to_ustr(),
     payload: Some(PayloadBox::new(PopupSettings {
       content: config.content.clone(),
       panel_edge: Some(config.position),
@@ -184,6 +184,7 @@ pub fn popup_open_action(config: &MenuConfig, cursor: iced::Point) -> ListenerAc
         ),
         PanelEdge::Right { .. } => (PopupPosition::Fixed(0.0), PopupPosition::Fixed(cursor.y)),
       },
+      insets: true,
     })),
   }
 }
