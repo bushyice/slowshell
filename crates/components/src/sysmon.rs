@@ -150,6 +150,8 @@ impl Component for SystemMon {
 
     let labels = options.and_then(|o| o.bool("labels")).unwrap_or(true);
 
+    let percents = options.and_then(|o| o.bool("percents")).unwrap_or(true);
+
     let progress = options.and_then(|o| o.bool("progress")).unwrap_or(false);
 
     let progress_direction = options
@@ -173,6 +175,7 @@ impl Component for SystemMon {
         icon_names,
         icons,
         labels,
+        percents,
         progress,
         progress_direction,
         font_size,
@@ -220,6 +223,7 @@ impl SystemMon {
     icon_names: [Option<&str>; 3],
     icons: bool,
     labels: bool,
+    percents: bool,
     progress: bool,
     progress_direction: &str,
     font_size: f32,
@@ -362,6 +366,8 @@ impl SystemMon {
       let (glyph_label, inline_value): (Option<String>, Option<String>) = if vertical && pct_item {
         if labels {
           (Some(label.to_string()), Some(value.clone()))
+        } else if percents {
+          (Some(value), None)
         } else if !icons {
           (None, Some(value.clone()))
         } else {
@@ -369,6 +375,8 @@ impl SystemMon {
         }
       } else if labels {
         (Some(format!("{label} {value}")), None)
+      } else if percents {
+        (Some(value), None)
       } else if !icons {
         (Some(value.clone()), None)
       } else {
@@ -408,7 +416,17 @@ impl SystemMon {
 
       if let Some(label) = glyph_label {
         if vertical {
-          col.insert(0, vertical_text(&label, font_size, color));
+          col.insert(
+            0,
+            if percents {
+              text(label.trim_end_matches("%").to_string())
+                .size(font_size - 2.0)
+                .color(color)
+                .into()
+            } else {
+              vertical_text(&label, font_size, color)
+            },
+          );
         } else {
           col.insert(0, text(label).size(font_size).color(color).into());
         }

@@ -127,6 +127,7 @@ pub struct ComponentContext<'a> {
   pub position: PanelEdge,
   pub orientation: PanelOrientation,
   pub monitor: &'a str,
+  pub menu_suppressed: bool,
 }
 
 impl<'a> ComponentContext<'a> {
@@ -222,10 +223,18 @@ pub fn spaced_component<'a>(
 
   let body = iced::widget::container(fill_cross(content, ctx.orientation)).padding(padding);
 
-  if !hoverable {
+  if !hoverable || ctx.menu_suppressed {
     return body.into();
   }
 
+  hover_background(config, ctx, body.into())
+}
+
+pub fn hover_background<'a>(
+  config: &'a Config,
+  ctx: &ComponentContext,
+  content: Element<'a, ItemMessage>,
+) -> Element<'a, ItemMessage> {
   let component_style = config.computed(ctx.classes());
   let radius = component_style.length("hover-radius").unwrap_or(4.0);
 
@@ -233,8 +242,8 @@ pub fn spaced_component<'a>(
     .color("hover-background")
     .map(|c| c.to_iced())
   {
-    Some(color) => HoverBackground::new(body, color, radius).into(),
-    None => body.into(),
+    Some(color) => HoverBackground::new(content, color, radius).into(),
+    None => content,
   }
 }
 
@@ -250,6 +259,10 @@ pub fn menu_trigger<'a>(
   } else {
     fill_cross(content, ctx.orientation)
   };
+
+  if ctx.menu_suppressed {
+    return body;
+  }
 
   let action =
     move |event: &Event, layout: iced::advanced::layout::Layout<'_>, cursor: mouse::Cursor| {

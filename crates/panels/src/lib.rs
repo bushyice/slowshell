@@ -16,7 +16,8 @@ use iced_layershell::reexport::{
 use slowshell_commons::panels::PanelOrientation;
 pub use slowshell_commons::panels::{PanelEdge, PanelPositions};
 use slowshell_components::{
-  Component, ComponentContext, ComponentOptions, Components, spaced_component,
+  Component, ComponentContext, ComponentOptions, Components, MenuConfig, hover_background,
+  menu_trigger, spaced_component,
 };
 use slowshell_config::{
   Config, ConfigParser, Value, child, child_str_owned, find_node, node_children, node_name,
@@ -82,6 +83,7 @@ pub enum PanelConfigComponent {
     label: String,
     items: Vec<PanelConfigComponent>,
     prefix: Option<PanelConfigComponentItem>,
+    menu: Option<Ustr>,
   },
 }
 
@@ -157,11 +159,13 @@ pub fn build_panel_from_config(name: &str, conf: &PanelConfig, store: &Store) ->
             items,
             label,
             prefix,
+            menu,
           } = component
           {
             panel = panel.with_group(
               section,
               label,
+              menu.clone(),
               items
                 .iter()
                 .map(|component| {
@@ -345,6 +349,7 @@ pub enum PanelItemCell {
     label: String,
     items: Vec<PanelItem>,
     prefix: Option<PanelItem>,
+    menu: Option<Ustr>,
   },
   Item(PanelItem),
 }
@@ -565,6 +570,7 @@ impl Panel {
     mut self,
     section: &str,
     label: impl Into<String>,
+    menu: Option<Ustr>,
     items: Vec<(
       impl Into<String>,
       Option<Box<dyn Component>>,
@@ -593,6 +599,7 @@ impl Panel {
         options,
         events: None,
       }),
+      menu,
     };
 
     match section {
@@ -726,11 +733,17 @@ impl Panel {
         PanelConfigComponent::Group {
           items: group_items,
           prefix: group_prefix,
+          menu: group_menu,
           ..
         } => {
           let mut old_cell = old_map.remove(&label);
-          let (existing_items, existing_prefix) = match old_cell.take() {
-            Some(PanelItemCell::Group { items, prefix, .. }) => (items, prefix),
+          let (existing_items, existing_prefix, existing_menu) = match old_cell.take() {
+            Some(PanelItemCell::Group {
+              items,
+              prefix,
+              menu,
+              ..
+            }) => (items, prefix, menu),
             Some(other) => {
               for mut item in other.into_all() {
                 if let Some(comp) = &mut item.component {
@@ -738,13 +751,17 @@ impl Panel {
                 }
               }
               changed = true;
-              (Vec::new(), None)
+              (Vec::new(), None, None)
             }
             None => {
               changed = true;
-              (Vec::new(), None)
+              (Vec::new(), None, None)
             }
           };
+
+          if existing_menu.as_ref() != group_menu.as_ref() {
+            changed = true;
+          }
 
           let mut old_item_map: HashMap<String, PanelItem> = HashMap::new();
           for item in existing_items {
@@ -839,6 +856,7 @@ impl Panel {
             label,
             items: new_group_items,
             prefix: new_prefix_item,
+            menu: group_menu.clone(),
           });
         }
         _ => {
@@ -1073,6 +1091,7 @@ impl Panel {
     let margin = config.computed(&["item"]).length("margin").unwrap_or(4.0);
 
     let mut has_prefix: Option<Element<'a, ItemMessage>> = None;
+    let mut has_menu = None;
 
     let content: Element<'a, ItemMessage> = match item {
       PanelItemCell::Item(item) => {
@@ -1084,12 +1103,27 @@ impl Panel {
         Self::create_item(config, store, ctx, item)
       }
 
-      PanelItemCell::Group { items, prefix, .. } if item.has_items() => {
+      PanelItemCell::Group {
+        items,
+        prefix,
+        menu,
+        ..
+      } if item.has_items() => {
+        has_menu = menu.clone();
+
+        let child_ctx = ComponentContext {
+          panel_name: ctx.panel_name,
+          position: ctx.position,
+          orientation: ctx.orientation,
+          monitor: ctx.monitor,
+          menu_suppressed: has_menu.is_some(),
+        };
+
         let main = if horizontal {
           row(
             items
               .iter()
-              .map(|item| Self::create_item(config, store, ctx, item)),
+              .map(|item| Self::create_item(config, store, &child_ctx, item)),
           )
           .align_y(Alignment::Center)
           .width(if horizontal {
@@ -1108,7 +1142,7 @@ impl Panel {
           column(
             items
               .iter()
-              .map(|item| Self::create_item(config, store, ctx, item)),
+              .map(|item| Self::create_item(config, store, &child_ctx, item)),
           )
           .width(if horizontal {
             Length::Shrink
@@ -1133,7 +1167,7 @@ impl Panel {
             .and_then(|name| config.palette().color(name));
 
           let prefix_content: Element<'a, ItemMessage> =
-            Self::create_item(config, store, ctx, prefix);
+            Self::create_item(config, store, &child_ctx, prefix);
 
           let prefix_container = container(prefix_content)
             .padding(if ctx.orientation == PanelOrientation::Vertical {
@@ -1209,7 +1243,26 @@ impl Panel {
         .into()
     };
 
-    let mut content = container(inner).style(config.container_cached(&["item"]));
+    let mut content = container(if let Some(menu) = has_menu {
+      hover_background(
+        config,
+        ctx,
+        menu_trigger(
+          inner,
+          MenuConfig {
+            content: menu,
+            panel_name: Some(ctx.panel_name.into()),
+            position: ctx.position,
+          },
+          config,
+          ctx,
+          false,
+        ),
+      )
+    } else {
+      inner
+    })
+    .style(config.container_cached(&["item"]));
 
     if horizontal {
       content = content.height(Length::Fill).align_y(Alignment::Center);
@@ -1589,6 +1642,7 @@ impl DesktopItem for Panel {
         PanelOrientation::Vertical
       },
       monitor,
+      menu_suppressed: false,
     };
     let left = Self::render_section(
       config,
@@ -1741,6 +1795,7 @@ fn parse_panel_component(node: &kdl::KdlNode) -> Option<PanelConfigComponent> {
       let label = str_arg(node, 0)?.to_string();
       let mut items = Vec::new();
       let mut prefix = None;
+      let mut menu = None::<Ustr>;
       for child in node_children(node) {
         match node_name(child) {
           "item" => {
@@ -1749,6 +1804,7 @@ fn parse_panel_component(node: &kdl::KdlNode) -> Option<PanelConfigComponent> {
             }
           }
           "prefix" => prefix = parse_component_item(child),
+          "menu" => menu = str_arg(child, 0).map(|s| s.into()),
           _ => {}
         }
       }
@@ -1756,6 +1812,7 @@ fn parse_panel_component(node: &kdl::KdlNode) -> Option<PanelConfigComponent> {
         label,
         items,
         prefix,
+        menu,
       })
     }
     _ => None,

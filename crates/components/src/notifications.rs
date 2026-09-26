@@ -305,6 +305,8 @@ impl Component for Notifications {
       position: ctx.position,
     };
 
+    let menu_suppressed = ctx.menu_suppressed;
+
     let action =
       move |event: &Event, layout: iced::advanced::layout::Layout<'_>, cursor: mouse::Cursor| {
         if !cursor.is_over(layout.bounds()) {
@@ -318,7 +320,7 @@ impl Component for Notifications {
             name: "notifications.toggle_dnd".into(),
             payload: None,
           })),
-          Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+          Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if !menu_suppressed => {
             let point = cursor.position()?;
             Some(ItemMessage::Action(popup_open_action(&menu_config, point)))
           }

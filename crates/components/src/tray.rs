@@ -195,6 +195,7 @@ impl Component for SystemTray {
 
     let shared = global().shared.clone();
     let position = ctx.position;
+    let menu_suppressed = ctx.menu_suppressed;
     for item in items.iter() {
       if let Some(el) = render_item(item, icon_size, color) {
         let shared = shared.clone();
@@ -202,7 +203,7 @@ impl Component for SystemTray {
         let menu_path = item.menu_path.clone();
         let has_menu = menu_path.is_some();
         let el = clickable(el, move |_, _, cursor| {
-          if !has_menu {
+          if !has_menu || menu_suppressed {
             return None;
           }
           let Some(point) = cursor.position() else {
