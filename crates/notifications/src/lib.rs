@@ -159,7 +159,7 @@ impl DesktopItem for NotificationManager {
   }
 
   fn update_strategy(&self) -> UpdateWhen {
-    UpdateWhen::OnDemand
+    UpdateWhen::OnEvent
   }
 
   fn monitor(&self, _: &Config) -> MonitorScope {
