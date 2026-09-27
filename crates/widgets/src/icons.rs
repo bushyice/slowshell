@@ -360,6 +360,24 @@ fn rasterized_icon(handle: &svg::Handle, size: u16, color: Option<Color>) -> Opt
 }
 
 fn render_svg(handle: &svg::Handle, size: u16, color: Option<[u8; 4]>) -> Option<image::Handle> {
+  let pixmap = render_svg_pixmap(handle, size)?;
+
+  let mut rgba = pixmap.take();
+
+  if let Some(color) = color {
+    rgba.chunks_exact_mut(4).for_each(|pixel| {
+      if pixel[3] > 0 {
+        pixel[0] = color[0];
+        pixel[1] = color[1];
+        pixel[2] = color[2];
+      }
+    });
+  }
+
+  Some(image::Handle::from_rgba(size as u32, size as u32, rgba))
+}
+
+fn render_svg_pixmap(handle: &svg::Handle, size: u16) -> Option<tiny_skia::Pixmap> {
   let options = usvg::Options::default();
 
   let tree = match handle.data() {
@@ -377,28 +395,20 @@ fn render_svg(handle: &svg::Handle, size: u16, color: Option<[u8; 4]>) -> Option
     return None;
   }
 
-  let scale = pixels as f32 / tree_size.height();
+  let scale = pixels as f32 / tree_size.width().max(tree_size.height());
+  let offset = (
+    (pixels as f32 - tree_size.width() * scale) / 2.0,
+    (pixels as f32 - tree_size.height() * scale) / 2.0,
+  );
   let mut pixmap = tiny_skia::Pixmap::new(pixels, pixels)?;
 
   resvg::render(
     &tree,
-    tiny_skia::Transform::from_scale(scale, scale),
+    tiny_skia::Transform::from_translate(offset.0, offset.1).pre_scale(scale, scale),
     &mut pixmap.as_mut(),
   );
 
-  let mut rgba = pixmap.take();
-
-  if let Some(color) = color {
-    rgba.chunks_exact_mut(4).for_each(|pixel| {
-      if pixel[3] > 0 {
-        pixel[0] = color[0];
-        pixel[1] = color[1];
-        pixel[2] = color[2];
-      }
-    });
-  }
-
-  Some(image::Handle::from_rgba(pixels, pixels, rgba))
+  Some(pixmap)
 }
 
 // stupid shit
