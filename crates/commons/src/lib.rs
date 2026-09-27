@@ -515,6 +515,20 @@ pub mod desktop {
 
     pub fn register_path(&self, path: &Path) -> Option<AppEntry> {
       let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+      {
+        let data = self.data.read().unwrap();
+
+        if data.all_entries.contains(&path) {
+          let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(|stem| stem.to_lowercase())?;
+
+          return data.apps.iter().find(|app| app.id_lower == stem).cloned();
+        }
+      }
+
       let (app, keys) = parse_entry(&path)?;
 
       let mut data = self.data.write().unwrap();

@@ -190,6 +190,7 @@ impl std::fmt::Debug for ItemMessage {
 pub enum Message {
   Tick,
   FdUpdate(ListenerAction),
+  FdBatch(Vec<ListenerAction>),
   LinkAction(u32, ListenerAction),
   LinkedAction(u32, ListenerAction),
   Item(ItemMessage),

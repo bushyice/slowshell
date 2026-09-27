@@ -9,12 +9,12 @@ use futures_channel::mpsc::UnboundedSender;
 use miette::{IntoDiagnostic, Result};
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use nix::sys::{
-  epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags},
+  epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout},
   time::TimeSpec,
   timer::{Expiration, TimerSetTimeFlags},
   timerfd::{ClockId, TimerFd, TimerFlags},
 };
-use slowshell_core::listeners::{FdCommand, Listeners};
+use slowshell_core::listeners::{FdCommand, ListenerAction, Listeners};
 use slowshell_core::message::Message;
 
 pub struct EventLoop {
@@ -127,69 +127,117 @@ impl EventLoop {
         }
       };
 
-      for i in 0..n {
-        let event = events[i];
-        match event.data() {
-          0 => {
-            let mut buf = [0u8; 8];
-            let _ = nix::unistd::read(self.timer_fd.as_fd(), &mut buf);
-            let _ = self.tx.unbounded_send(Message::Tick);
-          }
-          1 => {
-            let mut buf = [0u8; 128];
-            while let Ok(n) = nix::unistd::read(self.wake_read.as_fd(), &mut buf) {
-              if n == 0 {
-                break;
-              }
-            }
-            while let Ok(cmd) = self.rx.try_recv() {
-              match cmd {
-                FdCommand::Register {
-                  fd,
-                  flags,
-                  action,
-                  oneshot,
-                } => {
-                  let raw = fd.as_raw_fd();
-                  self.listeners.own(raw, fd);
-                  self.listeners.flag(raw, flags);
-                  self.listeners.action(raw, action);
-                  if oneshot {
-                    self.oneshot_fds.insert(raw);
-                  }
-                }
-                FdCommand::WatchRaw { fd, flags, action } => {
-                  self.listeners.flag(fd, flags);
-                  self.listeners.action(fd, action);
-                }
-                FdCommand::Terminate(fd) => {
-                  self.oneshot_fds.remove(&fd);
-                  self.listeners.terminate(fd);
-                }
-              }
-            }
-          }
-          d if d >= 100 => {
-            let fd = (d - 100) as i32;
-            let flags = event.events();
-            if flags.contains(EpollFlags::EPOLLHUP) || flags.contains(EpollFlags::EPOLLERR) {
-              self.oneshot_fds.remove(&fd);
-              self.listeners.terminate(fd);
-              continue;
-            }
+      let mut batch: Vec<ListenerAction> = Vec::new();
+      let mut seen: HashSet<String> = HashSet::new();
+      let mut tick = false;
 
-            if let Some(action) = self.listeners.get_action(fd).cloned() {
-              let _ = self.tx.unbounded_send(Message::FdUpdate(action));
-            }
-            if self.listeners.is_timer(fd) {
-              let mut buf = [0u8; 8];
-              let _ = nix::unistd::read(unsafe { BorrowedFd::borrow_raw(fd) }, &mut buf);
-            }
-            if self.oneshot_fds.remove(&fd) {
-              self.listeners.terminate(fd);
+      self.collect_events(&events[..n], &mut batch, &mut seen, &mut tick);
+
+      for _ in 0..4 {
+        match self.epoll.wait(&mut events, EpollTimeout::ZERO) {
+          Ok(0) => break,
+          Ok(extra) => self.collect_events(&events[..extra], &mut batch, &mut seen, &mut tick),
+          Err(nix::Error::EINTR) => continue,
+          Err(_) => break,
+        }
+      }
+
+      if tick {
+        let _ = self.tx.unbounded_send(Message::Tick);
+      }
+
+      if !batch.is_empty() {
+        let _ = self.tx.unbounded_send(Message::FdBatch(batch));
+      }
+    }
+  }
+
+  fn collect_events(
+    &mut self,
+    events: &[EpollEvent],
+    batch: &mut Vec<ListenerAction>,
+    seen: &mut HashSet<String>,
+    tick: &mut bool,
+  ) {
+    for event in events {
+      match event.data() {
+        0 => {
+          let mut buf = [0u8; 8];
+          let _ = nix::unistd::read(self.timer_fd.as_fd(), &mut buf);
+          *tick = true;
+        }
+        1 => {
+          let mut buf = [0u8; 128];
+          while let Ok(read) = nix::unistd::read(self.wake_read.as_fd(), &mut buf) {
+            if read == 0 {
+              break;
             }
           }
-          _ => {}
+          self.drain_commands();
+        }
+        d if d >= 100 => {
+          let fd = (d - 100) as i32;
+          let flags = event.events();
+
+          if flags.contains(EpollFlags::EPOLLHUP) || flags.contains(EpollFlags::EPOLLERR) {
+            self.oneshot_fds.remove(&fd);
+            self.listeners.terminate(fd);
+            continue;
+          }
+
+          if let Some(action) = self.listeners.get_action(fd).cloned() {
+            let key = match &action {
+              ListenerAction::UpdateCompositor(mask) => Some(format!("comp:{mask:?}")),
+              ListenerAction::Signal { name, fd } => Some(format!("sig:{name}:{fd}")),
+              ListenerAction::Timer { fd, .. } => Some(format!("timer:{fd}")),
+              _ => None,
+            };
+
+            let duplicate = key.is_some_and(|key| !seen.insert(key));
+
+            if !duplicate {
+              batch.push(action);
+            }
+          }
+
+          if self.listeners.is_timer(fd) {
+            let mut buf = [0u8; 8];
+            let _ = nix::unistd::read(unsafe { BorrowedFd::borrow_raw(fd) }, &mut buf);
+          }
+
+          if self.oneshot_fds.remove(&fd) {
+            self.listeners.terminate(fd);
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+
+  fn drain_commands(&mut self) {
+    while let Ok(cmd) = self.rx.try_recv() {
+      match cmd {
+        FdCommand::Register {
+          fd,
+          flags,
+          action,
+          oneshot,
+        } => {
+          let raw = fd.as_raw_fd();
+          self.listeners.own(raw, fd);
+          self.listeners.flag(raw, flags);
+          self.listeners.action(raw, action);
+          if oneshot {
+            self.oneshot_fds.insert(raw);
+          }
+        }
+        FdCommand::WatchRaw { fd, flags, action } => {
+          self.listeners.flag(fd, flags);
+          self.listeners.action(fd, action);
+        }
+        FdCommand::Terminate(fd) => {
+          self.oneshot_fds.remove(&fd);
+          self.listeners.terminate(fd);
         }
       }
     }

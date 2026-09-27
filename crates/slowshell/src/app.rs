@@ -212,74 +212,13 @@ impl App {
         self.items.intialize(&mut self.store);
         Task::none()
       }
-      Message::FdUpdate(action) => {
-        let mut tasks = Vec::new();
-
-        let action = match action {
-          slowshell_core::listeners::ListenerAction::UpdateCompositor(_) => {
-            let Some(mut compositor) = self.store.remove::<CompositorStore>() else {
-              return Task::none();
-            };
-
-            let changed = match compositor.update_state(Some(&self.store)) {
-              Ok(changed) => changed,
-              Err(e) => {
-                eprintln!("Failed to update compositor state: {e}");
-                CompositorEvent::ALL
-              }
-            };
-
-            self.store.insert(compositor);
-
-            if changed.is_empty() {
-              return Task::none();
-            }
-
-            if changed.contains(CompositorEvent::MONITORS) {
-              tasks.push(Task::done(Message::UpdateMonitors));
-            }
-
-            slowshell_core::listeners::ListenerAction::UpdateCompositor(changed)
-          }
-          other => {
-            if let slowshell_core::listeners::ListenerAction::Named(name)
-            | slowshell_core::listeners::ListenerAction::Signal { name, .. }
-            | slowshell_core::listeners::ListenerAction::Timer { name, .. } = &other
-              && name.as_ref() == "config.reload"
-            {
-              if let Some(fd) = self.config_watcher_fd {
-                crate::watcher::drain_inotify_fd(fd);
-              }
-              match self.config.reload() {
-                Ok(()) => {
-                  slowshell_core::animations::configure(
-                    self
-                      .config
-                      .typed::<slowshell_config::AnimationsConfig>()
-                      .map(|c| c.enabled),
-                    cfg!(feature = "animations"),
-                  );
-                  println!("[config] Reloaded configuration");
-                }
-                Err(e) => {
-                  eprintln!("[config] Failed to reload configuration:\n{e:?}");
-                }
-              }
-            }
-
-            other
-          }
-        };
-
-        tasks.push(
-          self
-            .items
-            .check_deployables(&*self.config, &mut self.store, &action),
-        );
-        tasks.push(self.items.update(&*self.config, &mut self.store, &action));
-        self.items.intialize(&mut self.store);
-        Task::batch(tasks)
-      }
+      Message::FdUpdate(action) => self.handle_action(action),
+      Message::FdBatch(actions) => Task::batch(
+        actions
+          .into_iter()
+          .map(|action| self.handle_action(action))
+          .collect::<Vec<_>>(),
+      ),
       Message::Item(msg) => match msg {
         slowshell_core::message::ItemMessage::Action(
           slowshell_core::listeners::ListenerAction::FocusWorkspace(idx),
@@ -353,6 +292,75 @@ impl App {
       Message::Noop => Task::none(),
       _ => Task::none(),
     }
+  }
+
+  fn handle_action(&mut self, action: slowshell_core::listeners::ListenerAction) -> Task<Message> {
+    let mut tasks = Vec::new();
+
+    let action = match action {
+      slowshell_core::listeners::ListenerAction::UpdateCompositor(_) => {
+        let Some(mut compositor) = self.store.remove::<CompositorStore>() else {
+          return Task::none();
+        };
+
+        let changed = match compositor.update_state(Some(&self.store)) {
+          Ok(changed) => changed,
+          Err(e) => {
+            eprintln!("Failed to update compositor state: {e}");
+            CompositorEvent::ALL
+          }
+        };
+
+        self.store.insert(compositor);
+
+        if changed.is_empty() {
+          return Task::none();
+        }
+
+        if changed.contains(CompositorEvent::MONITORS) {
+          tasks.push(Task::done(Message::UpdateMonitors));
+        }
+
+        slowshell_core::listeners::ListenerAction::UpdateCompositor(changed)
+      }
+      other => {
+        if let slowshell_core::listeners::ListenerAction::Named(name)
+        | slowshell_core::listeners::ListenerAction::Signal { name, .. }
+        | slowshell_core::listeners::ListenerAction::Timer { name, .. } = &other
+          && name.as_ref() == "config.reload"
+        {
+          if let Some(fd) = self.config_watcher_fd {
+            crate::watcher::drain_inotify_fd(fd);
+          }
+          match self.config.reload() {
+            Ok(()) => {
+              slowshell_core::animations::configure(
+                self
+                  .config
+                  .typed::<slowshell_config::AnimationsConfig>()
+                  .map(|c| c.enabled),
+                cfg!(feature = "animations"),
+              );
+              println!("[config] Reloaded configuration");
+            }
+            Err(e) => {
+              eprintln!("[config] Failed to reload configuration:\n{e:?}");
+            }
+          }
+        }
+
+        other
+      }
+    };
+
+    tasks.push(
+      self
+        .items
+        .check_deployables(&*self.config, &mut self.store, &action),
+    );
+    tasks.push(self.items.update(&*self.config, &mut self.store, &action));
+    self.items.intialize(&mut self.store);
+    Task::batch(tasks)
   }
 
   pub fn subscription(&self) -> iced::Subscription<Message> {

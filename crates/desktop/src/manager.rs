@@ -13,6 +13,13 @@ use crate::{
   ItemMessage, MonitorScope, UpdateWhen, Visibility,
 };
 
+fn activation_event(action: &ListenerAction) -> bool {
+  matches!(
+    action,
+    ListenerAction::Named(_) | ListenerAction::Payload { .. } | ListenerAction::Ipc(_)
+  )
+}
+
 pub struct DesktopItems {
   items: Vec<Option<Box<dyn DesktopItem>>>,
   free: Vec<usize>,
@@ -430,12 +437,16 @@ impl DesktopItems {
     let mut pending_destroy: Vec<usize> = Vec::new();
 
     for idx in matching {
-      // if !self.active.contains(&idx) {
-      //   continue;
-      // }
+      let active = self.active.contains(&idx);
+
       let Some(item) = self.items.get_mut(idx).and_then(|slot| slot.as_mut()) else {
         continue;
       };
+
+      if !active && item.update_strategy() == UpdateWhen::OnDemand && !activation_event(event) {
+        continue;
+      }
+
       match item.update(config, store, event) {
         Ok(effect) => {
           if effect == ItemEffect::ReallyDestroy {

@@ -6,7 +6,7 @@ pub mod widgets;
 slowshell_registry::register_resources!(
   renderables: Renderable {
     name: "widgets/icon".into(),
-    create: |_, _| Some(Box::new(widgets::DesktopIconWidget))
+    create: |_, _| Some(Box::new(widgets::DesktopIconWidget::default()))
   },
   renderables: Renderable {
     name: "widgets/clock".into(),

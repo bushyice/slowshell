@@ -621,7 +621,36 @@ use slowshell_widgets::{
 };
 
 // `name`, `icon`, `label`, `size`, `label-size`, `color`, `show-label`
-pub struct DesktopIconWidget;
+#[derive(Default)]
+pub struct DesktopIconWidget {
+  entries: std::sync::Mutex<HashMap<String, slowshell_commons::desktop::AppEntry>>,
+}
+
+impl DesktopIconWidget {
+  fn resolve_entry(
+    &self,
+    store: &Store,
+    name: &str,
+  ) -> Option<slowshell_commons::desktop::AppEntry> {
+    if let Ok(guard) = self.entries.lock()
+      && let Some(entry) = guard.get(name)
+    {
+      return Some(entry.clone());
+    }
+
+    let entry = store
+      .borrow::<slowshell_commons::desktop::DesktopEntries>()
+      .and_then(|entries| entries.find(name));
+
+    if let Some(entry) = &entry
+      && let Ok(mut guard) = self.entries.lock()
+    {
+      guard.insert(name.to_string(), entry.clone());
+    }
+
+    entry
+  }
+}
 
 impl Renderable for DesktopIconWidget {
   fn view<'a>(
@@ -686,11 +715,7 @@ impl Renderable for DesktopIconWidget {
     let show_label = options.and_then(|o| o.bool("show-label")).unwrap_or(true);
 
     let requested = options.and_then(|o| o.str("name"));
-    let entry = requested.and_then(|name| {
-      store
-        .borrow::<slowshell_commons::desktop::DesktopEntries>()
-        .and_then(|entries| entries.find(name))
-    });
+    let entry = requested.and_then(|name| self.resolve_entry(store, name));
 
     let icon_name = options
       .and_then(|o| o.str("icon"))
