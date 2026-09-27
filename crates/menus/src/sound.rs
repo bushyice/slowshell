@@ -1,6 +1,6 @@
 use iced::{
   Alignment, Element, Length,
-  widget::{Space, column, container, row, slider},
+  widget::{Space, column, container, image, row, slider},
 };
 use iced_layershell::reexport::IcedId;
 use slowshell_commons::audio::{
@@ -14,7 +14,9 @@ use slowshell_core::{
   types::{PayloadBox, ToUstr},
 };
 use slowshell_popups::PopupSettings;
-use slowshell_widgets::{Backdrop, Icon, Renderable, SizedPopup, clickable, hover_row};
+use slowshell_widgets::{
+  Backdrop, Icon, Renderable, SizedPopup, clickable, hover_row, mpris_cover_handle, truncate,
+};
 
 pub struct SoundRenderable;
 
@@ -252,14 +254,17 @@ fn render_mpris_card<'a>(
 ) -> Element<'a, ItemMessage> {
   let theme = config.palette();
 
-  let title = config.text(player.title.clone(), &["menu", "text-body"]);
+  let title = config.text(truncate(&player.title, 20), &["menu", "text-body"]);
 
   let artist = config.text(
-    if !player.artist.is_empty() {
-      player.artist.clone()
-    } else {
-      player.identity.clone()
-    },
+    truncate(
+      if !player.artist.is_empty() {
+        &player.artist
+      } else {
+        &player.identity
+      },
+      20,
+    ),
     &["menu", "text-status", "text-faded"],
   );
 
@@ -308,16 +313,38 @@ fn render_mpris_card<'a>(
 
   let mut media_lines = column![title, artist].spacing(2);
   if !player.album.is_empty() {
-    media_lines =
-      media_lines.push(config.text(player.album.clone(), &["menu", "text-status", "text-faded"]));
+    media_lines = media_lines.push(config.text(
+      truncate(&player.album, 20),
+      &["menu", "text-status", "text-faded"],
+    ));
   }
+
+  let cover: Option<Element<'a, ItemMessage>> = player
+    .art_url
+    .as_deref()
+    .and_then(mpris_cover_handle)
+    .map(|handle| {
+      image(handle)
+        .width(Length::Fixed(48.0))
+        .height(Length::Fixed(48.0))
+        .border_radius(8.0)
+        .into()
+    });
+
+  let media: Element<'a, ItemMessage> = match cover {
+    Some(cover) => row![cover, media_lines]
+      .spacing(10)
+      .align_y(Alignment::Center)
+      .into(),
+    None => media_lines.into(),
+  };
 
   hover_row(
     config,
     &["menu", "row"],
     container(
       column![
-        media_lines,
+        media,
         container(controls)
           .align_x(Alignment::Center)
           .width(Length::Fill),
@@ -452,18 +479,4 @@ fn render_player<'a>(
       .message(id),
     )
   })
-}
-
-fn truncate(input: &str, max: usize) -> String {
-  if input.chars().count() > max {
-    format!(
-      "{}…",
-      input
-        .chars()
-        .take(max.saturating_sub(1))
-        .collect::<String>()
-    )
-  } else {
-    input.to_string()
-  }
 }

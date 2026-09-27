@@ -3,16 +3,25 @@ name = "slowshell-background"
 version.workspace = true
 edition = "2024"
 
+[features]
+default = ["widgets", "audio"]
+widgets = []
+audio = ["slowshell-components/audio"]
+
 [dependencies]
 slowshell-core = { path = "../core" }
 slowshell-config = { path = "../config" }
+slowshell-commons = { path = "../commons" }
 slowshell-desktop = { path = "../desktop" }
 slowshell-registry = { path = "../registry" }
 slowshell-widgets = { path = "../widgets" }
+slowshell-services = { path = "../services" }
+slowshell-components = { path = "../components", optional = true }
 
 iced_layershell.workspace = true
 iced.workspace = true
 image.workspace = true
+chrono.workspace = true
 libc.workspace = true
 miette.workspace = true
 serde.workspace = true

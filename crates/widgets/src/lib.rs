@@ -14,8 +14,14 @@ pub use evwrap::{EventWrapper, clickable, shift_down, track_modifiers};
 mod popup;
 pub use popup::{Backdrop, SizedPopup};
 
+mod options;
+pub use options::ComponentOptions;
+
 mod icons;
 pub use icons::Icon;
+
+mod cover;
+pub use cover::mpris_cover_handle;
 
 mod misc;
 pub use misc::separator;
@@ -124,6 +130,28 @@ pub trait Renderable {
   fn initialize(&self, config: &Config, store: &mut Store) -> Box<dyn std::any::Any + Send> {
     let _ = (config, store);
     Box::new(())
+  }
+
+  fn initialize_with_options(
+    &self,
+    config: &Config,
+    store: &mut Store,
+    options: Option<&ComponentOptions>,
+  ) -> Box<dyn std::any::Any + Send> {
+    let _ = options;
+    self.initialize(config, store)
+  }
+
+  fn view_with_options<'a>(
+    &self,
+    config: &'a Config,
+    store: &'a Store,
+    id: iced_layershell::reexport::IcedId,
+    data: &'a dyn std::any::Any,
+    options: Option<&ComponentOptions>,
+  ) -> Element<'a, ItemMessage> {
+    let _ = options;
+    self.view(config, store, id, data)
   }
 
   fn handle_message(&mut self, message: &ItemMessage) -> Option<ItemEffect> {
@@ -244,4 +272,18 @@ pub fn sl_slider<'a>(
   };
 
   container(slider).padding([0.0, 2.0]).into()
+}
+
+pub fn truncate(input: &str, max: usize) -> String {
+  if input.chars().count() > max {
+    format!(
+      "{}…",
+      input
+        .chars()
+        .take(max.saturating_sub(1))
+        .collect::<String>()
+    )
+  } else {
+    input.to_string()
+  }
 }

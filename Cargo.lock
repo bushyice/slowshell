@@ -4606,16 +4606,20 @@ dependencies = [
 name = "slowshell-background"
 version = "0.0.3"
 dependencies = [
+ "chrono",
  "iced",
  "iced_layershell",
  "image",
  "libc",
  "miette",
  "serde",
+ "slowshell-commons",
+ "slowshell-components",
  "slowshell-config",
  "slowshell-core",
  "slowshell-desktop",
  "slowshell-registry",
+ "slowshell-services",
  "slowshell-widgets",
 ]
 

@@ -160,6 +160,13 @@ impl App {
 
     if let Some(cs) = store.borrow::<CompositorStore>() {
       if let Ok(state) = cs.state() {
+        slowshell_core::monitors::set(
+          state
+            .monitors
+            .values()
+            .map(|monitor| (monitor.name.clone(), monitor.width, monitor.height)),
+        );
+
         tasks.push(items.sync_monitors(&config, state.monitors.keys().cloned().collect()));
       }
     }
@@ -178,6 +185,8 @@ impl App {
 
     #[cfg(any(feature = "panels", feature = "popups"))]
     tasks.push(items.register(&config, Box::new(Popup::default())));
+
+    tasks.push(Task::done(Message::FdUpdate(ListenerAction::StartUp)));
 
     // end of registration
 
@@ -324,7 +333,16 @@ impl App {
             return Task::none();
           };
           match compositor.state() {
-            Ok(state) => state.monitors.keys().cloned().collect(),
+            Ok(state) => {
+              slowshell_core::monitors::set(
+                state
+                  .monitors
+                  .values()
+                  .map(|monitor| (monitor.name.clone(), monitor.width, monitor.height)),
+              );
+
+              state.monitors.keys().cloned().collect()
+            }
             Err(_) => return Task::none(),
           }
         };

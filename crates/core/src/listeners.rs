@@ -306,6 +306,27 @@ impl FdHandle {
     self.wake();
   }
 
+  pub fn signal_pipe(&self, name: impl Into<Ustr>) -> Option<OwnedFd> {
+    let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
+    nix::fcntl::fcntl(
+      &read_fd,
+      nix::fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::O_NONBLOCK),
+    )
+    .ok()?;
+
+    let raw = read_fd.as_raw_fd();
+    self.watch_with_flags(
+      read_fd,
+      EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
+      ListenerAction::Signal {
+        name: name.into(),
+        fd: raw,
+      },
+    );
+
+    Some(write_fd)
+  }
+
   pub fn terminate(&self, fd: i32) {
     let _ = self.tx.send(FdCommand::Terminate(fd));
     self.wake();

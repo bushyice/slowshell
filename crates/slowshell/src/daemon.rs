@@ -47,6 +47,8 @@ pub fn load() -> Loaded {
   slowshell_background::wallpaper::include(&mut registry);
   #[cfg(feature = "background")]
   slowshell_background::widgets::include(&mut registry);
+  #[cfg(feature = "background")]
+  slowshell_background::include(&mut registry);
 
   #[cfg(feature = "plugins")]
   let plugin_selection = {

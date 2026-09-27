@@ -2,7 +2,10 @@ use std::{
   any::Any,
   cell::RefCell,
   os::fd::{AsRawFd, FromRawFd, OwnedFd},
-  sync::atomic::{AtomicU64, Ordering},
+  sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+  },
   time::Duration,
 };
 
@@ -17,7 +20,7 @@ use slowshell_core::{
   types::Ustr,
 };
 use slowshell_plugin_abi::{Context, RenderableObjectBox, RenderableSettings};
-use slowshell_widgets::{Backdrop, Renderable, SizedPopup};
+use slowshell_widgets::{Backdrop, ComponentOptions, Renderable, SizedPopup};
 
 use crate::{
   events::{effect_from_abi, event_from_action, filters_to_core, message_to_abi},
@@ -29,6 +32,9 @@ use crate::{
   },
 };
 
+#[cfg(feature = "panels")]
+use crate::state::ScopedOptions;
+
 #[cfg_attr(not(feature = "panels"), allow(dead_code))]
 static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -37,6 +43,7 @@ pub(crate) struct PluginRenderable {
   plugin_id: String,
   inner: RefCell<RenderableObjectBox>,
   event_name: Ustr,
+  options: Mutex<Option<Arc<ComponentOptions>>>,
   #[allow(dead_code)]
   timers: Vec<(i32, u32)>,
   #[allow(dead_code)]
@@ -51,6 +58,7 @@ impl PluginRenderable {
       plugin_id,
       inner: RefCell::new(inner),
       event_name: format!("component/plugin.{id}").into(),
+      options: Mutex::new(None),
       timers: Vec::new(),
       fds: Vec::new(),
     }
@@ -58,6 +66,16 @@ impl PluginRenderable {
 
   fn settings(&self) -> RenderableSettings {
     self.inner.borrow().settings()
+  }
+
+  fn set_options(&self, options: Option<&ComponentOptions>) {
+    if let Ok(mut guard) = self.options.lock() {
+      *guard = options.map(|options| Arc::new(options.clone()));
+    }
+  }
+
+  fn take_options(&self) -> Option<Arc<ComponentOptions>> {
+    self.options.lock().ok().and_then(|guard| guard.clone())
   }
 }
 
@@ -77,6 +95,10 @@ impl Renderable for PluginRenderable {
     let _compositor_scope = compositor_scope(store);
     let _notifications_scope = notifications_scope(store);
     let _store_scope = store_scope_mut(store);
+    let options = self.take_options();
+    #[cfg(feature = "panels")]
+    let _options_scope = ScopedOptions::current(options.as_deref());
+    let _ = &options;
 
     let ctx = Context::new(host());
     let effect = self
@@ -84,6 +106,22 @@ impl Renderable for PluginRenderable {
       .borrow_mut()
       .on_event(&ctx, &event_from_action(event));
     Some(effect_from_abi(effect))
+  }
+
+  fn initialize_with_options(
+    &self,
+    config: &Config,
+    store: &mut Store,
+    options: Option<&ComponentOptions>,
+  ) -> Box<dyn Any + Send> {
+    self.set_options(options);
+    let options = self.take_options();
+
+    #[cfg(feature = "panels")]
+    let _options_scope = ScopedOptions::current(options.as_deref());
+    let _ = &options;
+
+    self.initialize(config, store)
   }
 
   fn initialize(&self, config: &Config, store: &mut Store) -> Box<dyn Any + Send> {
@@ -104,6 +142,10 @@ impl Renderable for PluginRenderable {
     let _compositor_scope = compositor_scope(store);
     let _notifications_scope = notifications_scope(store);
     let _store_scope = store_scope_mut(store);
+    let options = self.take_options();
+    #[cfg(feature = "panels")]
+    let _options_scope = ScopedOptions::current(options.as_deref());
+    let _ = &options;
 
     let ctx = Context::new(host());
     let effect = self.inner.borrow_mut().update(&ctx);
@@ -112,10 +154,32 @@ impl Renderable for PluginRenderable {
 
   fn handle_message(&mut self, message: &ItemMessage) -> Option<ItemEffect> {
     let _plugin_scope = PluginScope::enter(&self.plugin_id);
+    let options = self.take_options();
+    #[cfg(feature = "panels")]
+    let _options_scope = ScopedOptions::current(options.as_deref());
+    let _ = &options;
     let ctx = Context::new(host());
     let message = message_to_abi(message);
     let effect = self.inner.borrow_mut().handle_message(&ctx, &message);
     Some(effect_from_abi(effect))
+  }
+
+  fn view_with_options<'a>(
+    &self,
+    config: &'a Config,
+    store: &'a Store,
+    id: IcedId,
+    data: &'a dyn Any,
+    options: Option<&ComponentOptions>,
+  ) -> Element<'a, ItemMessage> {
+    self.set_options(options);
+    let options = self.take_options();
+
+    #[cfg(feature = "panels")]
+    let _options_scope = ScopedOptions::current(options.as_deref());
+    let _ = &options;
+
+    self.view(config, store, id, data)
   }
 
   fn view<'a>(

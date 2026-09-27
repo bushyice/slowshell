@@ -45,12 +45,15 @@ fn global() -> &'static GlobalAudio {
   GLOBAL.get_or_init(|| {
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
 
+    let selected = persistence::load::<(String, String)>(PRIMARY_PLAYER_FILE)
+      .map(|(bus_name, identity)| MprisSelection { bus_name, identity });
+
     GlobalAudio {
       shared: Arc::new(AudioState {
         state: Mutex::new(Default::default()),
         player: Mutex::new(None),
         players: Mutex::new(Vec::new()),
-        selected: Mutex::new(None),
+        selected: Mutex::new(selected),
         revision: AtomicU64::new(0),
         cmd_tx,
       }),
@@ -59,9 +62,37 @@ fn global() -> &'static GlobalAudio {
   })
 }
 
+pub fn ensure(store: &mut Store) -> SharedAudioState {
+  let shared = global().shared.clone();
+  store.insert(shared.clone());
+
+  let Some(cmd_rx) = global().rx.lock().unwrap().take() else {
+    return shared;
+  };
+
+  let notify = store.borrow::<FdHandle>().and_then(|handle| {
+    let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
+    fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
+
+    let raw = read_fd.as_raw_fd();
+    handle.watch_with_flags(
+      read_fd,
+      EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
+      ListenerAction::Signal {
+        name: AUDIO_CHANGED.into(),
+        fd: raw,
+      },
+    );
+
+    Some(write_fd)
+  });
+
+  slowshell_services::audio::run(shared.clone(), cmd_rx, notify);
+
+  shared
+}
+
 pub struct Audio {
-  signal_fd: Option<i32>,
-  started: bool,
   shared: SharedAudioState,
   last_revision: u64,
   shared_in_store: bool,
@@ -70,8 +101,6 @@ pub struct Audio {
 impl Audio {
   pub fn new() -> Self {
     Self {
-      signal_fd: None,
-      started: false,
       shared: global().shared.clone(),
       last_revision: 0,
       shared_in_store: false,
@@ -101,48 +130,8 @@ impl Component for Audio {
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
-    store.insert(self.shared.clone());
+    self.shared = ensure(store);
     self.shared_in_store = true;
-
-    if self.started {
-      return;
-    }
-    self.started = true;
-
-    if let Some((bus_name, identity)) = persistence::load::<(String, String)>(PRIMARY_PLAYER_FILE) {
-      *self.shared.selected.lock().unwrap() = Some(MprisSelection { bus_name, identity });
-    }
-
-    let shared = self.shared.clone();
-    let cmd_rx = global().rx.lock().unwrap().take();
-
-    if let Some(cmd_rx) = cmd_rx {
-      let notify = store.borrow::<FdHandle>().and_then(|handle| {
-        let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
-        fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
-
-        let raw = read_fd.as_raw_fd();
-        handle.watch_with_flags(
-          read_fd,
-          EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
-          ListenerAction::Signal {
-            name: AUDIO_CHANGED.into(),
-            fd: raw,
-          },
-        );
-        self.signal_fd = Some(raw);
-
-        Some(write_fd)
-      });
-
-      slowshell_services::audio::run(shared, cmd_rx, notify);
-    }
-  }
-
-  fn stop(&mut self, store: &Store, _options: Option<&ComponentOptions>) {
-    if let (Some(handle), Some(fd)) = (store.borrow::<FdHandle>(), self.signal_fd.take()) {
-      handle.stop_timer(fd);
-    }
   }
 
   fn update(
@@ -170,9 +159,6 @@ impl Component for Audio {
       }
 
       ListenerAction::Named(name) if &**name == AUDIO_CHANGED => {
-        if let Some(fd) = self.signal_fd {
-          drain_signal_fd(fd);
-        }
         let rev = self.shared.revision.load(Ordering::SeqCst);
         if rev != self.last_revision {
           self.last_revision = rev;

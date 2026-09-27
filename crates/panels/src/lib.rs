@@ -1444,8 +1444,6 @@ impl DesktopItem for Panel {
   fn layer(&self, _config: &Config, monitor: &str) -> NewLayerShellSettings {
     let (w, h) = self.size();
     NewLayerShellSettings {
-      // Panels sit above the popup layer so popups with insets stay
-      // click-through: the panel receives the click first.
       layer: Layer::Overlay,
       anchor: self.position.anchor(),
       exclusive_zone: Some(self.exclusive_zone(self.autohide)),

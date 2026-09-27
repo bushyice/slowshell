@@ -37,6 +37,8 @@ use slowshell_core::{
 };
 use slowshell_widgets::{EventWrapper, HoverBackground};
 
+pub use slowshell_widgets::ComponentOptions;
+
 pub trait Component: Send {
   fn events(&self) -> Vec<EventFilter> {
     Vec::new()
@@ -76,52 +78,6 @@ pub trait Component: Send {
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct ComponentOptions {
-  inner: HashMap<Ustr, slowshell_config::Value>,
-}
-
-impl ComponentOptions {
-  pub fn number(&self, id: impl Into<Ustr>) -> Option<f32> {
-    self
-      .inner
-      .get(&id.into())
-      .and_then(|v| v.as_float().map(|x| x as f32))
-  }
-
-  pub fn int(&self, id: impl Into<Ustr>) -> Option<i32> {
-    self
-      .inner
-      .get(&id.into())
-      .and_then(|v| v.as_int().map(|x| x as i32))
-  }
-
-  pub fn str(&self, id: impl Into<Ustr>) -> Option<&str> {
-    self.inner.get(&id.into()).and_then(|v| v.as_str())
-  }
-
-  pub fn bool(&self, id: impl Into<Ustr>) -> Option<bool> {
-    self.inner.get(&id.into()).and_then(|v| v.as_bool())
-  }
-
-  pub fn table(&self, id: impl Into<Ustr>) -> Option<&[(String, slowshell_config::Value)]> {
-    self.inner.get(&id.into()).and_then(|v| v.as_table())
-  }
-
-  pub fn strings(&self, id: impl Into<Ustr>) -> Option<Vec<&str>> {
-    self
-      .inner
-      .get(&id.into())
-      .and_then(|v| v.as_array())
-      .map(|array| array.iter().filter_map(|v| v.as_str()).collect())
-  }
-}
-
-impl From<HashMap<Ustr, slowshell_config::Value>> for ComponentOptions {
-  fn from(value: HashMap<Ustr, slowshell_config::Value>) -> Self {
-    ComponentOptions { inner: value }
-  }
-}
-
 pub struct ComponentContext<'a> {
   pub panel_name: &'a str,
   pub position: PanelEdge,

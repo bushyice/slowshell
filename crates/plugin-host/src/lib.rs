@@ -276,11 +276,6 @@ const ERR_DEPENDENCY_MISSING: u32 = 0x1001;
 const ERR_DEPENDENCY_VERSION: u32 = 0x1002;
 const ERR_DEPENDENCY_CYCLE: u32 = 0x1003;
 
-/// Loads every plugin library once and reads its metadata, without calling
-/// into the plugin yet.
-///
-/// Plugins are de-duplicated by id; the first directory in the lookup order
-/// wins, matching the existing `XDG_DATA_*` precedence.
 fn discover(selection: &PluginSelection) -> Vec<Candidate> {
   let mut by_id: HashMap<String, Candidate> = HashMap::new();
 
@@ -337,8 +332,6 @@ fn read_candidate(path: &Path) -> miette::Result<Candidate> {
   let library = unsafe { header.init_root_module_with_unchecked_layout::<PluginMod_Ref>() }
     .map_err(|e| miette::miette!("{e}"))?;
 
-  // The root module points into the library's static data, which is never
-  // unloaded, so the raw library is intentionally leaked.
   std::mem::forget(raw_library);
 
   let id = library.id().to_string();
@@ -435,7 +428,6 @@ fn resolve(metas: &[CandidateMeta]) -> PluginPlan {
     }
   }
 
-  // Skipping a plugin skips everything that depends on it, transitively.
   loop {
     let mut changed = false;
     for index in 0..count {

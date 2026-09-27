@@ -14,6 +14,7 @@ default = [
 base = [
   "panels",
   "background",
+  "widgets",
   "plugins",
   "spotlight",
   "notifications",
@@ -41,6 +42,7 @@ panels = [
 ]
 popups = ["dep:slowshell-popups"]
 background = ["dep:slowshell-background"]
+widgets = ["dep:slowshell-background"]
 plugins = ["dep:slowshell-plugin-host"]
 spotlight = ["dep:slowshell-spotlight", "slowshell-plugin-host?/spotlight"]
 notifications = ["dep:slowshell-notifications"]
@@ -48,7 +50,7 @@ notifications = ["dep:slowshell-notifications"]
 compositor-niri = ["slowshell-compositor/niri"]
 compositor-sway = ["slowshell-compositor/sway"]
 
-components-audio = ["slowshell-components?/audio"]
+components-audio = ["slowshell-components?/audio", "slowshell-background?/audio"]
 components-bluetooth = ["slowshell-components?/bluetooth"]
 components-network = ["slowshell-components?/network"]
 components-notifications = ["slowshell-components?/notifications"]

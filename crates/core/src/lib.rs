@@ -10,6 +10,7 @@ pub mod animations;
 pub mod commands;
 pub mod listeners;
 pub mod message;
+pub mod monitors;
 pub mod persistence;
 pub mod types;
 

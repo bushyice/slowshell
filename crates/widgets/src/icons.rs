@@ -185,6 +185,14 @@ fn get_asset(name: &str, size: u16) -> Option<IconAsset> {
 }
 
 fn resolve_icon(name: &str, size: u16) -> Option<IconAsset> {
+  if name.starts_with('/') {
+    let path = Path::new(name);
+    if is_svg(path) {
+      return Some(IconAsset::Svg(svg::Handle::from_path(path)));
+    }
+    return Some(IconAsset::Png(image::Handle::from_path(path)));
+  }
+
   if name.starts_with("slowshell-icon") {
     let path = Path::new(name);
     if is_svg(path) {
