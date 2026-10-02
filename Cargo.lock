@@ -4777,6 +4777,8 @@ name = "slowshell-plugin-abi"
 version = "0.0.3"
 dependencies = [
  "abi_stable",
+ "iced_anim",
+ "icss",
  "kdl",
  "ron",
  "serde",
@@ -4789,6 +4791,7 @@ dependencies = [
  "abi_stable",
  "futures-channel",
  "iced",
+ "iced_anim",
  "iced_layershell",
  "icss",
  "image",

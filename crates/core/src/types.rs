@@ -248,14 +248,26 @@ impl PayloadBuilderRegistry {
       return (self.builders.get(index)?.build)(command, args);
     }
 
-    let match_key = if let Some((name, _)) = command.split_once(".") {
-      &command[..name.len() + 1]
-    } else {
-      &command
-    };
+    let mut prefixes: Vec<&str> = command
+      .match_indices('.')
+      .map(|(index, _)| &command[..=index])
+      .collect();
+    prefixes.reverse();
 
-    for &index in self.matches.get(match_key)? {
-      return (self.builders.get(index)?.build)(command, args);
+    for prefix in prefixes {
+      let Some(indices) = self.matches.get(prefix) else {
+        continue;
+      };
+
+      for &index in indices {
+        let Some(builder) = self.builders.get(index) else {
+          continue;
+        };
+
+        if let Some(payload) = (builder.build)(command, PayloadBuilderArgs(args.0)) {
+          return Some(payload);
+        }
+      }
     }
 
     None
@@ -273,5 +285,27 @@ mod tests {
     println!("{}", std::any::type_name_of_val(f.0.as_any()));
 
     assert!(f.as_this::<u32>().copied() == Some(12));
+  }
+
+  fn prefixed_builder(
+    commands: &'static [&'static str],
+    build: fn(&str, PayloadBuilderArgs) -> Option<PayloadBox>,
+  ) -> PayloadBuilder {
+    PayloadBuilder { commands, build }
+  }
+
+  #[test]
+  fn payload_reg_matches_multi_level_prefixes() {
+    fn build(_: &str, args: PayloadBuilderArgs) -> Option<PayloadBox> {
+      Some(PayloadBox::new(args.0.len()))
+    }
+
+    let mut registry = PayloadBuilderRegistry::new();
+    registry.register(prefixed_builder(&["demo."], |_, _| None));
+    registry.register(prefixed_builder(&["demo.deploy."], build));
+
+    let args = [Ustr::from("id=one")];
+    let payload = registry.build("demo.deploy.animations", &args).unwrap();
+    assert_eq!(payload.as_this::<usize>().copied(), Some(1));
   }
 }

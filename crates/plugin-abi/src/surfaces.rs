@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
 
 use abi_stable::{
-  sabi_trait,
+  StableAbi, sabi_trait,
   sabi_trait::TD_Opaque,
-  std_types::{RBox, ROption, RResult, RStr, RVec},
+  std_types::{RBox, ROption, RResult, RStr, RString, RVec},
 };
 
 use crate::{
@@ -295,6 +295,86 @@ impl<T: DesktopItem> DesktopItemFactory for DesktopItemFactoryImpl<T> {
 
 pub fn desktop_item_factory<T: DesktopItem>() -> DesktopItemFactoryBox {
   DesktopItemFactoryBox::from_value(DesktopItemFactoryImpl::<T>(PhantomData), TD_Opaque)
+}
+
+#[repr(C)]
+#[derive(StableAbi)]
+pub struct DeployedItem {
+  pub id: RString,
+  pub item: DesktopItemObjectBox,
+}
+
+impl DeployedItem {
+  pub fn new<T: DesktopItem>(ctx: &Context<'_>, id: impl Into<RString>) -> Self {
+    Self {
+      id: id.into(),
+      item: desktop_item_factory::<T>().create(ctx),
+    }
+  }
+}
+
+#[repr(C)]
+#[derive(StableAbi)]
+pub enum DeployResult {
+  None,
+  Deploy(RVec<DeployedItem>),
+  Destroy(RString),
+  Many(RVec<DeployResult>),
+}
+
+pub trait DeployableDesktopItem: Send + 'static {
+  fn new(ctx: &Context<'_>) -> Self;
+  fn events(&self) -> RVec<EventFilter> {
+    RVec::new()
+  }
+  fn deploy(&mut self, _ctx: &Context<'_>, _event: &Event) -> DeployResult {
+    DeployResult::None
+  }
+}
+
+#[sabi_trait]
+pub trait DeployableDesktopItemObject: Send + 'static {
+  fn events(&self) -> RVec<EventFilter>;
+  fn deploy(&mut self, ctx: &Context<'_>, event: &Event) -> DeployResult;
+}
+
+pub type DeployableDesktopItemObjectBox = DeployableDesktopItemObject_TO<RBox<()>>;
+
+#[sabi_trait]
+pub trait DeployableDesktopItemFactory: Send + Sync + 'static {
+  fn create(&self, ctx: &Context<'_>) -> DeployableDesktopItemObjectBox;
+}
+
+pub type DeployableDesktopItemFactoryBox = DeployableDesktopItemFactory_TO<RBox<()>>;
+
+struct DeployableDesktopItemAdapter<T>(T);
+
+impl<T: DeployableDesktopItem> DeployableDesktopItemObject for DeployableDesktopItemAdapter<T> {
+  fn events(&self) -> RVec<EventFilter> {
+    self.0.events()
+  }
+
+  fn deploy(&mut self, ctx: &Context<'_>, event: &Event) -> DeployResult {
+    self.0.deploy(ctx, event)
+  }
+}
+
+struct DeployableDesktopItemFactoryImpl<T>(PhantomData<fn() -> T>);
+
+impl<T: DeployableDesktopItem> DeployableDesktopItemFactory
+  for DeployableDesktopItemFactoryImpl<T>
+{
+  fn create(&self, ctx: &Context<'_>) -> DeployableDesktopItemObjectBox {
+    DeployableDesktopItemObjectBox::from_value(DeployableDesktopItemAdapter(T::new(ctx)), TD_Opaque)
+  }
+}
+
+pub fn deployable_desktop_item_factory<T: DeployableDesktopItem>() -> DeployableDesktopItemFactoryBox
+{
+  DeployableDesktopItemFactoryBox::from_value(
+    DeployableDesktopItemFactoryImpl::<T>(PhantomData),
+    TD_Opaque,
+  )
 }
 
 pub trait Compositor: Send + 'static {

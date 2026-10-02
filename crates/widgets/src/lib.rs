@@ -28,8 +28,9 @@ pub use misc::separator;
 
 mod animation;
 pub use animation::{
-  Animate, Animated, AnimatedState, AnimatedValue, AnimationBuilder, Easing, Event,
-  HoverBackground, HoverTransition, Mode, Motion, SlideIn, Spring, Transition,
+  Animate, Animated, AnimatedState, AnimatedValue, AnimationBuilder, CustomAnimation, Easing,
+  Event, HoverBackground, HoverTransition, Mode, Motion, SlideIn, Spring, Transition,
+  icss_edge_offset, icss_mode,
 };
 
 mod pseudo;

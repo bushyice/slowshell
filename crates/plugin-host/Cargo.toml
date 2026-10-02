@@ -29,6 +29,7 @@ semver.workspace = true
 futures-channel.workspace = true
 image.workspace = true
 nix.workspace = true
+iced_anim.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

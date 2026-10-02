@@ -9,8 +9,9 @@ use crate::{
   payload::{PayloadBox, PayloadParserBox},
   store::{ErasedRef, ErasedValue, Store, StoreCallbackBox, TypeKey},
   surfaces::{
-    ComponentFactoryBox, CompositorFactoryBox, ConfigParserBox, DesktopItemFactoryBox,
-    PayloadFactoryBox, QuickSettingsFactoryBox, RenderableFactoryBox, SpotlightFactoryBox,
+    ComponentFactoryBox, CompositorFactoryBox, ConfigParserBox, DeployableDesktopItemFactoryBox,
+    DesktopItemFactoryBox, PayloadFactoryBox, QuickSettingsFactoryBox, RenderableFactoryBox,
+    SpotlightFactoryBox,
   },
   types::{
     AudioState, BluetoothState, CanvasRef, Color, CompositorState, Length, NetworkState, Node,
@@ -73,6 +74,7 @@ pub trait Host: Send + Sync + 'static {
   fn register_renderable(&self, name: RString, factory: RenderableFactoryBox);
   fn register_payload(&self, command: RString, factory: PayloadFactoryBox);
   fn register_desktop_item(&self, name: RString, factory: DesktopItemFactoryBox);
+  fn register_desktop_item_deployer(&self, name: RString, factory: DeployableDesktopItemFactoryBox);
   fn register_compositor(&self, name: RString, factory: CompositorFactoryBox);
   fn register_spotlight(&self, name: RString, factory: SpotlightFactoryBox);
   fn register_quick_settings(&self, name: RString, factory: QuickSettingsFactoryBox);

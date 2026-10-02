@@ -12,6 +12,10 @@ use iced::{
     scrollable::Direction as ScrollDirection, text, text_input,
   },
 };
+use iced_anim::{
+  Motion,
+  transition::{Curve, bezier::Bezier},
+};
 use icss::theme::{css::ast::PseudoClass, resolve::computed::ComputedStyle};
 use slowshell_config::style::container_style;
 use slowshell_core::{
@@ -20,11 +24,13 @@ use slowshell_core::{
   types::{PayloadBox, Ustr},
 };
 use slowshell_plugin_abi::{
-  Align as AbiAlign, Animation, AnimationKind, Color as AbiColor, Easing as AbiEasing,
-  Image as AbiImage, Length as AbiLength, Node, Padding as AbiPad, ROption, RString, RVec,
-  Style as AbiStyle,
+  Align as AbiAlign, Animation, AnimationCurve, AnimationEdge, AnimationKind, AnimationMode,
+  Color as AbiColor, CustomAnimation as AbiCustomAnimation, Image as AbiImage, Length as AbiLength,
+  Node, Padding as AbiPad, ROption, RString, RVec, SpringMotion, Style as AbiStyle,
 };
-use slowshell_widgets::{Animated, Easing, HoverFlag, Icon, Mode, SlideIn, clickable};
+use slowshell_widgets::{
+  Animated, CustomAnimation, Easing, HoverFlag, Icon, Mode, SlideIn, clickable,
+};
 
 use crate::{events::WidgetEvent, state::current_config};
 
@@ -153,15 +159,49 @@ fn render_plain(node: &Node, ctx: &RenderCtx) -> iced::Element<'static, ItemMess
     Node::Progress {
       value,
       color,
+      width,
+      height,
       classes,
-    } => wrap_plain(progress_element(*value, color), classes),
+    } => wrap_plain(progress_element(*value, color, *width, *height), classes),
 
     Node::Image {
       image,
       width,
       height,
+      border_radius,
+      rotation,
       classes,
-    } => wrap_plain(image_element(image, *width, *height), classes),
+    } => wrap_plain(
+      image_element(image, *width, *height, *border_radius, *rotation),
+      classes,
+    ),
+
+    Node::Slider {
+      min,
+      max,
+      value,
+      step,
+      action,
+      width,
+      classes,
+    } => wrap_plain(
+      slider_element(*min, *max, *value, *step, action, *width),
+      classes,
+    ),
+
+    Node::Stack {
+      children,
+      width,
+      height,
+      classes,
+    } => {
+      let elements: Vec<iced::Element<'static, ItemMessage>> =
+        children.iter().map(|c| render_node(c, ctx)).collect();
+      let stack = iced::widget::stack(elements)
+        .width(size(*width))
+        .height(size(*height));
+      wrap_plain(stack.into(), classes)
+    }
 
     Node::Canvas {
       cache_key,
@@ -224,78 +264,83 @@ fn render_animated(
   animation: &Animation,
   ctx: &RenderCtx,
 ) -> iced::Element<'static, ItemMessage> {
-  let sliding = animation.kind == AnimationKind::Slide;
-
-  if !animation.tween {
-    let element = render_plain(child, ctx);
-    return if sliding {
-      slide_element(element, animation)
-    } else {
-      element
-    };
+  match animation.kind {
+    AnimationKind::FadeIn => {
+      return fade_element(child, animation, true, ctx);
+    }
+    AnimationKind::FadeOut => {
+      return fade_element(child, animation, false, ctx);
+    }
+    _ => {}
   }
 
-  let mode = animation_mode(animation);
-  let element: iced::Element<'static, ItemMessage> = match child {
-    Node::Progress { value, .. } => {
-      let target = *value;
-      let base = child.clone();
-      let ctx = ctx.clone();
-      Animated::new(target, move |value| {
-        let mut local = base.clone();
-        if let Node::Progress { value: target, .. } = &mut local {
-          *target = *value;
-        }
-        render_plain(&local, &ctx)
-      })
-      .animation(mode)
-      .animates_layout(true)
-      .into()
-    }
+  let element = if animation.tween {
+    let mode = animation_mode(animation);
+    match child {
+      Node::Progress { value, .. } => {
+        let target = *value;
+        let base = child.clone();
+        let ctx = ctx.clone();
+        Animated::new(target, move |value| {
+          let mut local = base.clone();
+          if let Node::Progress { value: target, .. } = &mut local {
+            *target = *value;
+          }
+          render_plain(&local, &ctx)
+        })
+        .animation(mode)
+        .animates_layout(true)
+        .into()
+      }
 
-    Node::Text { color, .. } => {
-      let target = match color {
-        ROption::RSome(color) => to_color(*color),
-        ROption::RNone => Color::WHITE,
-      };
-      let base = child.clone();
-      let ctx = ctx.clone();
-      Animated::new(target, move |color| {
-        let mut local = base.clone();
-        if let Node::Text { color: target, .. } = &mut local {
-          *target = ROption::RSome(abi_color(*color));
-        }
-        render_plain(&local, &ctx)
-      })
-      .animation(mode)
-      .into()
-    }
+      Node::Text { color, .. } => {
+        let target = match color {
+          ROption::RSome(color) => to_color(*color),
+          ROption::RNone => Color::WHITE,
+        };
+        let base = child.clone();
+        let ctx = ctx.clone();
+        Animated::new(target, move |color| {
+          let mut local = base.clone();
+          if let Node::Text { color: target, .. } = &mut local {
+            *target = ROption::RSome(abi_color(*color));
+          }
+          render_plain(&local, &ctx)
+        })
+        .animation(mode)
+        .into()
+      }
 
-    Node::Icon { color, .. } if matches!(color, ROption::RSome(_)) => {
-      let target = match color {
-        ROption::RSome(color) => to_color(*color),
-        ROption::RNone => Color::WHITE,
-      };
-      let base = child.clone();
-      let ctx = ctx.clone();
-      Animated::new(target, move |color| {
-        let mut local = base.clone();
-        if let Node::Icon { color: target, .. } = &mut local {
-          *target = ROption::RSome(abi_color(*color));
-        }
-        render_plain(&local, &ctx)
-      })
-      .animation(mode)
-      .into()
-    }
+      Node::Icon { color, .. } if matches!(color, ROption::RSome(_)) => {
+        let target = match color {
+          ROption::RSome(color) => to_color(*color),
+          ROption::RNone => Color::WHITE,
+        };
+        let base = child.clone();
+        let ctx = ctx.clone();
+        Animated::new(target, move |color| {
+          let mut local = base.clone();
+          if let Node::Icon { color: target, .. } = &mut local {
+            *target = ROption::RSome(abi_color(*color));
+          }
+          render_plain(&local, &ctx)
+        })
+        .animation(mode)
+        .into()
+      }
 
-    _ => render_plain(child, ctx),
+      _ => render_plain(child, ctx),
+    }
+  } else {
+    render_plain(child, ctx)
   };
 
-  if sliding {
-    slide_element(element, animation)
-  } else {
-    element
+  match animation.kind {
+    AnimationKind::Slide => slide_element(element, animation),
+    AnimationKind::SlideIn(edge) => slide_edge_element(element, animation, edge, false),
+    AnimationKind::SlideOut(edge) => slide_edge_element(element, animation, edge, true),
+    AnimationKind::Custom(custom) => custom_element(element, animation, custom),
+    _ => element,
   }
 }
 
@@ -656,30 +701,81 @@ fn scroll_events(
     .into()
 }
 
-fn progress_element(value: f32, color: &ROption<AbiColor>) -> iced::Element<'static, ItemMessage> {
+fn progress_element(
+  value: f32,
+  color: &ROption<AbiColor>,
+  width: AbiLength,
+  height: AbiLength,
+) -> iced::Element<'static, ItemMessage> {
   let value = value.clamp(0.0, 1.0);
   let color = match color {
     ROption::RSome(color) => to_color(*color),
     ROption::RNone => Color::WHITE,
   };
 
-  let filled = (value * 100.0).round().max(1.0) as u16;
-  let empty = ((1.0 - value) * 100.0).round().max(1.0) as u16;
+  let h = match height {
+    AbiLength::Fixed(h) => h,
+    _ => 4.0,
+  };
+
+  let w = match width {
+    AbiLength::Shrink => Length::Fixed(48.0),
+    other => size(other),
+  };
+
+  let filled = (value * 1000.0).round().max(1.0) as u16;
+  let empty = ((1.0 - value) * 1000.0).round().max(1.0) as u16;
 
   iced::widget::row![
     container(Space::new())
       .width(Length::FillPortion(filled))
-      .height(Length::Fixed(4.0))
+      .height(Length::Fixed(h))
       .style(move |_theme| iced::widget::container::Style {
         background: Some(color.into()),
+        border: iced::Border {
+          radius: (h / 2.0).into(),
+          ..Default::default()
+        },
         ..Default::default()
       }),
     container(Space::new())
       .width(Length::FillPortion(empty))
-      .height(Length::Fixed(4.0)),
+      .height(Length::Fixed(h))
+      .style(move |_theme| iced::widget::container::Style {
+        background: Some(Color { a: 0.25, ..color }.into()),
+        border: iced::Border {
+          radius: (h / 2.0).into(),
+          ..Default::default()
+        },
+        ..Default::default()
+      }),
   ]
-  .width(Length::Fixed(48.0))
+  .width(w)
   .into()
+}
+
+fn slider_element(
+  min: f32,
+  max: f32,
+  value: f32,
+  step: f32,
+  action: &ROption<RString>,
+  width: AbiLength,
+) -> iced::Element<'static, ItemMessage> {
+  let action_name = action.as_ref().into_option().map(|a| a.to_string());
+  let s = iced::widget::slider(min..=max, value, move |val| {
+    if let Some(name) = &action_name {
+      ItemMessage::Action(ListenerAction::Payload {
+        name: format!("{name}:{val}").into(),
+        payload: None,
+      })
+    } else {
+      ItemMessage::Noop
+    }
+  })
+  .step(if step > 0.0 { step } else { 1.0 })
+  .width(size(width));
+  s.into()
 }
 
 fn canvas_element(
@@ -744,10 +840,30 @@ fn canvas_element(
     .into()
 }
 
+fn build_image(
+  handle: image_widget::Handle,
+  width: AbiLength,
+  height: AbiLength,
+  border_radius: f32,
+  rotation: f32,
+) -> iced::Element<'static, ItemMessage> {
+  let mut img = image_widget(handle).width(size(width)).height(size(height));
+
+  if border_radius > 0.0 {
+    img = img.border_radius(border_radius);
+  }
+  if rotation != 0.0 {
+    img = img.rotation(iced::Rotation::Floating(iced::Radians(rotation)));
+  }
+  img.into()
+}
+
 fn image_element(
   image: &AbiImage,
   width: AbiLength,
   height: AbiLength,
+  border_radius: f32,
+  rotation: f32,
 ) -> iced::Element<'static, ItemMessage> {
   let handle = match image {
     AbiImage::Rgba {
@@ -772,10 +888,7 @@ fn image_element(
       if *cache_key != 0
         && let Some(handle) = image_cache_get(*cache_key)
       {
-        return image_widget(handle)
-          .width(size(width))
-          .height(size(height))
-          .into();
+        return build_image(handle, width, height, border_radius, rotation);
       }
 
       let handle =
@@ -797,10 +910,7 @@ fn image_element(
         *cache_key
       };
       if let Some(handle) = image_cache_get(key) {
-        return image_widget(handle)
-          .width(size(width))
-          .height(size(height))
-          .into();
+        return build_image(handle, width, height, border_radius, rotation);
       }
 
       match ::image::load_from_memory(bytes) {
@@ -821,10 +931,7 @@ fn image_element(
     AbiImage::Path(path) => image_widget::Handle::from_path(path.as_str()),
   };
 
-  image_widget(handle)
-    .width(size(width))
-    .height(size(height))
-    .into()
+  build_image(handle, width, height, border_radius, rotation)
 }
 
 #[derive(Default)]
@@ -922,18 +1029,136 @@ fn size(length: AbiLength) -> Length {
   }
 }
 
-fn animation_mode(animation: &Animation) -> Mode {
-  let easing = match animation.easing {
-    AbiEasing::Linear => Easing::LINEAR,
-    AbiEasing::Ease => Easing::EASE,
-    AbiEasing::EaseIn => Easing::EASE_IN,
-    AbiEasing::EaseOut => Easing::EASE_OUT,
-    AbiEasing::EaseInOut => Easing::EASE_IN_OUT,
-  };
+static CUSTOM_CURVE_SLOTS: std::sync::RwLock<Vec<extern "C" fn(f32) -> f32>> =
+  std::sync::RwLock::new(Vec::new());
 
-  easing
-    .with_duration(Duration::from_millis(animation.duration_ms.max(1) as u64))
-    .into()
+fn trampoline_0(p: f32) -> f32 {
+  call_slot(0, p)
+}
+fn trampoline_1(p: f32) -> f32 {
+  call_slot(1, p)
+}
+fn trampoline_2(p: f32) -> f32 {
+  call_slot(2, p)
+}
+fn trampoline_3(p: f32) -> f32 {
+  call_slot(3, p)
+}
+fn trampoline_4(p: f32) -> f32 {
+  call_slot(4, p)
+}
+fn trampoline_5(p: f32) -> f32 {
+  call_slot(5, p)
+}
+fn trampoline_6(p: f32) -> f32 {
+  call_slot(6, p)
+}
+fn trampoline_7(p: f32) -> f32 {
+  call_slot(7, p)
+}
+
+const TRAMPOLINES: [fn(f32) -> f32; 8] = [
+  trampoline_0,
+  trampoline_1,
+  trampoline_2,
+  trampoline_3,
+  trampoline_4,
+  trampoline_5,
+  trampoline_6,
+  trampoline_7,
+];
+
+fn call_slot(idx: usize, p: f32) -> f32 {
+  if let Ok(slots) = CUSTOM_CURVE_SLOTS.read() {
+    if let Some(&func) = slots.get(idx) {
+      return func(p);
+    }
+  }
+  p
+}
+
+fn get_custom_curve(f: extern "C" fn(f32) -> f32) -> Curve {
+  if let Ok(mut slots) = CUSTOM_CURVE_SLOTS.write() {
+    for (i, &existing) in slots.iter().enumerate() {
+      if std::ptr::fn_addr_eq(existing, f) {
+        return Curve::Custom(TRAMPOLINES[i % TRAMPOLINES.len()]);
+      }
+    }
+    let idx = slots.len();
+    slots.push(f);
+    Curve::Custom(TRAMPOLINES[idx % TRAMPOLINES.len()])
+  } else {
+    Curve::Linear
+  }
+}
+
+fn animation_mode(animation: &Animation) -> Mode {
+  match &animation.mode {
+    AnimationMode::Spring(motion) => {
+      let mut m = match (motion.damping, motion.response_ms) {
+        _ if (motion.damping - SpringMotion::SMOOTH.damping).abs() < 1e-4
+          && motion.response_ms == SpringMotion::SMOOTH.response_ms =>
+        {
+          Motion::SMOOTH
+        }
+        _ if (motion.damping - SpringMotion::SNAPPY.damping).abs() < 1e-4
+          && motion.response_ms == SpringMotion::SNAPPY.response_ms =>
+        {
+          Motion::SNAPPY
+        }
+        _ if (motion.damping - SpringMotion::BOUNCY.damping).abs() < 1e-4
+          && motion.response_ms == SpringMotion::BOUNCY.response_ms =>
+        {
+          Motion::BOUNCY
+        }
+        _ if (motion.damping - SpringMotion::INSTANT.damping).abs() < 1e-4
+          && motion.response_ms == SpringMotion::INSTANT.response_ms =>
+        {
+          Motion::INSTANT
+        }
+        _ => Motion {
+          damping: motion.damping,
+          response: Duration::from_millis(motion.response_ms as u64),
+        },
+      };
+      if motion.response_ms != 500 && motion.response_ms > 0 {
+        m = m.with_duration(Duration::from_millis(motion.response_ms as u64));
+      }
+      m.with_damping(motion.damping).into()
+    }
+    AnimationMode::Transition(transition) => {
+      let curve = match transition.curve {
+        AnimationCurve::Linear => Curve::Linear,
+        AnimationCurve::Ease => Curve::Ease,
+        AnimationCurve::EaseIn => Curve::EaseIn,
+        AnimationCurve::EaseOut => Curve::EaseOut,
+        AnimationCurve::EaseInOut => Curve::EaseInOut,
+        AnimationCurve::Bezier(b) => Curve::Bezier(Bezier::new(b.x1, b.y1, b.x2, b.y2)),
+        AnimationCurve::Custom(f) => get_custom_curve(f),
+      };
+
+      let duration = if transition.duration_ms > 0 {
+        transition.duration_ms
+      } else {
+        animation.duration_ms.max(1)
+      };
+
+      Easing {
+        curve,
+        duration: Duration::from_millis(duration as u64),
+        reversible: transition.reversible,
+      }
+      .into()
+    }
+  }
+}
+
+fn animation_generation(animation: &Animation) -> u64 {
+  use std::hash::{Hash, Hasher};
+
+  let mut hasher = std::collections::hash_map::DefaultHasher::new();
+  format!("{animation:?}").hash(&mut hasher);
+  hasher.finish()
 }
 
 fn slide_element(
@@ -942,8 +1167,115 @@ fn slide_element(
 ) -> iced::Element<'static, ItemMessage> {
   let offset = Vector::new(animation.offset_x, animation.offset_y);
   SlideIn::new(element, offset)
+    .generation(animation_generation(animation))
     .animation(animation_mode(animation))
     .into()
+}
+
+fn slide_edge_element(
+  element: iced::Element<'static, ItemMessage>,
+  animation: &Animation,
+  edge: AnimationEdge,
+  closing: bool,
+) -> iced::Element<'static, ItemMessage> {
+  let distance_x = if animation.offset_x != 0.0 {
+    animation.offset_x
+  } else {
+    100.0
+  };
+  let distance_y = if animation.offset_y != 0.0 {
+    animation.offset_y
+  } else {
+    100.0
+  };
+  let offset = match edge {
+    AnimationEdge::Top => Vector::new(0.0, -distance_y),
+    AnimationEdge::Bottom => Vector::new(0.0, distance_y),
+    AnimationEdge::Left => Vector::new(-distance_x, 0.0),
+    AnimationEdge::Right => Vector::new(distance_x, 0.0),
+  };
+  SlideIn::new(element, offset)
+    .closing(closing)
+    .generation(animation_generation(animation))
+    .animation(animation_mode(animation))
+    .into()
+}
+
+fn custom_element(
+  element: iced::Element<'static, ItemMessage>,
+  animation: &Animation,
+  custom: AbiCustomAnimation,
+) -> iced::Element<'static, ItemMessage> {
+  CustomAnimation::new(element, move |p| {
+    let off = custom.offset(p);
+    Vector::new(off.x, off.y)
+  })
+  .generation(animation_generation(animation))
+  .animation(animation_mode(animation))
+  .into()
+}
+
+fn fade_element(
+  child: &Node,
+  animation: &Animation,
+  fade_in: bool,
+  ctx: &RenderCtx,
+) -> iced::Element<'static, ItemMessage> {
+  let target = if fade_in { 1.0 } else { 0.0 };
+  let initial = if fade_in { 0.0 } else { 1.0 };
+  let base = child.clone();
+  let ctx = ctx.clone();
+  let mode = animation_mode(animation);
+
+  Animated::new(target, move |alpha| {
+    let mut local = base.clone();
+    apply_alpha(&mut local, *alpha);
+    render_plain(&local, &ctx)
+  })
+  .initial(initial)
+  .generation(animation_generation(animation))
+  .animation(mode)
+  .into()
+}
+
+fn apply_alpha(node: &mut Node, alpha: f32) {
+  match node {
+    Node::Text { color, .. } | Node::Icon { color, .. } | Node::Progress { color, .. } => {
+      match color {
+        ROption::RSome(c) => c.a *= alpha,
+        ROption::RNone => {
+          *color = ROption::RSome(AbiColor {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: alpha,
+          })
+        }
+      }
+    }
+    Node::Container { child, style, .. } => {
+      if let ROption::RSome(s) = style {
+        if let ROption::RSome(bg) = &mut s.background {
+          bg.a *= alpha;
+        }
+        if let ROption::RSome(tc) = &mut s.text_color {
+          tc.a *= alpha;
+        }
+      }
+      apply_alpha(child, alpha);
+    }
+    Node::Row { children, .. } | Node::Column { children, .. } | Node::Stack { children, .. } => {
+      for c in children.iter_mut() {
+        apply_alpha(c, alpha);
+      }
+    }
+    Node::Clickable { child, .. }
+    | Node::Scrollable { child, .. }
+    | Node::EventWrapper { child, .. } => {
+      apply_alpha(child, alpha);
+    }
+    _ => {}
+  }
 }
 
 fn node_classes(classes: &RVec<RString>) -> Option<Vec<&str>> {

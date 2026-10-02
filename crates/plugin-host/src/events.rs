@@ -126,12 +126,9 @@ fn named_event(name: &Ustr) -> AbiEvent {
 }
 
 pub(crate) fn payload_event(name: &Ustr, payload: &Option<CorePayloadBox>) -> AbiEvent {
-  match payload {
-    Some(payload) => AbiEvent::Payload {
-      name: RString::from(&**name),
-      payload: payload_box(&Some(payload.clone())),
-    },
-    None => named_event(name),
+  AbiEvent::Payload {
+    name: RString::from(&**name),
+    payload: payload_box(payload),
   }
 }
 

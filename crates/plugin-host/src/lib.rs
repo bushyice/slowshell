@@ -151,6 +151,17 @@ impl PluginHost {
       registry.include_in("app", ResourceRegistration::Item(plugin_desktop_items));
     }
 
+    let has_desktop_deployers = desktop_deployer_entries()
+      .lock()
+      .map(|items| !items.is_empty())
+      .unwrap_or(false);
+    if has_desktop_deployers {
+      registry.include_in(
+        "app",
+        ResourceRegistration::Deployable(plugin_desktop_deployers),
+      );
+    }
+
     let has_quick_settings = quicksettings::providers()
       .lock()
       .map(|providers| !providers.is_empty())
@@ -176,9 +187,13 @@ impl PluginHost {
     let payload_count = payload::payloads().lock().map(|p| p.len()).unwrap_or(0);
     let renderable_count = renderable_entries().lock().map(|r| r.len()).unwrap_or(0);
     let desktop_count = desktop_entries().lock().map(|d| d.len()).unwrap_or(0);
-    if payload_count + renderable_count + desktop_count > 0 {
+    let deployer_count = desktop_deployer_entries()
+      .lock()
+      .map(|d| d.len())
+      .unwrap_or(0);
+    if payload_count + renderable_count + desktop_count + deployer_count > 0 {
       plugin_log(format_args!(
-        "[plugin] registered {payload_count} payload(s), {renderable_count} renderable(s), {desktop_count} desktop item(s)"
+        "[plugin] registered {payload_count} payload(s), {renderable_count} renderable(s), {desktop_count} desktop item(s), {deployer_count} desktop deployer(s)"
       ));
     }
 
@@ -643,6 +658,19 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
           contributions.desktop_items.push(name);
         });
       }
+      Pending::DesktopItemDeployer { name, factory } => {
+        desktop_deployer_entries()
+          .lock()
+          .unwrap()
+          .push(DesktopDeployerEntry {
+            name: name.clone().into(),
+            plugin_id: plugin_id.to_owned(),
+            factory,
+          });
+        contribute(plugin_id, |contributions| {
+          contributions.desktop_item_deployers.push(name);
+        });
+      }
       Pending::PayloadParser { commands, parser } => {
         crate::payload::register_parser(plugin_id.to_owned(), commands.clone(), parser);
         contribute(plugin_id, |contributions| {
@@ -860,6 +888,38 @@ fn plugin_desktop_items(
     })
     .collect();
   Ok(items)
+}
+
+struct DesktopDeployerEntry {
+  name: slowshell_core::types::Ustr,
+  plugin_id: String,
+  factory: slowshell_plugin_abi::DeployableDesktopItemFactoryBox,
+}
+
+fn desktop_deployer_entries() -> &'static Mutex<Vec<DesktopDeployerEntry>> {
+  static ENTRIES: OnceLock<Mutex<Vec<DesktopDeployerEntry>>> = OnceLock::new();
+  ENTRIES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn plugin_desktop_deployers(
+  _config: &Config,
+  _store: &Store,
+) -> miette::Result<Vec<Box<dyn slowshell_desktop::DeployableDesktopItem>>> {
+  let entries = desktop_deployer_entries().lock().unwrap();
+  let deployers = entries
+    .iter()
+    .map(|entry| {
+      let ctx = Context::new(host::host());
+      let _scope = PluginScope::enter(&entry.plugin_id);
+      let inner = entry.factory.create(&ctx);
+      Box::new(desktop::PluginDeployable::new(
+        entry.name.clone(),
+        entry.plugin_id.clone(),
+        inner,
+      )) as Box<dyn slowshell_desktop::DeployableDesktopItem>
+    })
+    .collect();
+  Ok(deployers)
 }
 
 #[cfg(feature = "spotlight")]

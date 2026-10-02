@@ -14,8 +14,8 @@ use crate::{
   host::{Host, Host_TO},
   payload::{PayloadBox, PayloadParser, PayloadParserBox},
   surfaces::{
-    Component, Compositor, ConfigParser, ConfigParserBox, DesktopItem, Payload, QuickSettings,
-    Renderable, Spotlight,
+    Component, Compositor, ConfigParser, ConfigParserBox, DeployableDesktopItem, DesktopItem,
+    Payload, QuickSettings, Renderable, Spotlight,
   },
 };
 
@@ -122,6 +122,7 @@ pub trait HostExt {
   fn renderable<T: Renderable>(&self, name: &str);
   fn payload<T: Payload>(&self, command: &str);
   fn desktop_item<T: DesktopItem>(&self, name: &str);
+  fn desktop_item_deployer<T: DeployableDesktopItem>(&self, name: &str);
   fn compositor<T: Compositor>(&self, name: &str);
   fn spotlight<T: Spotlight>(&self, name: &str);
   fn quick_settings<T: QuickSettings>(&self, name: &str);
@@ -175,6 +176,14 @@ impl HostExt for Host_TO<RBox<()>> {
       self,
       RString::from(name),
       crate::surfaces::desktop_item_factory::<T>(),
+    );
+  }
+
+  fn desktop_item_deployer<T: DeployableDesktopItem>(&self, name: &str) {
+    Host::register_desktop_item_deployer(
+      self,
+      RString::from(name),
+      crate::surfaces::deployable_desktop_item_factory::<T>(),
     );
   }
 

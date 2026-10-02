@@ -19,7 +19,9 @@ use slowshell_core::{
   message::{ItemEffect, ItemMessage},
   types::Ustr,
 };
-use slowshell_plugin_abi::{Context, RenderableObjectBox, RenderableSettings};
+use slowshell_plugin_abi::{
+  Context, ItemEffect as AbiEffect, RenderableObjectBox, RenderableSettings,
+};
 use slowshell_widgets::{Backdrop, ComponentOptions, Renderable, SizedPopup};
 
 use crate::{
@@ -28,7 +30,7 @@ use crate::{
   render::{RenderCtx, render_nodes},
   state::{
     PluginCalls, PluginScope, ScopedConfig, compositor_scope, notifications_scope, store_scope,
-    store_scope_mut,
+    store_scope_mut, with_plugin_calls,
   },
 };
 
@@ -44,10 +46,8 @@ pub(crate) struct PluginRenderable {
   inner: RefCell<RenderableObjectBox>,
   event_name: Ustr,
   options: Mutex<Option<Arc<ComponentOptions>>>,
-  #[allow(dead_code)]
-  timers: Vec<(i32, u32)>,
-  #[allow(dead_code)]
-  fds: Vec<(i32, u32)>,
+  timers: Mutex<Vec<(i32, u32)>>,
+  fds: Mutex<Vec<(i32, u32)>>,
 }
 
 #[cfg_attr(not(feature = "panels"), allow(dead_code))]
@@ -59,8 +59,8 @@ impl PluginRenderable {
       inner: RefCell::new(inner),
       event_name: format!("component/plugin.{id}").into(),
       options: Mutex::new(None),
-      timers: Vec::new(),
-      fds: Vec::new(),
+      timers: Mutex::new(Vec::new()),
+      fds: Mutex::new(Vec::new()),
     }
   }
 
@@ -76,6 +76,12 @@ impl PluginRenderable {
 
   fn take_options(&self) -> Option<Arc<ComponentOptions>> {
     self.options.lock().ok().and_then(|guard| guard.clone())
+  }
+
+  fn apply_calls(&self, store: &mut Store, calls: crate::state::PluginCalls) -> bool {
+    let mut timers = self.timers.lock().unwrap();
+    let mut fds = self.fds.lock().unwrap();
+    apply_plugin_calls(&self.event_name, &mut timers, &mut fds, store, calls)
   }
 }
 
@@ -100,12 +106,89 @@ impl Renderable for PluginRenderable {
     let _options_scope = ScopedOptions::current(options.as_deref());
     let _ = &options;
 
+    let targeted = match event {
+      ListenerAction::Timer { name, .. } | ListenerAction::Signal { name, .. } => {
+        &**name == &*self.event_name
+      }
+      ListenerAction::Payload { name, .. } => &**name == &*self.event_name,
+      _ => false,
+    };
+
+    let widget_event = match event {
+      ListenerAction::Payload { name, payload } if &**name == &*self.event_name => {
+        crate::events::widget_from_payload(payload)
+      }
+      _ => None,
+    };
+
     let ctx = Context::new(host());
-    let effect = self
-      .inner
-      .borrow_mut()
-      .on_event(&ctx, &event_from_action(event));
-    Some(effect_from_abi(effect))
+    let mut effect = AbiEffect::None;
+    let (_, calls) = with_plugin_calls(|| {
+      if let Some(widget_event) = widget_event {
+        effect = self
+          .inner
+          .borrow_mut()
+          .on_event(&ctx, &slowshell_plugin_abi::Event::Widget(widget_event));
+      } else if let ListenerAction::Payload { name, payload } = event
+        && &**name == &*self.event_name
+      {
+        effect = self
+          .inner
+          .borrow_mut()
+          .on_event(&ctx, &crate::events::payload_event(name, payload));
+      } else if targeted {
+        let (kind, action, fd) = match event {
+          ListenerAction::Signal { fd, .. } => {
+            let action = self
+              .fds
+              .lock()
+              .map(|fds| {
+                fds
+                  .iter()
+                  .find(|(registered, _)| registered == fd)
+                  .map(|(_, action)| *action)
+                  .unwrap_or(0)
+              })
+              .unwrap_or(0);
+            (1u32, action, *fd)
+          }
+          ListenerAction::Timer { fd, .. } => {
+            let tag = self
+              .timers
+              .lock()
+              .map(|timers| {
+                timers
+                  .iter()
+                  .find(|(registered, _)| registered == fd)
+                  .map(|(_, tag)| *tag)
+                  .unwrap_or(0)
+              })
+              .unwrap_or(0);
+            (0u32, tag, *fd)
+          }
+          _ => (0u32, 0, -1),
+        };
+
+        let abi_event = if kind == 0 {
+          slowshell_plugin_abi::Event::Tick { tag: action, fd }
+        } else {
+          slowshell_plugin_abi::Event::Fd { action, fd }
+        };
+        effect = self.inner.borrow_mut().on_event(&ctx, &abi_event);
+      } else {
+        effect = self
+          .inner
+          .borrow_mut()
+          .on_event(&ctx, &event_from_action(event));
+      }
+    });
+
+    let redraw = self.apply_calls(store, calls);
+    let mut effect = effect_from_abi(effect);
+    if effect == ItemEffect::None && (targeted || redraw) {
+      effect = ItemEffect::Redraw;
+    }
+    Some(effect)
   }
 
   fn initialize_with_options(
@@ -132,7 +215,10 @@ impl Renderable for PluginRenderable {
     let _store_scope = store_scope_mut(store);
 
     let ctx = Context::new(host());
-    self.inner.borrow_mut().initialize(&ctx);
+    let (_, calls) = with_plugin_calls(|| {
+      self.inner.borrow_mut().initialize(&ctx);
+    });
+    self.apply_calls(store, calls);
     Box::new(())
   }
 
@@ -150,6 +236,12 @@ impl Renderable for PluginRenderable {
     let ctx = Context::new(host());
     let effect = self.inner.borrow_mut().update(&ctx);
     Some(effect_from_abi(effect))
+  }
+
+  fn close(&mut self, store: &mut Store) {
+    let mut timers = self.timers.lock().unwrap();
+    let mut fds = self.fds.lock().unwrap();
+    clear_plugin_calls(&mut timers, &mut fds, store);
   }
 
   fn handle_message(&mut self, message: &ItemMessage) -> Option<ItemEffect> {

@@ -474,6 +474,19 @@ impl Host for HostImpl {
     });
   }
 
+  fn register_desktop_item_deployer(
+    &self,
+    name: RString,
+    factory: slowshell_plugin_abi::DeployableDesktopItemFactoryBox,
+  ) {
+    crate::state::PENDING.with(|pending| {
+      pending.borrow_mut().push(Pending::DesktopItemDeployer {
+        name: name.to_string(),
+        factory,
+      });
+    });
+  }
+
   fn register_compositor(&self, name: RString, factory: CompositorFactoryBox) {
     crate::state::PENDING.with(|pending| {
       pending.borrow_mut().push(Pending::Compositor {

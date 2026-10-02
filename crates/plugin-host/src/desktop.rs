@@ -11,10 +11,13 @@ use slowshell_core::{
   message::{EventFilter, ItemEffect, ItemMessage},
   types::Ustr,
 };
-use slowshell_desktop::{DesktopItem, MonitorScope, UpdateWhen, Visibility};
+use slowshell_desktop::{
+  DeployDesktopItemAction, DeployableDesktopItem, DesktopItem, MonitorScope, UpdateWhen, Visibility,
+};
 use slowshell_plugin_abi::{
-  Anchor as AbiAnchor, Context, DesktopItemObjectBox, DesktopSettings, Event as AbiEvent,
-  ItemEffect as AbiEffect, KeyboardInteractivity as AbiKeyboardInteractivity, Layer as AbiLayer,
+  Anchor as AbiAnchor, Context, DeployResult, DeployableDesktopItemObjectBox, DesktopItemObjectBox,
+  DesktopSettings, Event as AbiEvent, ItemEffect as AbiEffect,
+  KeyboardInteractivity as AbiKeyboardInteractivity, Layer as AbiLayer,
   UpdateWhen as AbiUpdateWhen, Visibility as AbiVisibility,
 };
 
@@ -282,6 +285,93 @@ impl DesktopItem for PluginDesktopItem {
         widget_event: Some(self.event_name.clone()),
       },
     )
+  }
+}
+
+pub(crate) struct PluginDeployable {
+  id: Ustr,
+  plugin_id: String,
+  inner: DeployableDesktopItemObjectBox,
+  event_name: Ustr,
+}
+
+impl PluginDeployable {
+  pub(crate) fn new(id: Ustr, plugin_id: String, inner: DeployableDesktopItemObjectBox) -> Self {
+    let instance = NEXT_INSTANCE_ID.fetch_add(1, Ordering::Relaxed);
+    Self {
+      id,
+      plugin_id,
+      inner,
+      event_name: format!("component/plugin.{instance}").into(),
+    }
+  }
+}
+
+impl DeployableDesktopItem for PluginDeployable {
+  fn id(&self) -> &str {
+    &self.id
+  }
+
+  fn deploys_on(&self) -> Vec<EventFilter> {
+    filters_to_core(&self.inner.events(), &self.event_name)
+  }
+
+  fn deploy(
+    &mut self,
+    config: &Config,
+    store: &mut Store,
+    action: &ListenerAction,
+  ) -> miette::Result<Option<DeployDesktopItemAction>> {
+    let _plugin_scope = PluginScope::enter(&self.plugin_id);
+    let _config_scope = ScopedConfig::current(config);
+    let _compositor_scope = compositor_scope(store);
+    let _notifications_scope = notifications_scope(store);
+    let _store_scope = store_scope_mut(store);
+
+    let ctx = Context::new(host());
+    let result = with_plugin_calls(|| self.inner.deploy(&ctx, &event_from_action(action))).0;
+
+    Ok(deploy_action(result, &self.plugin_id))
+  }
+}
+
+fn deploy_action(result: DeployResult, plugin_id: &str) -> Option<DeployDesktopItemAction> {
+  let mut actions = Vec::new();
+  collect_deploy_actions(result, plugin_id, &mut actions);
+
+  if actions.is_empty() {
+    None
+  } else {
+    Some(DeployDesktopItemAction::Many(actions))
+  }
+}
+
+fn collect_deploy_actions(
+  result: DeployResult,
+  plugin_id: &str,
+  actions: &mut Vec<DeployDesktopItemAction>,
+) {
+  match result {
+    DeployResult::None => {}
+    DeployResult::Deploy(items) => {
+      for item in items {
+        actions.push(DeployDesktopItemAction::Deploy(
+          Box::new(PluginDesktopItem::new(
+            item.id.to_string().into(),
+            plugin_id.to_owned(),
+            item.item,
+          )) as Box<dyn DesktopItem>,
+        ));
+      }
+    }
+    DeployResult::Destroy(id) => {
+      actions.push(DeployDesktopItemAction::Destroy(id.to_string().into()));
+    }
+    DeployResult::Many(results) => {
+      for result in results {
+        collect_deploy_actions(result, plugin_id, actions);
+      }
+    }
   }
 }
 

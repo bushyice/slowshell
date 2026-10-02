@@ -79,6 +79,25 @@ pub struct Style {
   pub text_color: ROption<Color>,
 }
 
+impl Style {
+  pub fn bg(color: Color) -> Self {
+    Self {
+      background: ROption::RSome(color),
+      border: ROption::RNone,
+      text_color: ROption::RNone,
+    }
+  }
+
+  pub fn with_border(mut self, width: f32, radius: f32, color: Color) -> Self {
+    self.border = ROption::RSome(Border {
+      width,
+      radius,
+      color,
+    });
+    self
+  }
+}
+
 #[repr(C)]
 #[derive(StableAbi, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Padding {
@@ -102,6 +121,15 @@ impl Padding {
       right: value,
       bottom: value,
       left: value,
+    }
+  }
+
+  pub const fn xy(x: f32, y: f32) -> Self {
+    Self {
+      top: y,
+      right: x,
+      bottom: y,
+      left: x,
     }
   }
 
@@ -196,12 +224,105 @@ impl Theme {
   }
 }
 
-// TODO: Add custom
+#[repr(C)]
+#[derive(StableAbi, Clone, Copy, Debug, Default, PartialEq)]
+pub struct AnimationOffset {
+  pub x: f32,
+  pub y: f32,
+}
+
+impl AnimationOffset {
+  pub const fn new(x: f32, y: f32) -> Self {
+    Self { x, y }
+  }
+}
+
+impl From<(f32, f32)> for AnimationOffset {
+  fn from((x, y): (f32, f32)) -> Self {
+    Self { x, y }
+  }
+}
+
+impl From<AnimationOffset> for (f32, f32) {
+  fn from(offset: AnimationOffset) -> Self {
+    (offset.x, offset.y)
+  }
+}
+
+#[repr(C)]
+#[derive(StableAbi, Clone, Copy, Debug)]
+pub struct CustomAnimation {
+  pub func: extern "C" fn(f32) -> AnimationOffset,
+}
+
+impl PartialEq for CustomAnimation {
+  fn eq(&self, other: &Self) -> bool {
+    std::ptr::fn_addr_eq(self.func, other.func)
+  }
+}
+
+impl CustomAnimation {
+  pub const fn new(func: extern "C" fn(f32) -> AnimationOffset) -> Self {
+    Self { func }
+  }
+
+  pub fn offset(&self, progress: f32) -> AnimationOffset {
+    (self.func)(progress)
+  }
+}
+
+#[repr(C)]
+#[derive(StableAbi, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnimationEdge {
+  Top,
+  Bottom,
+  Left,
+  Right,
+}
+
+impl From<icss::widgets::animation::Edge> for AnimationEdge {
+  fn from(edge: icss::widgets::animation::Edge) -> Self {
+    match edge {
+      icss::widgets::animation::Edge::Top => AnimationEdge::Top,
+      icss::widgets::animation::Edge::Bottom => AnimationEdge::Bottom,
+      icss::widgets::animation::Edge::Left => AnimationEdge::Left,
+      icss::widgets::animation::Edge::Right => AnimationEdge::Right,
+    }
+  }
+}
+
+impl From<AnimationEdge> for icss::widgets::animation::Edge {
+  fn from(edge: AnimationEdge) -> Self {
+    match edge {
+      AnimationEdge::Top => icss::widgets::animation::Edge::Top,
+      AnimationEdge::Bottom => icss::widgets::animation::Edge::Bottom,
+      AnimationEdge::Left => icss::widgets::animation::Edge::Left,
+      AnimationEdge::Right => icss::widgets::animation::Edge::Right,
+    }
+  }
+}
+
 #[repr(C)]
 #[derive(StableAbi, Clone, Copy, Debug, PartialEq)]
 pub enum AnimationKind {
   None,
   Slide,
+  FadeIn,
+  FadeOut,
+  SlideIn(AnimationEdge),
+  SlideOut(AnimationEdge),
+  Custom(CustomAnimation),
+}
+
+impl From<icss::widgets::animation::AnimKind> for AnimationKind {
+  fn from(kind: icss::widgets::animation::AnimKind) -> Self {
+    match kind {
+      icss::widgets::animation::AnimKind::FadeIn => AnimationKind::FadeIn,
+      icss::widgets::animation::AnimKind::FadeOut => AnimationKind::FadeOut,
+      icss::widgets::animation::AnimKind::SlideIn(edge) => AnimationKind::SlideIn(edge.into()),
+      icss::widgets::animation::AnimKind::SlideOut(edge) => AnimationKind::SlideOut(edge.into()),
+    }
+  }
 }
 
 #[repr(C)]
@@ -216,6 +337,308 @@ pub enum Easing {
 }
 
 #[repr(C)]
+#[derive(StableAbi, Clone, Copy, Debug, Default, PartialEq)]
+pub struct CubicBezier {
+  pub x1: f32,
+  pub y1: f32,
+  pub x2: f32,
+  pub y2: f32,
+}
+
+impl CubicBezier {
+  pub const fn new(x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
+    Self { x1, y1, x2, y2 }
+  }
+}
+
+impl From<CubicBezier> for iced_anim::transition::bezier::Bezier {
+  fn from(b: CubicBezier) -> Self {
+    iced_anim::transition::bezier::Bezier::new(b.x1, b.y1, b.x2, b.y2)
+  }
+}
+
+#[repr(C)]
+#[derive(StableAbi, Clone, Copy, Debug, Default)]
+pub enum AnimationCurve {
+  Linear,
+  #[default]
+  Ease,
+  EaseIn,
+  EaseOut,
+  EaseInOut,
+  Bezier(CubicBezier),
+  Custom(extern "C" fn(f32) -> f32),
+}
+
+impl PartialEq for AnimationCurve {
+  fn eq(&self, other: &Self) -> bool {
+    match (self, other) {
+      (Self::Linear, Self::Linear) => true,
+      (Self::Ease, Self::Ease) => true,
+      (Self::EaseIn, Self::EaseIn) => true,
+      (Self::EaseOut, Self::EaseOut) => true,
+      (Self::EaseInOut, Self::EaseInOut) => true,
+      (Self::Bezier(a), Self::Bezier(b)) => a == b,
+      (Self::Custom(a), Self::Custom(b)) => std::ptr::fn_addr_eq(*a, *b),
+      _ => false,
+    }
+  }
+}
+
+impl From<Easing> for AnimationCurve {
+  fn from(easing: Easing) -> Self {
+    match easing {
+      Easing::Linear => AnimationCurve::Linear,
+      Easing::Ease => AnimationCurve::Ease,
+      Easing::EaseIn => AnimationCurve::EaseIn,
+      Easing::EaseOut => AnimationCurve::EaseOut,
+      Easing::EaseInOut => AnimationCurve::EaseInOut,
+    }
+  }
+}
+
+impl From<icss::widgets::animation::Easing> for AnimationCurve {
+  fn from(easing: icss::widgets::animation::Easing) -> Self {
+    match easing {
+      icss::widgets::animation::Easing::Linear => AnimationCurve::Linear,
+      icss::widgets::animation::Easing::EaseIn => AnimationCurve::EaseIn,
+      icss::widgets::animation::Easing::EaseOut => AnimationCurve::EaseOut,
+      icss::widgets::animation::Easing::EaseInOut => AnimationCurve::EaseInOut,
+    }
+  }
+}
+
+impl From<icss::widgets::animation::Easing> for Easing {
+  fn from(easing: icss::widgets::animation::Easing) -> Self {
+    match easing {
+      icss::widgets::animation::Easing::Linear => Easing::Linear,
+      icss::widgets::animation::Easing::EaseIn => Easing::EaseIn,
+      icss::widgets::animation::Easing::EaseOut => Easing::EaseOut,
+      icss::widgets::animation::Easing::EaseInOut => Easing::EaseInOut,
+    }
+  }
+}
+
+#[repr(C)]
+#[derive(StableAbi, Clone, Copy, Debug, PartialEq)]
+pub struct SpringMotion {
+  pub damping: f32,
+  pub response_ms: u32,
+}
+
+impl SpringMotion {
+  pub const SMOOTH: Self = Self {
+    damping: 1.0,
+    response_ms: 500,
+  };
+
+  pub const SNAPPY: Self = Self {
+    damping: 0.85,
+    response_ms: 500,
+  };
+
+  pub const BOUNCY: Self = Self {
+    damping: 0.7,
+    response_ms: 500,
+  };
+
+  pub const INSTANT: Self = Self {
+    damping: 1.0,
+    response_ms: 0,
+  };
+
+  pub const fn new(damping: f32, response_ms: u32) -> Self {
+    Self {
+      damping,
+      response_ms,
+    }
+  }
+
+  pub const fn with_duration(mut self, millis: u32) -> Self {
+    self.response_ms = millis;
+    self
+  }
+
+  pub const fn with_damping(mut self, damping: f32) -> Self {
+    self.damping = damping;
+    self
+  }
+}
+
+impl Default for SpringMotion {
+  fn default() -> Self {
+    Self::SMOOTH
+  }
+}
+
+impl From<iced_anim::spring::Motion> for SpringMotion {
+  fn from(motion: iced_anim::spring::Motion) -> Self {
+    Self {
+      damping: motion.damping,
+      response_ms: motion.response.as_millis() as u32,
+    }
+  }
+}
+
+impl From<SpringMotion> for iced_anim::spring::Motion {
+  fn from(m: SpringMotion) -> Self {
+    iced_anim::spring::Motion {
+      damping: m.damping,
+      response: std::time::Duration::from_millis(m.response_ms as u64),
+    }
+  }
+}
+
+#[repr(C)]
+#[derive(StableAbi, Clone, Copy, Debug, PartialEq)]
+pub struct Transition {
+  pub curve: AnimationCurve,
+  pub duration_ms: u32,
+  pub reversible: bool,
+}
+
+impl Default for Transition {
+  fn default() -> Self {
+    Self {
+      curve: AnimationCurve::default(),
+      duration_ms: 130,
+      reversible: false,
+    }
+  }
+}
+
+impl Transition {
+  pub const fn new(curve: AnimationCurve, duration_ms: u32) -> Self {
+    Self {
+      curve,
+      duration_ms,
+      reversible: false,
+    }
+  }
+
+  pub const fn linear(duration_ms: u32) -> Self {
+    Self::new(AnimationCurve::Linear, duration_ms)
+  }
+
+  pub const fn ease(duration_ms: u32) -> Self {
+    Self::new(AnimationCurve::Ease, duration_ms)
+  }
+
+  pub const fn ease_in(duration_ms: u32) -> Self {
+    Self::new(AnimationCurve::EaseIn, duration_ms)
+  }
+
+  pub const fn ease_out(duration_ms: u32) -> Self {
+    Self::new(AnimationCurve::EaseOut, duration_ms)
+  }
+
+  pub const fn ease_in_out(duration_ms: u32) -> Self {
+    Self::new(AnimationCurve::EaseInOut, duration_ms)
+  }
+
+  pub const fn bezier(x1: f32, y1: f32, x2: f32, y2: f32, duration_ms: u32) -> Self {
+    Self::new(
+      AnimationCurve::Bezier(CubicBezier::new(x1, y1, x2, y2)),
+      duration_ms,
+    )
+  }
+
+  pub const fn custom(func: extern "C" fn(f32) -> f32, duration_ms: u32) -> Self {
+    Self::new(AnimationCurve::Custom(func), duration_ms)
+  }
+
+  pub const fn reversible(mut self, rev: bool) -> Self {
+    self.reversible = rev;
+    self
+  }
+}
+
+impl From<iced_anim::transition::Easing> for Transition {
+  fn from(easing: iced_anim::transition::Easing) -> Self {
+    let curve = match easing.curve {
+      iced_anim::transition::Curve::Linear => AnimationCurve::Linear,
+      iced_anim::transition::Curve::Ease => AnimationCurve::Ease,
+      iced_anim::transition::Curve::EaseIn => AnimationCurve::EaseIn,
+      iced_anim::transition::Curve::EaseOut => AnimationCurve::EaseOut,
+      iced_anim::transition::Curve::EaseInOut => AnimationCurve::EaseInOut,
+      iced_anim::transition::Curve::Bezier(_) => AnimationCurve::Ease,
+      iced_anim::transition::Curve::Custom(_) => AnimationCurve::Linear,
+    };
+    Self {
+      curve,
+      duration_ms: easing.duration.as_millis() as u32,
+      reversible: easing.reversible,
+    }
+  }
+}
+
+#[repr(C)]
+#[derive(StableAbi, Clone, Copy, Debug, PartialEq)]
+pub enum AnimationMode {
+  Spring(SpringMotion),
+  Transition(Transition),
+}
+
+impl Default for AnimationMode {
+  fn default() -> Self {
+    AnimationMode::Transition(Transition::default())
+  }
+}
+
+impl From<SpringMotion> for AnimationMode {
+  fn from(motion: SpringMotion) -> Self {
+    AnimationMode::Spring(motion)
+  }
+}
+
+impl From<Transition> for AnimationMode {
+  fn from(transition: Transition) -> Self {
+    AnimationMode::Transition(transition)
+  }
+}
+
+impl From<Easing> for AnimationMode {
+  fn from(easing: Easing) -> Self {
+    AnimationMode::Transition(Transition {
+      curve: easing.into(),
+      duration_ms: 130,
+      reversible: false,
+    })
+  }
+}
+
+impl From<AnimationCurve> for AnimationMode {
+  fn from(curve: AnimationCurve) -> Self {
+    AnimationMode::Transition(Transition {
+      curve,
+      duration_ms: 130,
+      reversible: false,
+    })
+  }
+}
+
+impl From<iced_anim::animated::Mode> for AnimationMode {
+  fn from(mode: iced_anim::animated::Mode) -> Self {
+    match mode {
+      iced_anim::animated::Mode::Spring(m) => AnimationMode::Spring(m.into()),
+      iced_anim::animated::Mode::Transition(e) => AnimationMode::Transition(e.into()),
+    }
+  }
+}
+
+impl From<iced_anim::spring::Motion> for AnimationMode {
+  fn from(motion: iced_anim::spring::Motion) -> Self {
+    AnimationMode::Spring(motion.into())
+  }
+}
+
+impl From<iced_anim::transition::Easing> for AnimationMode {
+  fn from(easing: iced_anim::transition::Easing) -> Self {
+    AnimationMode::Transition(easing.into())
+  }
+}
+
+#[repr(C)]
 #[derive(StableAbi, Clone, Copy, Debug, PartialEq)]
 pub struct Animation {
   pub kind: AnimationKind,
@@ -224,6 +647,8 @@ pub struct Animation {
   pub offset_x: f32,
   pub offset_y: f32,
   pub tween: bool,
+  pub mode: AnimationMode,
+  pub key: u64,
 }
 
 impl Animation {
@@ -235,6 +660,60 @@ impl Animation {
       offset_x: offset.0,
       offset_y: offset.1,
       tween: false,
+      mode: AnimationMode::Transition(Transition::ease_out(130)),
+      key: 0,
+    }
+  }
+
+  pub const fn slide_in_edge(edge: AnimationEdge, distance: f32) -> Self {
+    Self {
+      kind: AnimationKind::SlideIn(edge),
+      duration_ms: 130,
+      easing: Easing::EaseOut,
+      offset_x: distance,
+      offset_y: distance,
+      tween: false,
+      mode: AnimationMode::Transition(Transition::ease_out(130)),
+      key: 0,
+    }
+  }
+
+  pub const fn slide_out_edge(edge: AnimationEdge, distance: f32) -> Self {
+    Self {
+      kind: AnimationKind::SlideOut(edge),
+      duration_ms: 130,
+      easing: Easing::EaseIn,
+      offset_x: distance,
+      offset_y: distance,
+      tween: false,
+      mode: AnimationMode::Transition(Transition::ease_in(130)),
+      key: 0,
+    }
+  }
+
+  pub const fn fade_in() -> Self {
+    Self {
+      kind: AnimationKind::FadeIn,
+      duration_ms: 130,
+      easing: Easing::Ease,
+      offset_x: 0.0,
+      offset_y: 0.0,
+      tween: true,
+      mode: AnimationMode::Transition(Transition::ease(130)),
+      key: 0,
+    }
+  }
+
+  pub const fn fade_out() -> Self {
+    Self {
+      kind: AnimationKind::FadeOut,
+      duration_ms: 130,
+      easing: Easing::Ease,
+      offset_x: 0.0,
+      offset_y: 0.0,
+      tween: true,
+      mode: AnimationMode::Transition(Transition::ease(130)),
+      key: 0,
     }
   }
 
@@ -246,16 +725,150 @@ impl Animation {
       offset_x: 0.0,
       offset_y: 0.0,
       tween: true,
+      mode: AnimationMode::Transition(Transition::ease(130)),
+      key: 0,
     }
+  }
+
+  pub const fn custom(func: extern "C" fn(f32) -> AnimationOffset) -> Self {
+    Self {
+      kind: AnimationKind::Custom(CustomAnimation::new(func)),
+      duration_ms: 130,
+      easing: Easing::EaseOut,
+      offset_x: 0.0,
+      offset_y: 0.0,
+      tween: false,
+      mode: AnimationMode::Transition(Transition::ease_out(130)),
+      key: 0,
+    }
+  }
+
+  pub fn from_icss(
+    kind: icss::widgets::animation::AnimKind,
+    duration: std::time::Duration,
+  ) -> Self {
+    let abi_kind = AnimationKind::from(kind);
+    let duration_ms = duration.as_millis() as u32;
+    match abi_kind {
+      AnimationKind::SlideIn(edge) => Self::slide_in_edge(edge, 100.0).duration(duration_ms),
+      AnimationKind::SlideOut(edge) => Self::slide_out_edge(edge, 100.0).duration(duration_ms),
+      AnimationKind::FadeIn => Self::fade_in().duration(duration_ms),
+      AnimationKind::FadeOut => Self::fade_out().duration(duration_ms),
+      _ => Self::tween().duration(duration_ms),
+    }
+  }
+
+  pub fn spring(motion: impl Into<SpringMotion>) -> Self {
+    Self::tween().with_spring(motion)
+  }
+
+  pub fn with_spring(mut self, motion: impl Into<SpringMotion>) -> Self {
+    let m = motion.into();
+    self.duration_ms = m.response_ms;
+    self.mode = AnimationMode::Spring(m);
+    self
+  }
+
+  pub fn transition(transition: impl Into<Transition>) -> Self {
+    Self::tween().with_transition(transition)
+  }
+
+  pub fn with_transition(mut self, transition: impl Into<Transition>) -> Self {
+    let t = transition.into();
+    self.duration_ms = t.duration_ms;
+    self.mode = AnimationMode::Transition(t);
+    self
+  }
+
+  pub fn mode(mut self, mode: impl Into<AnimationMode>) -> Self {
+    self.mode = mode.into();
+    if let AnimationMode::Transition(t) = &self.mode {
+      self.duration_ms = t.duration_ms;
+    } else if let AnimationMode::Spring(s) = &self.mode {
+      self.duration_ms = s.response_ms;
+    }
+    self
+  }
+
+  pub const fn smooth(mut self) -> Self {
+    self.duration_ms = SpringMotion::SMOOTH.response_ms;
+    self.mode = AnimationMode::Spring(SpringMotion::SMOOTH);
+    self
+  }
+
+  pub const fn snappy(mut self) -> Self {
+    self.duration_ms = SpringMotion::SNAPPY.response_ms;
+    self.mode = AnimationMode::Spring(SpringMotion::SNAPPY);
+    self
+  }
+
+  pub const fn bouncy(mut self) -> Self {
+    self.duration_ms = SpringMotion::BOUNCY.response_ms;
+    self.mode = AnimationMode::Spring(SpringMotion::BOUNCY);
+    self
+  }
+
+  pub const fn instant(mut self) -> Self {
+    self.duration_ms = SpringMotion::INSTANT.response_ms;
+    self.mode = AnimationMode::Spring(SpringMotion::INSTANT);
+    self
+  }
+
+  pub const fn bezier(mut self, x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
+    self.mode = AnimationMode::Transition(Transition {
+      curve: AnimationCurve::Bezier(CubicBezier::new(x1, y1, x2, y2)),
+      duration_ms: self.duration_ms,
+      reversible: false,
+    });
+    self
+  }
+
+  pub const fn custom_curve(mut self, func: extern "C" fn(f32) -> f32) -> Self {
+    self.mode = AnimationMode::Transition(Transition {
+      curve: AnimationCurve::Custom(func),
+      duration_ms: self.duration_ms,
+      reversible: false,
+    });
+    self
   }
 
   pub const fn duration(mut self, millis: u32) -> Self {
     self.duration_ms = millis;
+    match self.mode {
+      AnimationMode::Transition(mut t) => {
+        t.duration_ms = millis;
+        self.mode = AnimationMode::Transition(t);
+      }
+      AnimationMode::Spring(mut s) => {
+        s.response_ms = millis;
+        self.mode = AnimationMode::Spring(s);
+      }
+    }
     self
   }
 
   pub const fn easing(mut self, easing: Easing) -> Self {
     self.easing = easing;
+    self.mode = AnimationMode::Transition(Transition {
+      curve: match easing {
+        Easing::Linear => AnimationCurve::Linear,
+        Easing::Ease => AnimationCurve::Ease,
+        Easing::EaseIn => AnimationCurve::EaseIn,
+        Easing::EaseOut => AnimationCurve::EaseOut,
+        Easing::EaseInOut => AnimationCurve::EaseInOut,
+      },
+      duration_ms: self.duration_ms,
+      reversible: false,
+    });
+    self
+  }
+
+  pub const fn curve(mut self, curve: AnimationCurve) -> Self {
+    self.mode = AnimationMode::Transition(Transition {
+      curve,
+      duration_ms: self.duration_ms,
+      reversible: false,
+    });
     self
   }
 }
@@ -375,10 +988,29 @@ pub enum Node {
   Progress {
     value: f32,
     color: ROption<Color>,
+    width: Length,
+    height: Length,
     classes: RVec<RString>,
   },
   Image {
     image: Image,
+    width: Length,
+    height: Length,
+    border_radius: f32,
+    rotation: f32,
+    classes: RVec<RString>,
+  },
+  Slider {
+    min: f32,
+    max: f32,
+    value: f32,
+    step: f32,
+    action: ROption<RString>,
+    width: Length,
+    classes: RVec<RString>,
+  },
+  Stack {
+    children: RVec<Node>,
     width: Length,
     height: Length,
     classes: RVec<RString>,
@@ -446,6 +1078,50 @@ impl Node {
     }
   }
 
+  pub fn spacing(mut self, s: f32) -> Self {
+    match &mut self {
+      Node::Row { spacing, .. } | Node::Column { spacing, .. } => *spacing = s,
+      _ => {}
+    }
+    self
+  }
+
+  pub fn align(mut self, a: Align) -> Self {
+    match &mut self {
+      Node::Row { align, .. } | Node::Column { align, .. } => *align = a,
+      _ => {}
+    }
+    self
+  }
+
+  pub fn align_x(mut self, a: Align) -> Self {
+    if let Node::Container { align_x, .. } = &mut self {
+      *align_x = a;
+    }
+    self
+  }
+
+  pub fn align_y(mut self, a: Align) -> Self {
+    if let Node::Container { align_y, .. } = &mut self {
+      *align_y = a;
+    }
+    self
+  }
+
+  pub fn padding(mut self, p: Padding) -> Self {
+    if let Node::Container { padding, .. } = &mut self {
+      *padding = p;
+    }
+    self
+  }
+
+  pub fn style(mut self, s: Style) -> Self {
+    if let Node::Container { style, .. } = &mut self {
+      *style = ROption::RSome(s);
+    }
+    self
+  }
+
   pub fn scrollable(child: Node) -> Node {
     Node::Scrollable {
       child: RBox::new(child),
@@ -508,6 +1184,8 @@ impl Node {
     Node::Progress {
       value,
       color: ROption::RNone,
+      width: Length::Shrink,
+      height: Length::Fixed(4.0),
       classes: RVec::new(),
     }
   }
@@ -517,8 +1195,56 @@ impl Node {
       image,
       width: Length::Shrink,
       height: Length::Shrink,
+      border_radius: 0.0,
+      rotation: 0.0,
       classes: RVec::new(),
     }
+  }
+
+  pub fn slider(min: f32, max: f32, value: f32, action: impl Into<String>) -> Node {
+    Node::Slider {
+      min,
+      max,
+      value,
+      step: 1.0,
+      action: ROption::RSome(action.into().into()),
+      width: Length::Shrink,
+      classes: RVec::new(),
+    }
+  }
+
+  pub fn stack(children: impl IntoIterator<Item = Node>) -> Node {
+    Node::Stack {
+      children: children.into_iter().collect(),
+      width: Length::Shrink,
+      height: Length::Shrink,
+      classes: RVec::new(),
+    }
+  }
+
+  pub fn border_radius(mut self, radius: f32) -> Self {
+    if let Node::Image { border_radius, .. } = &mut self {
+      *border_radius = radius;
+    }
+    self
+  }
+
+  pub fn circle(self) -> Self {
+    self.border_radius(9999.0)
+  }
+
+  pub fn rotation(mut self, radians: f32) -> Self {
+    if let Node::Image { rotation, .. } = &mut self {
+      *rotation = radians;
+    }
+    self
+  }
+
+  pub fn step(mut self, s: f32) -> Self {
+    if let Node::Slider { step, .. } = &mut self {
+      *step = s;
+    }
+    self
   }
 
   pub fn canvas(width: u32, height: u32, draw: impl FnOnce(&mut [u8])) -> Node {
@@ -595,6 +1321,8 @@ impl Node {
       | Node::Text { classes: c, .. }
       | Node::Progress { classes: c, .. }
       | Node::Image { classes: c, .. }
+      | Node::Slider { classes: c, .. }
+      | Node::Stack { classes: c, .. }
       | Node::Canvas { classes: c, .. }
       | Node::TextInput { classes: c, .. }
       | Node::EventWrapper { classes: c, .. } => *c = owned,
@@ -617,6 +1345,8 @@ impl Node {
       | Node::Text { classes, .. }
       | Node::Progress { classes, .. }
       | Node::Image { classes, .. }
+      | Node::Slider { classes, .. }
+      | Node::Stack { classes, .. }
       | Node::Canvas { classes, .. }
       | Node::TextInput { classes, .. }
       | Node::EventWrapper { classes, .. } => classes.clone(),
@@ -662,6 +1392,9 @@ impl Node {
       Node::Container { width: target, .. }
       | Node::Scrollable { width: target, .. }
       | Node::Image { width: target, .. }
+      | Node::Progress { width: target, .. }
+      | Node::Slider { width: target, .. }
+      | Node::Stack { width: target, .. }
       | Node::TextInput { width: target, .. }
       | Node::Canvas { width: target, .. } => *target = width,
       _ => {}
@@ -674,6 +1407,8 @@ impl Node {
       Node::Container { height: target, .. }
       | Node::Scrollable { height: target, .. }
       | Node::Image { height: target, .. }
+      | Node::Progress { height: target, .. }
+      | Node::Stack { height: target, .. }
       | Node::Canvas { height: target, .. } => *target = height,
       _ => {}
     }
@@ -741,8 +1476,72 @@ impl Node {
     self.animated(Animation::slide(offset))
   }
 
+  pub fn slide_in_edge(self, edge: AnimationEdge, distance: f32) -> Node {
+    self.animated(Animation::slide_in_edge(edge, distance))
+  }
+
+  pub fn slide_out_edge(self, edge: AnimationEdge, distance: f32) -> Node {
+    self.animated(Animation::slide_out_edge(edge, distance))
+  }
+
+  pub fn fade_in(self) -> Node {
+    self.animated(Animation::fade_in())
+  }
+
+  pub fn fade_out(self) -> Node {
+    self.animated(Animation::fade_out())
+  }
+
   pub fn tween(self) -> Node {
     self.animated(Animation::tween())
+  }
+
+  pub fn custom_animation(self, func: extern "C" fn(f32) -> AnimationOffset) -> Node {
+    self.animated(Animation::custom(func))
+  }
+
+  pub fn spring(mut self, motion: impl Into<SpringMotion>) -> Node {
+    if let Node::Animated { animation, .. } = &mut self {
+      *animation = animation.with_spring(motion);
+    }
+    self
+  }
+
+  pub fn transition(mut self, transition: impl Into<Transition>) -> Node {
+    if let Node::Animated { animation, .. } = &mut self {
+      *animation = animation.with_transition(transition);
+    }
+    self
+  }
+
+  pub fn duration(mut self, millis: u32) -> Node {
+    if let Node::Animated { animation, .. } = &mut self {
+      *animation = animation.duration(millis);
+    }
+    self
+  }
+
+  pub fn bezier(mut self, bezier: CubicBezier, millis: u32) -> Node {
+    if let Node::Animated { animation, .. } = &mut self {
+      *animation = animation
+        .duration(millis)
+        .curve(AnimationCurve::Bezier(bezier));
+    }
+    self
+  }
+
+  pub fn custom_curve(mut self, func: extern "C" fn(f32) -> f32, millis: u32) -> Node {
+    if let Node::Animated { animation, .. } = &mut self {
+      *animation = animation.duration(millis).custom_curve(func);
+    }
+    self
+  }
+
+  pub fn animation_key(mut self, key: u64) -> Node {
+    if let Node::Animated { animation, .. } = &mut self {
+      animation.key = key;
+    }
+    self
   }
 }
 
@@ -1253,5 +2052,167 @@ impl QuickSettingsTile {
   pub fn order(mut self, order: i32) -> Self {
     self.order = order;
     self
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  extern "C" fn sample_custom_offset(progress: f32) -> AnimationOffset {
+    AnimationOffset::new(progress * 10.0, (1.0 - progress) * 20.0)
+  }
+
+  extern "C" fn sample_custom_curve(progress: f32) -> f32 {
+    progress * progress
+  }
+
+  #[test]
+  fn test_slide_animation() {
+    let anim = Animation::slide((15.0, 25.0));
+    assert_eq!(anim.kind, AnimationKind::Slide);
+    assert_eq!(anim.offset_x, 15.0);
+    assert_eq!(anim.offset_y, 25.0);
+    assert!(matches!(anim.mode, AnimationMode::Transition(_)));
+  }
+
+  #[test]
+  fn test_iced_anim_spring_selection() {
+    let anim = Animation::slide((0.0, -30.0)).with_spring(iced_anim::spring::Motion::BOUNCY);
+    match anim.mode {
+      AnimationMode::Spring(motion) => {
+        assert_eq!(motion.damping, 0.7);
+        assert_eq!(motion.response_ms, 500);
+      }
+      _ => panic!("Expected spring mode"),
+    }
+
+    let spring_direct = Animation::spring(iced_anim::spring::Motion::BOUNCY);
+    assert!(matches!(spring_direct.mode, AnimationMode::Spring(_)));
+
+    let smooth_anim = Animation::tween().smooth();
+    match smooth_anim.mode {
+      AnimationMode::Spring(motion) => {
+        assert_eq!(motion.damping, 1.0);
+      }
+      _ => panic!("Expected spring mode"),
+    }
+
+    let snappy_anim = Animation::tween().snappy();
+    match snappy_anim.mode {
+      AnimationMode::Spring(motion) => {
+        assert_eq!(motion.damping, 0.85);
+      }
+      _ => panic!("Expected spring mode"),
+    }
+  }
+
+  #[test]
+  fn test_iced_anim_transition_and_bezier() {
+    let anim = Animation::tween().bezier(0.2, 0.1, 0.3, 0.9);
+    match anim.mode {
+      AnimationMode::Transition(trans) => match trans.curve {
+        AnimationCurve::Bezier(b) => {
+          assert_eq!(b.x1, 0.2);
+          assert_eq!(b.y1, 0.1);
+          assert_eq!(b.x2, 0.3);
+          assert_eq!(b.y2, 0.9);
+        }
+        _ => panic!("Expected bezier curve"),
+      },
+      _ => panic!("Expected transition mode"),
+    }
+
+    let ease_anim = Animation::transition(iced_anim::transition::Easing::EASE_IN_OUT);
+    match ease_anim.mode {
+      AnimationMode::Transition(trans) => {
+        assert_eq!(trans.curve, AnimationCurve::EaseInOut);
+      }
+      _ => panic!("Expected transition mode"),
+    }
+  }
+
+  #[test]
+  fn test_icss_animations() {
+    let from_icss = Animation::from_icss(
+      icss::widgets::animation::AnimKind::SlideIn(icss::widgets::animation::Edge::Bottom),
+      std::time::Duration::from_millis(250),
+    );
+    assert_eq!(
+      from_icss.kind,
+      AnimationKind::SlideIn(AnimationEdge::Bottom)
+    );
+    assert_eq!(from_icss.duration_ms, 250);
+
+    let fade_in = Animation::fade_in();
+    assert_eq!(fade_in.kind, AnimationKind::FadeIn);
+
+    let fade_out = Animation::fade_out();
+    assert_eq!(fade_out.kind, AnimationKind::FadeOut);
+
+    let edge_slide = Animation::slide_out_edge(AnimationEdge::Right, 80.0);
+    assert_eq!(
+      edge_slide.kind,
+      AnimationKind::SlideOut(AnimationEdge::Right)
+    );
+    assert_eq!(edge_slide.offset_x, 80.0);
+  }
+
+  #[test]
+  fn test_custom_plugin_animations() {
+    let custom = CustomAnimation::new(sample_custom_offset);
+    let off = custom.offset(0.5);
+    assert_eq!(off.x, 5.0);
+    assert_eq!(off.y, 10.0);
+
+    let anim = Animation::custom(sample_custom_offset);
+    match anim.kind {
+      AnimationKind::Custom(c) => {
+        assert_eq!(c.offset(1.0).x, 10.0);
+      }
+      _ => panic!("Expected custom animation"),
+    }
+
+    let custom_curve_anim = Animation::tween().custom_curve(sample_custom_curve);
+    match custom_curve_anim.mode {
+      AnimationMode::Transition(t) => match t.curve {
+        AnimationCurve::Custom(f) => {
+          assert_eq!(f(0.5), 0.25);
+        }
+        _ => panic!("Expected custom curve"),
+      },
+      _ => panic!("Expected transition mode"),
+    }
+  }
+
+  #[test]
+  fn test_node_animation_helpers() {
+    let node = Node::text("hello").fade_in();
+    match node {
+      Node::Animated { animation, .. } => {
+        assert_eq!(animation.kind, AnimationKind::FadeIn);
+      }
+      _ => panic!("Expected animated node"),
+    }
+
+    let node2 = Node::icon("gear").slide_in_edge(AnimationEdge::Top, 120.0);
+    match node2 {
+      Node::Animated { animation, .. } => {
+        assert_eq!(animation.kind, AnimationKind::SlideIn(AnimationEdge::Top));
+        assert_eq!(animation.offset_y, 120.0);
+      }
+      _ => panic!("Expected animated node"),
+    }
+
+    let node3 = Node::container(Node::text("custom")).custom_animation(sample_custom_offset);
+    match node3 {
+      Node::Animated { animation, .. } => match animation.kind {
+        AnimationKind::Custom(c) => {
+          assert_eq!(c.offset(0.0).y, 20.0);
+        }
+        _ => panic!("Expected custom animation"),
+      },
+      _ => panic!("Expected animated node"),
+    }
   }
 }

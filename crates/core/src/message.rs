@@ -32,6 +32,7 @@ impl PartialEq for EventFilter {
       (Self::Frame, Self::Frame) => true,
       (Self::Ipc(cmd1), Self::Ipc(cmd2)) => cmd1.name == cmd2.name,
       (Self::All, Self::All) => true,
+      (Self::StartUp, Self::StartUp) => true,
       _ => false,
     }
   }
@@ -254,6 +255,12 @@ mod tests {
     assert!(EventFilter::Named("fixture.toggle".into()).matches(&bare));
     assert!(!EventFilter::Named("fixture.toggle".into()).matches(&with_payload));
     assert!(!EventFilter::Named("other".into()).matches(&bare));
+  }
+
+  #[test]
+  fn startup_filters_compare_equal() {
+    assert_eq!(EventFilter::StartUp, EventFilter::StartUp);
+    assert!(EventFilter::StartUp.matches(&ListenerAction::StartUp));
   }
 
   #[test]
