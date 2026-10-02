@@ -4609,6 +4609,7 @@ dependencies = [
  "chrono",
  "iced",
  "iced_layershell",
+ "icss",
  "image",
  "libc",
  "miette",

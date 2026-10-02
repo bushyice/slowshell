@@ -483,6 +483,36 @@ impl Config {
     color
   }
 
+  pub fn background_image(&self, classes: &[&str]) -> Option<PathBuf> {
+    use icss::theme::css::ast::CssValue;
+
+    let computed = self.computed(classes);
+    let raw = match computed.get("background-image")? {
+      CssValue::Raw(raw) => raw.as_str(),
+      CssValue::Keyword(keyword) if keyword == "none" => return None,
+      _ => return None,
+    };
+
+    let value = crate::style::parse_image_path(raw)?;
+
+    let path = if let Some(rest) = value.strip_prefix("~/") {
+      std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(rest))
+        .unwrap_or_else(|| PathBuf::from(&value))
+    } else {
+      let path = PathBuf::from(&value);
+      if path.is_absolute() {
+        path
+      } else if let Some(dir) = self.current_dir() {
+        dir.join(path)
+      } else {
+        path
+      }
+    };
+
+    path.is_file().then_some(path)
+  }
+
   pub fn palette(&self) -> &Theme {
     &self.palette
   }
@@ -1150,6 +1180,29 @@ mod tests {
       config.container_style(classes),
       crate::style::container_style(&direct).expect("container style")
     );
+  }
+
+  #[test]
+  fn background_image_resolves_and_checks_existence() {
+    let path = std::env::temp_dir().join("slowshell-background-image-test.png");
+    std::fs::write(&path, b"not really an image").unwrap();
+
+    let css = format!(".card {{ background-image: url(\"{}\"); }}", path.display());
+    let config = config_with(&css);
+    assert_eq!(config.background_image(&["card"]), Some(path.clone()));
+
+    let missing = std::env::temp_dir().join("slowshell-background-image-missing.png");
+    let css = format!(
+      ".card {{ background-image: url(\"{}\"); }}",
+      missing.display()
+    );
+    let config = config_with(&css);
+    assert_eq!(config.background_image(&["card"]), None);
+
+    let config = config_with(".card { background-image: none; }");
+    assert_eq!(config.background_image(&["card"]), None);
+
+    std::fs::remove_file(path).unwrap();
   }
 
   #[test]

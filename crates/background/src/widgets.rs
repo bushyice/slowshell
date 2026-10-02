@@ -19,6 +19,8 @@ use slowshell_desktop::{
 };
 use slowshell_widgets::{ComponentOptions, Renderables, truncate};
 
+use crate::clock;
+
 pub struct DesktopWidget {
   cached_id: Ustr,
   name: Ustr,
@@ -774,9 +776,25 @@ impl Renderable for DesktopIconWidget {
   }
 }
 
-// `format`, `format-2`, `interval`, `size`,
+// `format`, `format-2`, `interval`, `size`, `analog`,
 // `label-size`, `color`, `color-2`, `label`
-pub struct ClockWidget;
+pub struct ClockWidget {
+  hand_cache: clock::HandCache,
+}
+
+impl ClockWidget {
+  pub fn new() -> Self {
+    Self {
+      hand_cache: clock::HandCache::default(),
+    }
+  }
+}
+
+impl Default for ClockWidget {
+  fn default() -> Self {
+    Self::new()
+  }
+}
 
 const CLOCK_TICK: &str = "widgets/clock.tick";
 
@@ -840,6 +858,13 @@ impl Renderable for ClockWidget {
     _data: &'a dyn Any,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
+    if options
+      .and_then(|options| options.bool("analog"))
+      .unwrap_or(false)
+    {
+      return clock::view(config, options, &self.hand_cache);
+    }
+
     let theme = config.palette();
     let format = options.and_then(|o| o.str("format")).unwrap_or("%H:%M");
     let size = options.and_then(|o| o.number("size")).unwrap_or(28.0);

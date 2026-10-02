@@ -20,6 +20,7 @@ slowshell-components = { path = "../components", optional = true }
 
 iced_layershell.workspace = true
 iced.workspace = true
+icss.workspace = true
 image.workspace = true
 chrono.workspace = true
 libc.workspace = true

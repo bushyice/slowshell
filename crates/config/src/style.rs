@@ -246,6 +246,28 @@ pub fn parse_hex(hex: &str) -> Option<Color> {
   ))
 }
 
+pub fn parse_image_path(value: &str) -> Option<String> {
+  let value = value.trim();
+  if value.is_empty() || value.eq_ignore_ascii_case("none") {
+    return None;
+  }
+
+  let inner = if let Some(open) = value.find('(') {
+    let rest = &value[open + 1..];
+    let end = rest.rfind(')').unwrap_or(rest.len());
+    rest[..end].trim()
+  } else {
+    value
+  };
+
+  let inner = inner.trim().trim_matches(|c| c == '"' || c == '\'');
+  if inner.is_empty() || inner.eq_ignore_ascii_case("none") {
+    return None;
+  }
+
+  Some(inner.to_string())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -266,6 +288,35 @@ mod tests {
     let css = Theme::default().to_css();
     assert!(css.contains("--base-a45:"));
     assert!(css.contains("--primary-a18:"));
+  }
+
+  #[test]
+  fn image_paths_are_extracted_from_raw_values() {
+    assert_eq!(parse_image_path("/a/b.png").as_deref(), Some("/a/b.png"));
+    assert_eq!(
+      parse_image_path("\"/a b.png\"").as_deref(),
+      Some("/a b.png")
+    );
+    assert_eq!(
+      parse_image_path("url(\"/a.png\")").as_deref(),
+      Some("/a.png")
+    );
+    assert_eq!(
+      parse_image_path("url ( \"/a.png\" )").as_deref(),
+      Some("/a.png")
+    );
+    assert_eq!(
+      parse_image_path("url ( \"/a(b).png\" )").as_deref(),
+      Some("/a(b).png")
+    );
+    assert_eq!(
+      parse_image_path("'~/watch.png'").as_deref(),
+      Some("~/watch.png")
+    );
+    assert_eq!(parse_image_path("none"), None);
+    assert_eq!(parse_image_path("NONE"), None);
+    assert_eq!(parse_image_path(""), None);
+    assert_eq!(parse_image_path("url()"), None);
   }
 
   #[test]

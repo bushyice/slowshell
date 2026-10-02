@@ -1,23 +1,84 @@
-use slowshell_commons::desktop::DesktopEntries;
-use slowshell_core::Store;
+use std::{
+  collections::HashMap,
+  sync::{
+    LazyLock, Mutex, RwLock,
+    atomic::{AtomicU64, Ordering},
+  },
+};
+
+use slowshell_commons::desktop::{AppEntry, DesktopEntries};
+use slowshell_core::{Store, persistence};
 
 use crate::{SpotlightAction, SpotlightActionDef, SpotlightItem};
 
-pub use slowshell_commons::desktop::spawn_exec as spawn_app;
+pub const USAGE_FILE: &str = "spotlight-app-usage";
+
+static USAGE: LazyLock<Mutex<HashMap<String, u64>>> =
+  LazyLock::new(|| Mutex::new(persistence::load(USAGE_FILE).unwrap_or_default()));
+
+static USAGE_VERSION: AtomicU64 = AtomicU64::new(0);
+
+static EXEC_INDEX: LazyLock<RwLock<HashMap<String, String>>> =
+  LazyLock::new(|| RwLock::new(HashMap::new()));
+
+pub fn applications_version() -> u64 {
+  DesktopEntries::global_version().wrapping_add(USAGE_VERSION.load(Ordering::Relaxed))
+}
+
+pub fn spawn_app(exec_line: &str) {
+  record_launch(exec_line);
+  slowshell_commons::desktop::spawn_exec(exec_line);
+}
+
+fn record_launch(exec_line: &str) {
+  let Some(id) = EXEC_INDEX.read().unwrap().get(exec_line).cloned() else {
+    return;
+  };
+
+  let counts = {
+    let mut usage = USAGE.lock().unwrap();
+    let count = usage.entry(id).or_insert(0);
+    *count = count.saturating_add(1);
+    usage.clone()
+  };
+
+  USAGE_VERSION.fetch_add(1, Ordering::Relaxed);
+
+  if let Err(error) = persistence::save(USAGE_FILE, &counts) {
+    eprintln!("[spotlight] failed to persist application usage: {error}");
+  }
+}
 
 pub fn search_applications(query: &str, store: &Store) -> Vec<SpotlightItem> {
   let Some(entries) = store.borrow::<DesktopEntries>() else {
     return Vec::new();
   };
   let apps = entries.apps();
+  refresh_index(&apps);
+  let usage = USAGE.lock().unwrap();
+  search(&apps, query, &usage)
+}
 
+fn refresh_index(apps: &[AppEntry]) {
+  let mut index = EXEC_INDEX.write().unwrap();
+  index.clear();
+  for app in apps {
+    index.insert(app.exec.clone(), app.id_lower.clone());
+    for action in &app.actions {
+      index.insert(action.exec.clone(), app.id_lower.clone());
+    }
+  }
+}
+
+fn search(apps: &[AppEntry], query: &str, usage: &HashMap<String, u64>) -> Vec<SpotlightItem> {
   let q = query.trim().to_lowercase();
+  let empty_query = q.is_empty();
 
-  let mut scored_matches: Vec<(u32, SpotlightItem)> = Vec::new();
+  let mut scored_matches: Vec<(u32, u64, SpotlightItem)> = Vec::new();
 
   for app in apps.iter() {
     let name_lower = &app.name_lower;
-    let score = if q.is_empty() {
+    let score = if empty_query {
       Some(100)
     } else if name_lower == &q {
       Some(0)
@@ -41,6 +102,12 @@ pub fn search_applications(query: &str, store: &Store) -> Vec<SpotlightItem> {
     };
 
     if let Some(score) = score {
+      let opened = if empty_query {
+        usage.get(&app.id_lower).copied().unwrap_or(0)
+      } else {
+        0
+      };
+
       let exec = app.exec.clone();
       let mut action_defs = vec![SpotlightActionDef {
         title: Some("Open".into()),
@@ -68,10 +135,18 @@ pub fn search_applications(query: &str, store: &Store) -> Vec<SpotlightItem> {
         },
         actions: action_defs,
       };
-      scored_matches.push((score, item));
+      scored_matches.push((score, opened, item));
     }
   }
 
-  scored_matches.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.title.cmp(&b.1.title)));
-  scored_matches.into_iter().map(|(_, item)| item).collect()
+  scored_matches.sort_by(|a, b| {
+    a.0
+      .cmp(&b.0)
+      .then_with(|| b.1.cmp(&a.1))
+      .then_with(|| a.2.title.cmp(&b.2.title))
+  });
+  scored_matches
+    .into_iter()
+    .map(|(_, _, item)| item)
+    .collect()
 }

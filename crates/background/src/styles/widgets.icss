@@ -1,0 +1,17 @@
+.clock.analog.face {
+  background-color: var(--mantle);
+  border-width: 3px;
+  border-color: var(--overlay);
+}
+
+.clock-hand.hour {
+  width: 6px;
+  height: 26px;
+  border-radius: 3px;
+}
+
+.clock-hand.minute {
+  width: 4px;
+  height: 40px;
+  border-radius: 2px;
+}

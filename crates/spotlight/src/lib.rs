@@ -207,10 +207,7 @@ impl Default for SpotlightModes {
         .display(&[DisplayStyle::List, DisplayStyle::Grid]),
       true,
     );
-    modes.register_version(
-      "applications",
-      slowshell_commons::desktop::DesktopEntries::global_version,
-    );
+    modes.register_version("applications", apps::applications_version);
 
     modes.register_mode(
       "clipboard",
