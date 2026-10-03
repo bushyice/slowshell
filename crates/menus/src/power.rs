@@ -2,7 +2,7 @@ use iced::{
   Alignment, Element, Length,
   widget::{Space, column, container, row, slider},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::power::{PowerProfile, SharedPowerState, battery_icon, brightness_icon};
 use slowshell_config::Config;
 use slowshell_core::{

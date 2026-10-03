@@ -16,8 +16,8 @@ use iced::{
   Alignment, Element, Event, Length, keyboard,
   widget::{center, column, container, row, space, text, text::Wrapping},
 };
-use iced_layershell::reexport::{
-  Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings,
+use iced_exwlshell::reexport::{
+  Anchor, IcedId, KeyboardInteractivity, Layer, LayerSize, NewLayerShellSettings,
 };
 use slowshell_commons::desktop::DesktopEntries;
 use slowshell_config::{Config, ConfigParser};
@@ -527,7 +527,7 @@ impl DesktopItem for Spotlight {
       layer: Layer::Overlay,
       anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
       exclusive_zone: Some(-1),
-      size: None,
+      size: LayerSize::FILL,
       margin: Some((0, 0, 0, 0)),
       keyboard_interactivity: KeyboardInteractivity::Exclusive,
       events_transparent: false,

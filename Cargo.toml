@@ -7,6 +7,7 @@ members = [
   "crates/config",
   "crates/core",
   "crates/desktop",
+  "crates/iced_exwlshell",
   "crates/ipc",
   "crates/menus",
   "crates/notifications",
@@ -29,7 +30,7 @@ version = "0.0.3"
 
 [workspace.dependencies]
 iced = { version = "0.14.0", features = ["image", "tokio", "svg", "lazy", "wgpu", "advanced"] }
-iced_layershell = "0.19.1"
+iced_exwlshell = { path = "crates/iced_exwlshell" }
 iced_anim = { version = "0.3", default-features = false }
 icss = "0.1.1"
 chrono = "0.4"

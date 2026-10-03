@@ -2,7 +2,7 @@ use std::sync::{Mutex, OnceLock};
 
 use abi_stable::std_types::{RStr, RString};
 use iced::Element;
-use iced_layershell::reexport::{IcedId, NewLayerShellSettings};
+use iced_exwlshell::reexport::{IcedId, NewLayerShellSettings};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,

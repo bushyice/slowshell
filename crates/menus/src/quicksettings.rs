@@ -13,7 +13,7 @@ use iced::{
   Alignment, Element, Length,
   widget::{Space, column, container, row},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::quicksettings::*;
 use slowshell_commons::quicksettings::{
   QuickSettingsProvider, QuickSettingsRegistry, QuickSettingsTile,

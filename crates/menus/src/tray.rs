@@ -4,7 +4,7 @@ use iced::{
   Color, Element, Event, Length, mouse,
   widget::{Row, Space, column, container, row, space},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::tray::{SharedTrayState, TrayCmd, TrayPayload};
 use slowshell_config::Config;
 use slowshell_core::{

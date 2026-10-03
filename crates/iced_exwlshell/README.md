@@ -1,0 +1,397 @@
+# Layershell, SessionLock, InputPanel, all bindings for iced
+
+[![Crates.io](https://img.shields.io/crates/v/iced-layershell.svg)](https://crates.io/crates/iced-exwlshelll)
+
+iced-exwlshelll provides all extra shell bindings on wayland for iced.
+
+## Feature:
+
+- support to open new layershell and support popup window.
+- support sessionlock
+- support ext-virtual-keyboard
+
+## Cargo features
+
+The `macros` feature is enabled by default and re-exports
+`to_exwlshell_message`. Consumers that do not use the macro can skip its
+proc-macro dependencies while retaining theme detection like so:
+
+```toml
+iced_exwlshell = { version = "...", default-features = false, features = ["linux-theme-detection"] }
+```
+
+With this crate, you can use iced to build your kde-shell, notification application, and etc.
+
+`Settings::keep_compositor_alive` (default `true`) keeps compositor alive when
+the last surface closes instead of dropping it. Set it to `false` for programs that
+open rarely and the cold start delay doesn't matter, but GPU/RAM resources do.
+
+## Design
+
+Since iced cannot define custom system actions and custom system events now, though I have a pr for it https://github.com/iced-rs/iced/pull/2658, but now I can use trait for the Message and let it become my custom system events and custom system actions. What you need is just add `#[to_exwlshell_message]` to your message, Then you will get a lot of extra fields on you `Message`. 
+
+If you use `Task::dnoe` or just send the message from `view`, which is the extra fields for custom actions. The message will never enter go back to update
+
+To learn about surfaces the runtime creates for you, set the `on_new_shell` hook, which maps the new surface to a message of your own before its first frame is drawn. For the same information asynchronously, pass a `iced_wayland_subscriber::shell::channel()` sender to `Settings::shell_broadcast` and subscribe from the receiver. The same broadcast reports the monitors via `OutputAdded`, `OutputUpdated`, `OutputRemoved`, and which monitor each of your windows is on, through `WindowOutputChanged`. When a window is removed, listen to the iced window events.
+
+## Example
+
+```rust, no_run
+use std::collections::HashMap;
+
+use iced::widget::{button, column, container, row, text, text_input};
+use iced::window::Id;
+use iced::{Alignment, Element, Event, Length, Task as Command, event};
+use iced_exwlshell::actions::{IcedNewPopupSettings, IcedXdgWindowSettings};
+use iced_runtime::window::Action as WindowAction;
+use iced_runtime::{Action, task};
+
+use iced_exwlshell::reexport::{
+    Anchor, KeyboardInteractivity, Layer, LayerSize, NewLayerShellSettings, OutputOption, PixelSize,
+    PopupGravity,
+};
+use iced_exwlshell::settings::{LayerShellSettings, Settings, StartMode};
+use iced_exwlshell::to_exwlshell_message;
+use iced_exwlshell::daemon;
+use iced_wayland_subscriber::shell::{ShellEvent, ShellInfo, ShellReceiver, ShellType};
+use iced_wayland_subscriber::OutputInfo;
+use wayland_client::Connection;
+
+pub fn main() -> Result<(), iced_exwlshell::Error> {
+    tracing_subscriber::fmt().init();
+    let connection = Connection::connect_to_env().unwrap();
+    let (shell_broadcast, shell_events) = iced_wayland_subscriber::shell::channel();
+    daemon(
+        move || Counter::new("hello", shell_events.clone()),
+        Counter::namespace,
+        Counter::update,
+        Counter::view,
+    )
+    .title(Counter::title)
+    .subscription(Counter::subscription)
+    .on_new_shell(|info: ShellInfo| {
+        matches!(info.shell, ShellType::SessionLock).then(|| Message::LockAppeared(info.window))
+    })
+    .settings(Settings {
+        layer_settings: LayerShellSettings {
+            size: LayerSize::fill_width(400),
+            exclusive_zone: 400,
+            anchor: Anchor::Bottom | Anchor::Left | Anchor::Right,
+            start_mode: StartMode::AllScreens,
+            ..Default::default()
+        },
+        with_connection: Some(connection.into()),
+        shell_broadcast,
+        ..Default::default()
+    })
+    .run()
+}
+
+#[derive(Debug)]
+struct Counter {
+    value: i32,
+    text: String,
+    ids: HashMap<iced::window::Id, WindowInfo>,
+    shell_events: ShellReceiver,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowInfo {
+    Left,
+    NormalWindow,
+    PopUp,
+    TopBar,
+    Lock,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WindowDirection {
+    Top(Id),
+    Left(Id),
+    Right(Id),
+    Bottom(Id),
+}
+
+#[derive(Debug, Clone)]
+enum WayEvent {
+    OutputInsert(OutputInfo),
+}
+
+#[to_exwlshell_message]
+#[derive(Debug, Clone)]
+enum Message {
+    IncrementPressed,
+    DecrementPressed,
+    NewWindowLeft,
+    NewNormalWindow,
+    Close(Id),
+    WindowClosed(Id),
+    TextInput(String),
+    Direction(WindowDirection),
+    IcedEvent(Event),
+    Wayland(WayEvent),
+    LockAppeared(Id),
+}
+
+impl Counter {
+    fn window_id(&self, info: &WindowInfo) -> Option<&iced::window::Id> {
+        for (k, v) in self.ids.iter() {
+            if info == v {
+                return Some(k);
+            }
+        }
+        None
+    }
+}
+
+impl Counter {
+    fn new(text: &str, shell_events: ShellReceiver) -> Self {
+        Self {
+            value: 0,
+            text: text.to_string(),
+            ids: HashMap::new(),
+            shell_events,
+        }
+    }
+
+    fn title(&self, id: iced::window::Id) -> Option<String> {
+        if let Some(WindowInfo::NormalWindow) = self.id_info(id) {
+            return Some("hello, it is a normal window".to_owned());
+        }
+        None
+    }
+
+    fn id_info(&self, id: iced::window::Id) -> Option<WindowInfo> {
+        self.ids.get(&id).cloned()
+    }
+
+    fn remove_id(&mut self, id: iced::window::Id) {
+        self.ids.remove(&id);
+    }
+
+    fn namespace() -> String {
+        String::from("Counter - Iced")
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        iced::Subscription::batch(vec![
+            event::listen().map(Message::IcedEvent),
+            iced::window::close_events().map(Message::WindowClosed),
+            self.shell_events.listen().filter_map(|event| match event {
+                ShellEvent::OutputAdded(output) => {
+                    Some(Message::Wayland(WayEvent::OutputInsert(output)))
+                }
+                // Changed/Removed need nothing here: the compositor closes
+                // a destroyed output's layer surfaces, which arrives as
+                // WindowClosed.
+                _ => None,
+            }),
+        ])
+    }
+
+    fn update(&mut self, message: Message) -> Command<Message> {
+        use iced::Event;
+        use iced::keyboard;
+        use iced::keyboard::key::Named;
+        match message {
+            Message::WindowClosed(id) => {
+                self.remove_id(id);
+                Command::none()
+            }
+            Message::IcedEvent(event) => {
+                match event {
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(Named::Escape),
+                        ..
+                    }) => {
+                        if let Some(id) = self.window_id(&WindowInfo::Left) {
+                            return iced_runtime::task::effect(Action::Window(
+                                WindowAction::Close(*id),
+                            ));
+                        }
+                    }
+                    Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) => {
+                        if let Some(parent) = self.window_id(&WindowInfo::Left).copied() {
+                            let id = iced::window::Id::unique();
+                            self.ids.insert(id, WindowInfo::PopUp);
+                            return Command::done(Message::NewPopUp {
+                                settings: IcedNewPopupSettings::new(parent, PixelSize::px(100, 100), (0, 0), PixelSize::px(1, 1))
+                                    .gravity(PopupGravity::TopRight),
+                                id,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+                Command::none()
+            }
+            Message::Wayland(WayEvent::OutputInsert(output)) => {
+                let id = iced::window::Id::unique();
+                self.ids.insert(id, WindowInfo::TopBar);
+                Command::done(Message::NewLayerShell {
+                    settings: NewLayerShellSettings {
+                        anchor: Anchor::Left | Anchor::Right | Anchor::Top,
+                        layer: Layer::Top,
+                        exclusive_zone: Some(30),
+                        size: LayerSize::fill_width(30),
+                        output_option: OutputOption::GlobalName(output.id),
+                        ..Default::default()
+                    },
+                    id,
+                })
+            }
+            Message::IncrementPressed => {
+                self.value += 1;
+                Command::none()
+            }
+            Message::DecrementPressed => {
+                self.value -= 1;
+                Command::none()
+            }
+            Message::TextInput(text) => {
+                self.text = text;
+                Command::none()
+            }
+            Message::Direction(direction) => match direction {
+                WindowDirection::Left(id) => Command::done(Message::LayoutChange {
+                    id,
+                    anchor: Anchor::Left,
+                    size: LayerSize::fill_height(400),
+                }),
+                WindowDirection::Right(id) => Command::done(Message::LayoutChange {
+                    id,
+                    anchor: Anchor::Right,
+                    size: LayerSize::fill_height(400),
+                }),
+                WindowDirection::Bottom(id) => Command::done(Message::LayoutChange {
+                    id,
+                    anchor: Anchor::Bottom,
+                    size: LayerSize::fill_width(400),
+                }),
+                WindowDirection::Top(id) => Command::done(Message::LayoutChange {
+                    id,
+                    anchor: Anchor::Top,
+                    size: LayerSize::fill_width(400),
+                }),
+            },
+            Message::NewWindowLeft => {
+                let id = iced::window::Id::unique();
+                self.ids.insert(id, WindowInfo::Left);
+                Command::done(Message::NewLayerShell {
+                    settings: NewLayerShellSettings {
+                        size: LayerSize::px(100, 100),
+                        exclusive_zone: None,
+                        anchor: Anchor::Left | Anchor::Bottom,
+                        layer: Layer::Top,
+                        margin: None,
+                        keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                        output_option: OutputOption::LastOutput,
+                        ..Default::default()
+                    },
+                    id,
+                })
+            }
+            Message::NewNormalWindow => {
+                let (id, task) = Message::base_window_open(IcedXdgWindowSettings::default());
+                self.ids.insert(id, WindowInfo::NormalWindow);
+                task
+            }
+            Message::Close(id) => task::effect(Action::Window(WindowAction::Close(id))),
+            // NOTE: this is how we learn about windows the runtime created.
+            Message::LockAppeared(id) => {
+                self.ids.insert(id, WindowInfo::Lock);
+                Command::none()
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn view(&self, id: iced::window::Id) -> Element<'_, Message> {
+        if let Some(WindowInfo::Left) = self.id_info(id) {
+            return button("close left").on_press(Message::Close(id)).into();
+        }
+        if let Some(WindowInfo::Lock) = self.id_info(id) {
+            return container(button("UnLock").on_press(Message::UnLock))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .into();
+        }
+        if let Some(WindowInfo::NormalWindow) = self.id_info(id) {
+            return container(
+                column![
+                    text_input("hello", &self.text)
+                        .on_input(Message::TextInput)
+                        .padding(10),
+                    button("close the normal window").on_press(Message::Close(id)),
+                ]
+                .align_x(Alignment::Center)
+                .padding(20),
+            )
+            .center_y(Length::Fill)
+            .center_x(Length::Fill)
+            .height(Length::Fill)
+            .into();
+        }
+        if let Some(WindowInfo::TopBar) = self.id_info(id) {
+            return container(text("hello here is topbar"))
+                .center_x(Length::Fill)
+                .into();
+        }
+        if let Some(WindowInfo::PopUp) = self.id_info(id) {
+            return container(button("close PopUp").on_press(Message::Close(id)))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .style(|_theme| container::Style {
+                    background: Some(iced::Color::from_rgba(0., 0.5, 0.7, 0.6).into()),
+                    ..Default::default()
+                })
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+        }
+        let center = column![
+            button("Increment").on_press(Message::IncrementPressed),
+            button("Decrement").on_press(Message::DecrementPressed),
+            text(self.value).size(50),
+            button("newwindowLeft").on_press(Message::NewWindowLeft),
+            button("new normal window").on_press(Message::NewNormalWindow),
+            button("Lock").on_press(Message::Lock),
+        ]
+        .align_x(Alignment::Center)
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill);
+        row![
+            button("left")
+                .on_press(Message::Direction(WindowDirection::Left(id)))
+                .height(Length::Fill),
+            column![
+                button("top")
+                    .on_press(Message::Direction(WindowDirection::Top(id)))
+                    .width(Length::Fill),
+                center,
+                text_input("hello", &self.text)
+                    .on_input(Message::TextInput)
+                    .padding(10),
+                button("bottom")
+                    .on_press(Message::Direction(WindowDirection::Bottom(id)))
+                    .width(Length::Fill),
+            ]
+            .width(Length::Fill),
+            button("right")
+                .on_press(Message::Direction(WindowDirection::Right(id)))
+                .height(Length::Fill),
+        ]
+        .padding(20)
+        .spacing(10)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+}
+```
+
+
+view the full example [here](https://github.com/waycrate/exwlshelleventloop/tree/master/iced_examples)
+
+For more example, please take a look at [exwlshelleventloop](https://github.com/waycrate/exwlshelleventloop)

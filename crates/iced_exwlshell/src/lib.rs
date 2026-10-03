@@ -1,0 +1,69 @@
+#![doc(test(attr(cfg(feature = "macros"))))]
+#![doc = include_str!("../README.md")]
+pub mod actions;
+pub mod build_pattern;
+mod clipboard;
+mod conversion;
+mod dirty;
+mod error;
+mod event;
+mod multi_window;
+mod proxy;
+pub mod redraw;
+mod user_interface;
+
+pub mod settings;
+
+pub mod reexport {
+    pub use exwlshellev::NewInputPanelSettings;
+    pub use exwlshellev::NewLayerShellSettings;
+    pub use exwlshellev::OutputOption;
+    pub use exwlshellev::PopupPlacement;
+    pub use exwlshellev::WithConnection;
+    pub use exwlshellev::blur::BlurOption;
+    pub use exwlshellev::blur::BlurRegion;
+    pub use exwlshellev::reexport::Anchor;
+    pub use exwlshellev::reexport::KeyboardInteractivity;
+    pub use exwlshellev::reexport::Layer;
+    pub use exwlshellev::reexport::wayland_client::{WlRegion, wl_keyboard};
+    pub use exwlshellev::reexport::xdg_positioner::{
+        Anchor as PopupAnchor, ConstraintAdjustment as PopupConstraintAdjustment,
+        Gravity as PopupGravity,
+    };
+    pub use exwlshellev::{Extent, LayerSize, PixelSize};
+    pub mod core {
+        pub use iced_core::*;
+    }
+    pub use iced_core::window::Id as IcedId;
+    pub use iced_runtime::Task;
+}
+
+mod ime_preedit;
+
+#[cfg(feature = "macros")]
+pub use iced_exwlshell_macros::{to_exwlshell_message, to_layer_message, to_sessionlock_message};
+
+pub use error::Error;
+pub use iced_wayland_subscriber::shell;
+
+/// Hook invoked for every surface the runtime materializes
+pub type NewShellHook<Message> = Box<dyn Fn(shell::ShellInfo) -> Option<Message>>;
+
+/// Opt-out for clipboard initialization. Call this before starting the
+/// runtime when your app has no text input and doesn't need paste/copy —
+/// this skips spawning the always-on smithay-clipboard worker thread.
+pub fn disable_clipboard() {
+    clipboard::set_disabled();
+}
+
+pub type Result = std::result::Result<(), error::Error>;
+use iced_core::theme::Style as Appearance;
+
+use iced_core::theme::Base as DefaultStyle;
+
+// layershell application
+pub use build_pattern::daemon;
+pub use build_pattern::layershell;
+pub use build_pattern::sessionlock;
+
+pub use settings::Settings;

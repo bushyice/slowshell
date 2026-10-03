@@ -9,8 +9,8 @@ use iced::{
   Alignment, Color, Element, Length, Vector,
   widget::{Space, column, container, row, text, text_input},
 };
-use iced_layershell::reexport::{
-  Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings,
+use iced_exwlshell::reexport::{
+  Anchor, IcedId, KeyboardInteractivity, Layer, LayerSize, NewLayerShellSettings,
 };
 use slowshell_commons::notifications::{
   NOTIF_CHANGED, NotificationCmd, NotificationItem, NotificationPayload, NotificationSettings,
@@ -145,7 +145,7 @@ impl DesktopItem for NotificationManager {
       layer: Layer::Overlay,
       anchor: self.position,
       exclusive_zone: Some(0),
-      size: Some((360, 600)),
+      size: LayerSize::px(360, 600),
       margin: Some((12, 12, 12, 12)),
       keyboard_interactivity: KeyboardInteractivity::None,
       events_transparent: false,

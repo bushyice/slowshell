@@ -4,7 +4,8 @@ use std::task::{Context, Poll};
 
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use iced::{Element, Task};
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::redraw::Scope;
+use iced_exwlshell::reexport::IcedId;
 #[cfg(feature = "panels")]
 use slowshell_components::{ComponentRegistration, Components};
 use slowshell_compositor::{CompositorRegistration, CompositorStore};
@@ -206,6 +207,10 @@ impl App {
     )
   }
 
+  pub fn take_dirty_windows(&mut self) -> Option<Vec<IcedId>> {
+    self.items.take_dirty_windows()
+  }
+
   pub fn update(&mut self, message: Message) -> Task<Message> {
     match message {
       Message::Tick => {
@@ -334,6 +339,7 @@ impl App {
           }
           match self.config.reload() {
             Ok(()) => {
+              self.items.mark_all_dirty();
               slowshell_core::animations::configure(
                 self
                   .config
@@ -388,6 +394,28 @@ impl App {
     self.items.intialize(&mut self.store);
 
     Task::batch(tasks)
+  }
+}
+
+pub fn redraw_scope(message: &Message) -> Scope {
+  use slowshell_core::message::{ItemEffect, ItemMessage};
+
+  match message {
+    Message::Noop => Scope::None,
+    Message::Item(ItemMessage::Noop) => Scope::None,
+    Message::Item(ItemMessage::Effect(_, ItemEffect::None)) => Scope::None,
+    Message::Item(ItemMessage::Action(
+      ListenerAction::FocusWorkspace(_) | ListenerAction::FocusWindow(_),
+    )) => Scope::None,
+    Message::LayoutChange { id, .. }
+    | Message::LayerChange { id, .. }
+    | Message::MarginChange { id, .. }
+    | Message::BlurOptionChange { id, .. }
+    | Message::ExclusiveZoneChange { id, .. }
+    | Message::KeyboardInteractivityChange { id, .. }
+    | Message::SetInputRegion { id, .. }
+    | Message::RemoveWindow(id) => Scope::Window(*id),
+    _ => Scope::All,
   }
 }
 

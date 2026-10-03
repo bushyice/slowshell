@@ -11,8 +11,8 @@ use iced::{
   Element, Length,
   widget::{container, image},
 };
-use iced_layershell::reexport::{
-  Anchor, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
+use iced_exwlshell::reexport::{
+  Anchor, BlurOption, KeyboardInteractivity, Layer, LayerSize, NewLayerShellSettings, OutputOption,
 };
 use slowshell_config::{Config, ConfigParser};
 use slowshell_core::{
@@ -299,12 +299,13 @@ impl DesktopItem for Wallpaper {
       layer: Layer::Background,
       anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
       exclusive_zone: Some(-1),
-      size: None,
+      size: LayerSize::FILL,
       margin: Some((0, 0, 0, 0)),
       keyboard_interactivity: KeyboardInteractivity::None,
       events_transparent: true,
       namespace: Some("slowshell-wallpaper".into()),
       output_option: OutputOption::OutputName(monitor.to_string()),
+      blur_option: BlurOption::None,
     }
   }
 
@@ -361,7 +362,7 @@ impl DesktopItem for Wallpaper {
     &'a self,
     config: &'a Config,
     _store: &'a Store,
-    _id: iced_layershell::reexport::IcedId,
+    _id: iced_exwlshell::reexport::IcedId,
     monitor: &str,
   ) -> Element<'a, ItemMessage> {
     let fallback = config.palette().base;

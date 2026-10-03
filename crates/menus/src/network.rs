@@ -2,7 +2,7 @@ use iced::{
   Alignment, Color, Element, Length,
   widget::{Row, Space, column, container, row, space, text_input},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::network::{
   AccessPoint, ConnectionInfo, EthernetState, NetworkPayload, SharedNetworkState, signal_icon,
 };

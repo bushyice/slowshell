@@ -4,13 +4,14 @@ use iced::{
   Alignment, Element, Length,
   widget::{container, text},
 };
-use iced_layershell::reexport::{
-  Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
+use iced_exwlshell::reexport::{
+  Anchor, BlurOption, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
+  message::layer_size,
   types::{ToUstr, Ustr},
 };
 use slowshell_desktop::{
@@ -294,12 +295,13 @@ impl DesktopItem for DesktopWidget {
       layer: self.layer.to_layer(),
       anchor,
       exclusive_zone: Some(-1),
-      size: Some((self.width, self.height)),
+      size: layer_size(self.width, self.height),
       margin: Some(margins),
       keyboard_interactivity: KeyboardInteractivity::None,
       events_transparent: false,
       namespace: Some(format!("slowshell-widget-{}", self.name.to_lowercase())),
       output_option: OutputOption::OutputName(monitor.to_string()),
+      blur_option: BlurOption::None,
     }
   }
 

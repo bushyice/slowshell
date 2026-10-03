@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{Element, Task};
-use iced_layershell::reexport::{IcedId, Layer};
+use iced_exwlshell::reexport::{IcedId, Layer};
 use slowshell_config::Config;
 use slowshell_core::listeners::ListenerAction;
 use slowshell_core::message::Message;
@@ -35,6 +35,7 @@ pub struct DesktopItems {
   deployable_index: HashMap<Ustr, usize>,
   deployable_subs: HashMap<EventFilter, HashSet<usize>>,
   uninitialized: HashSet<usize>,
+  dirty_windows: Option<HashSet<IcedId>>,
 }
 
 impl Default for DesktopItems {
@@ -54,6 +55,7 @@ impl Default for DesktopItems {
       deployable_index: HashMap::new(),
       deployable_subs: HashMap::new(),
       uninitialized: HashSet::new(),
+      dirty_windows: None,
     }
   }
 }
@@ -63,6 +65,37 @@ impl DesktopItems {
     Self::default()
   }
 
+  pub fn mark_all_dirty(&mut self) {
+    self.dirty_windows = None;
+  }
+
+  pub fn mark_window_dirty(&mut self, wid: IcedId) {
+    if let Some(set) = &mut self.dirty_windows {
+      set.insert(wid);
+    }
+  }
+
+  pub fn mark_item_dirty(&mut self, idx: usize) {
+    if let Some(set) = &mut self.dirty_windows {
+      if let Some(wids) = self.reverse_windows.get(&idx) {
+        set.extend(wids.iter().copied());
+      }
+    }
+  }
+
+  pub fn take_dirty_windows(&mut self) -> Option<Vec<IcedId>> {
+    match self.dirty_windows.take() {
+      None => {
+        self.dirty_windows = Some(HashSet::new());
+        None
+      }
+      Some(set) => {
+        self.dirty_windows = Some(HashSet::new());
+        Some(set.into_iter().collect())
+      }
+    }
+  }
+
   pub fn sync_monitors(&mut self, config: &Config, monitors: Vec<Ustr>) -> Task<Message> {
     let old_set: HashSet<Ustr> = self.monitors.iter().cloned().collect();
     let new_set: HashSet<Ustr> = monitors.iter().cloned().collect();
@@ -70,6 +103,8 @@ impl DesktopItems {
     if old_set == new_set {
       return Task::none();
     }
+
+    self.mark_all_dirty();
 
     let removed: Vec<Ustr> = self
       .monitors
@@ -181,6 +216,7 @@ impl DesktopItems {
     self.window_monitors.insert(id, monitor.clone());
     self.window_layers.insert(id, layer);
     self.reverse_windows.entry(idx).or_default().insert(id);
+    self.mark_window_dirty(id);
     task
   }
 
@@ -363,7 +399,7 @@ impl DesktopItems {
   }
 
   pub fn intialize(&mut self, store: &mut Store) {
-    if self.uninitialized.len() < 1 {
+    if self.uninitialized.is_empty() {
       return;
     }
 
@@ -371,6 +407,7 @@ impl DesktopItems {
       if let Some(item) = self.items[idx].as_mut() {
         let _ = item.initialize(store);
       }
+      self.mark_item_dirty(idx);
     }
 
     self.uninitialized.clear();
@@ -439,15 +476,21 @@ impl DesktopItems {
     for idx in matching {
       let active = self.active.contains(&idx);
 
-      let Some(item) = self.items.get_mut(idx).and_then(|slot| slot.as_mut()) else {
-        continue;
+      let res = {
+        let Some(item) = self.items.get_mut(idx).and_then(|slot| slot.as_mut()) else {
+          continue;
+        };
+
+        if !active && item.update_strategy() == UpdateWhen::OnDemand && !activation_event(event) {
+          continue;
+        }
+
+        item.update(config, store, event)
       };
 
-      if !active && item.update_strategy() == UpdateWhen::OnDemand && !activation_event(event) {
-        continue;
-      }
+      self.mark_item_dirty(idx);
 
-      match item.update(config, store, event) {
+      match res {
         Ok(effect) => {
           if effect == ItemEffect::ReallyDestroy {
             pending_destroy.push(idx);
@@ -494,8 +537,15 @@ impl DesktopItems {
     message: &ItemMessage,
     store: Option<&mut Store>,
   ) -> Task<Message> {
-    if let ItemMessage::Effect(id, _) = message {
-      if let Some(&idx) = self.windows.get(id) {
+    let target_id = match message {
+      ItemMessage::Effect(id, _) => Some(*id),
+      ItemMessage::EffectAction(id, _, _) => Some(*id),
+      ItemMessage::Payload(id, _) => Some(*id),
+      _ => None,
+    };
+    if let Some(id) = target_id {
+      if let Some(&idx) = self.windows.get(&id) {
+        self.mark_item_dirty(idx);
         let (effect, item_id) = {
           let Some(item) = self.items.get_mut(idx).and_then(|slot| slot.as_mut()) else {
             return Task::none();
@@ -572,11 +622,13 @@ impl DesktopItems {
           None
         };
         self.active.insert(idx);
+        self.mark_item_dirty(idx);
         task
       }
       ItemEffect::ShowAndSubscribe(new_filters) => {
         let task = Some(self.show_or_sync(config, idx));
         self.active.insert(idx);
+        self.mark_item_dirty(idx);
 
         self.remove_subscriptions(idx);
         for filter in new_filters {
@@ -587,6 +639,7 @@ impl DesktopItems {
       }
       ItemEffect::Hide => {
         self.active.remove(&idx);
+        self.mark_item_dirty(idx);
         let transient = self
           .items
           .get(idx)
@@ -600,6 +653,7 @@ impl DesktopItems {
       }
       ItemEffect::ReallyHide => {
         self.active.remove(&idx);
+        self.mark_item_dirty(idx);
         Some(self.close_item_windows(idx))
       }
       ItemEffect::Destroy => {
@@ -615,16 +669,26 @@ impl DesktopItems {
         }
         None
       }
-      ItemEffect::Redraw | ItemEffect::None => None,
+      ItemEffect::Redraw => {
+        self.mark_item_dirty(idx);
+        None
+      }
+      ItemEffect::None => None,
       ItemEffect::UpdateWindow(ws) => {
+        self.mark_item_dirty(idx);
         let mut tasks = Vec::new();
         if let Some(wids) = self.reverse_windows.get(&idx) {
           for &wid in wids {
             if let Some(margin) = ws.margin {
               tasks.push(Task::done(Message::MarginChange { id: wid, margin }));
             }
-            if let Some(size) = ws.size {
-              tasks.push(Task::done(Message::SizeChange { id: wid, size }));
+
+            if let (Some(size), Some(anchor)) = (ws.size, ws.anchor) {
+              tasks.push(Task::done(Message::LayoutChange {
+                id: wid,
+                anchor,
+                size: slowshell_core::message::layer_size(size.0, size.1),
+              }));
             }
             if let Some(zone) = ws.exclusive_zone {
               tasks.push(Task::done(Message::ExclusiveZoneChange {
@@ -674,7 +738,7 @@ mod tests {
   use super::*;
   use std::sync::{Arc, Mutex};
 
-  use iced_layershell::reexport::NewLayerShellSettings;
+  use iced_exwlshell::reexport::NewLayerShellSettings;
   use slowshell_core::listeners::CompositorEvent;
 
   struct MockItem {
@@ -963,5 +1027,70 @@ mod tests {
       Layer::Top,
       "the new layer must be remembered so it is only sent once"
     );
+  }
+
+  #[test]
+  fn dirty_windows_tracks_only_updated_items() {
+    let config = Config::default();
+    let mut store = Store::new();
+    let mut items = DesktopItems::new();
+
+    assert!(items.take_dirty_windows().is_none());
+
+    let second = items.take_dirty_windows();
+    assert_eq!(second, Some(Vec::new()));
+
+    let _ = items.register(
+      &config,
+      Box::new(MockEvents {
+        id: "item-a",
+        filters: vec![EventFilter::Named("event.a".into())],
+        calls: Arc::new(Mutex::new(Vec::new())),
+      }),
+    );
+    let _ = items.register(
+      &config,
+      Box::new(MockEvents {
+        id: "item-b",
+        filters: vec![EventFilter::Named("event.b".into())],
+        calls: Arc::new(Mutex::new(Vec::new())),
+      }),
+    );
+
+    let idx_a = items.index["item-a"];
+    let wid_a = IcedId::unique();
+    items.windows.insert(wid_a, idx_a);
+    items
+      .reverse_windows
+      .entry(idx_a)
+      .or_default()
+      .insert(wid_a);
+
+    let idx_b = items.index["item-b"];
+    let wid_b = IcedId::unique();
+    items.windows.insert(wid_b, idx_b);
+    items
+      .reverse_windows
+      .entry(idx_b)
+      .or_default()
+      .insert(wid_b);
+
+    let _ = items.take_dirty_windows();
+
+    let _ = items.update(
+      &config,
+      &mut store,
+      &ListenerAction::Named("event.a".into()),
+    );
+
+    let dirty = items
+      .take_dirty_windows()
+      .expect("should return Some dirty list");
+    assert_eq!(dirty, vec![wid_a], "only item A window should be dirty");
+
+    assert_eq!(items.take_dirty_windows(), Some(Vec::new()));
+
+    items.mark_all_dirty();
+    assert!(items.take_dirty_windows().is_none());
   }
 }

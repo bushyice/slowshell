@@ -2,7 +2,7 @@ use iced::{
   Alignment, Color, Element, Length,
   widget::{Space, column, container, row, space},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::bluetooth::{BluetoothDevice, SharedBluetoothState};
 use slowshell_config::Config;
 use slowshell_core::{

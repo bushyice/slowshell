@@ -4,7 +4,7 @@ use iced::{
   Alignment, Color, Element, Length,
   widget::{Space, column, container, row, scrollable, text_input},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::notifications::{
   NotificationItem, NotificationPayload, SharedNotificationState, reply_action_key,
 };

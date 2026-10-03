@@ -1,8 +1,8 @@
 use std::sync::{Mutex, OnceLock};
 
 use futures_channel::mpsc::unbounded;
-use iced_layershell::{
-  reexport::{Anchor, KeyboardInteractivity, Layer},
+use iced_exwlshell::{
+  reexport::{Anchor, BlurOption, KeyboardInteractivity, Layer, LayerSize},
   settings::{LayerShellSettings, StartMode},
 };
 use slowshell_config::{Config, ConfigParser};
@@ -115,7 +115,7 @@ pub fn daemon() -> miette::Result<()> {
   let _ = REGISTRY.set(Mutex::new(registry));
   let _ = CONFIG.set(Mutex::new(Some(config)));
 
-  iced_layershell::daemon(
+  iced_exwlshell::daemon(
     move || {
       let (tx, rx) = unbounded();
 
@@ -131,6 +131,8 @@ pub fn daemon() -> miette::Result<()> {
     app::view,
   )
   .subscription(app::App::subscription)
+  .dirty_windows(app::App::take_dirty_windows)
+  .redraw_scope(app::redraw_scope)
   .style(|_, _| iced::theme::Style {
     background_color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.0),
     text_color: iced::Color::WHITE,
@@ -141,11 +143,12 @@ pub fn daemon() -> miette::Result<()> {
     anchor: Anchor::Top | Anchor::Left,
     layer: Layer::Overlay,
     exclusive_zone: -1,
-    size: Some((1, 1)),
+    size: LayerSize::px(1, 1),
     margin: (0, 0, 0, 0),
     keyboard_interactivity: KeyboardInteractivity::None,
     events_transparent: true,
     start_mode: StartMode::Active,
+    blur_option: BlurOption::None,
   })
   .run()
   .into_diagnostic()

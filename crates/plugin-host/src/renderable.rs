@@ -10,7 +10,7 @@ use std::{
 };
 
 use iced::Element;
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::popups::PopupSettings;
 use slowshell_config::Config;
 use slowshell_core::{

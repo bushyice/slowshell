@@ -2,7 +2,7 @@ use iced::{
   Element, Length,
   widget::{column, container},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_config::Config;
 use slowshell_core::{
   Store,

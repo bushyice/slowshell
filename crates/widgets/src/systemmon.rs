@@ -42,7 +42,7 @@ impl Renderable for SystemMonWidget {
     &self,
     config: &'a Config,
     store: &'a Store,
-    _id: iced_layershell::reexport::IcedId,
+    _id: iced_exwlshell::reexport::IcedId,
     _data: &'a dyn std::any::Any,
   ) -> Element<'a, ItemMessage> {
     render_system_mon_widget(config, store, SystemMonOptions::default())
