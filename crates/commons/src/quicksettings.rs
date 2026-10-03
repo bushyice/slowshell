@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
-  message::ItemMessage,
+  message::{EventFilter, ItemMessage},
   types::{PayloadBox, ToUstr},
 };
 
@@ -89,6 +89,10 @@ impl QuickSettingsTile {
 pub trait QuickSettingsProvider: Send + Sync {
   fn id(&self) -> &str;
 
+  fn events(&self) -> Vec<EventFilter> {
+    Vec::new()
+  }
+
   fn tiles(&self, _config: &Config, store: &Store) -> Vec<QuickSettingsTile>;
 
   fn children(&self, _config: &Config, _store: &Store, _id: &str) -> Vec<QuickSettingsTile> {
@@ -143,6 +147,25 @@ impl QuickSettingsRegistry {
     tiles.sort_by_cached_key(|tile| (tile.order, tile.title.to_lowercase()));
 
     tiles
+  }
+
+  pub fn events(&self) -> Vec<EventFilter> {
+    let providers: Vec<Arc<dyn QuickSettingsProvider>> = self
+      .providers
+      .lock()
+      .map(|providers| providers.clone())
+      .unwrap_or_default();
+
+    let mut events = Vec::new();
+    for provider in providers.iter() {
+      for event in provider.events() {
+        if !events.contains(&event) {
+          events.push(event);
+        }
+      }
+    }
+
+    events
   }
 
   pub fn children(&self, config: &Config, store: &Store, id: &str) -> Vec<QuickSettingsTile> {

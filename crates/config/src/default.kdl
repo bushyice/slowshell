@@ -21,12 +21,6 @@ wallpaper {
   // file "/path/to/file"
 }
 
-style "item" {
-  spacing 8
-  "highlight.padding" 0.0
-  "highlight.radius" 6.0
-}
-
 panels {
   panel "Main" position="top" transparent=#true {
     components {

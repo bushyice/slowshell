@@ -1629,6 +1629,14 @@ pub enum UpdateWhen {
 }
 
 #[repr(C)]
+#[derive(StableAbi, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BlurOption {
+  #[default]
+  None,
+  Full,
+}
+
+#[repr(C)]
 #[derive(StableAbi, Clone, Debug, PartialEq)]
 pub struct DesktopSettings {
   pub layer: Layer,
@@ -1644,6 +1652,7 @@ pub struct DesktopSettings {
   pub namespace: RString,
   pub visibility: Visibility,
   pub update_when: UpdateWhen,
+  pub blur: BlurOption,
 }
 
 impl Default for DesktopSettings {
@@ -1662,6 +1671,7 @@ impl Default for DesktopSettings {
       namespace: RString::new(),
       visibility: Visibility::Visible,
       update_when: UpdateWhen::OnDemand,
+      blur: BlurOption::None,
     }
   }
 }

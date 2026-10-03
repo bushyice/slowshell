@@ -4,15 +4,15 @@ use iced::{
   Alignment, Color, Element, Length,
   widget::{Space, column, container, row, scrollable, text_input},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::notifications::{
-  NotificationItem, NotificationPayload, SharedNotificationState, reply_action_key,
+  NOTIF_CHANGED, NotificationItem, NotificationPayload, SharedNotificationState, reply_action_key,
 };
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
-  message::{ItemEffect, ItemMessage},
+  message::{EventFilter, ItemEffect, ItemMessage},
   types::{PayloadBox, ToUstr},
 };
 use slowshell_popups::PopupSettings;
@@ -82,6 +82,10 @@ impl NotifAction {
 }
 
 impl Renderable for NotificationsRenderable {
+  fn events(&self, _store: &Store) -> Vec<EventFilter> {
+    vec![EventFilter::Named(NOTIF_CHANGED.into())]
+  }
+
   fn view<'a>(
     &self,
     config: &'a Config,

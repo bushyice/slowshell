@@ -4,13 +4,13 @@ use iced::{
   Color, Element, Event, Length, mouse,
   widget::{Row, Space, column, container, row, space},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::tray::{SharedTrayState, TrayCmd, TrayPayload};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
-  message::{ItemEffect, ItemMessage},
+  message::{EventFilter, ItemEffect, ItemMessage},
   types::{PayloadBox, ToUstr},
 };
 use slowshell_popups::PopupSettings;
@@ -18,6 +18,8 @@ use slowshell_widgets::{
   Backdrop, EventWrapper, Icon, Renderable, SizedPopup, clickable, hover_row, separator,
 };
 use system_tray::menu::{MenuItem, MenuType, ToggleState, ToggleType, TrayMenu};
+
+const TICK: &str = "component/tray.tick";
 
 pub struct TrayRenderable;
 
@@ -251,6 +253,10 @@ fn back_row<'a>(
 }
 
 impl Renderable for TrayRenderable {
+  fn events(&self, _store: &Store) -> Vec<EventFilter> {
+    vec![EventFilter::Named(TICK.into())]
+  }
+
   fn view<'a>(
     &self,
     config: &'a Config,

@@ -10,7 +10,7 @@ use std::{
 };
 
 use iced::Element;
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::popups::PopupSettings;
 use slowshell_config::Config;
 use slowshell_core::{
@@ -86,7 +86,7 @@ impl PluginRenderable {
 }
 
 impl Renderable for PluginRenderable {
-  fn events(&self) -> Vec<slowshell_core::message::EventFilter> {
+  fn events(&self, _store: &Store) -> Vec<slowshell_core::message::EventFilter> {
     filters_to_core(&self.inner.borrow().events(), &self.event_name)
   }
 

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use iced::widget::space;
-use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer, NewLayerShellSettings};
+use iced_exwlshell::reexport::{
+  Anchor, KeyboardInteractivity, Layer, LayerSize, NewLayerShellSettings,
+};
 pub use slowshell_commons::{
   panels::PanelEdge,
   popups::{PopupPosition, PopupSettings},
@@ -41,7 +43,7 @@ impl Popup {
         .borrow::<Renderables>()
         .and_then(|renderables| renderables.get(&current.content))
     {
-      events.extend(renderable.events());
+      events.extend(renderable.events(store));
     }
 
     events
@@ -128,7 +130,7 @@ impl DesktopItem for Popup {
       layer,
       anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
       exclusive_zone: Some(-1),
-      size: None,
+      size: LayerSize::FILL,
       margin: Some((0, 0, 0, 0)),
       keyboard_interactivity: KeyboardInteractivity::OnDemand,
       events_transparent: false,

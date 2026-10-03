@@ -3,8 +3,8 @@ use std::{collections::HashMap, hash::Hash};
 use crate::{listeners::IpcCommand, types::Ustr};
 
 use super::listeners::{CompositorEvent, ListenerAction};
-use iced_layershell::{
-  reexport::{IcedId, NewLayerShellSettings, Task},
+use iced_exwlshell::{
+  reexport::{Anchor, IcedId, LayerSize, NewLayerShellSettings, Task},
   to_layer_message,
 };
 
@@ -141,6 +141,17 @@ pub struct WindowSettings {
   pub margin: Option<(i32, i32, i32, i32)>,
   pub size: Option<(u32, u32)>,
   pub exclusive_zone: Option<i32>,
+  pub anchor: Option<Anchor>,
+}
+
+/// pretty cool
+pub fn layer_size(width: u32, height: u32) -> LayerSize {
+  match (width, height) {
+    (0, 0) => LayerSize::FILL,
+    (0, height) => LayerSize::fill_width(height),
+    (width, 0) => LayerSize::fill_height(width),
+    (width, height) => LayerSize::px(width, height),
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

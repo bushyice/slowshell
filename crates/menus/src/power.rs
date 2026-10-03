@@ -2,13 +2,15 @@ use iced::{
   Alignment, Element, Length,
   widget::{Space, column, container, row, slider},
 };
-use iced_layershell::reexport::IcedId;
-use slowshell_commons::power::{PowerProfile, SharedPowerState, battery_icon, brightness_icon};
+use iced_exwlshell::reexport::IcedId;
+use slowshell_commons::power::{
+  POWER_CHANGED, PowerProfile, SharedPowerState, battery_icon, brightness_icon,
+};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
-  message::{ItemEffect, ItemMessage},
+  message::{EventFilter, ItemEffect, ItemMessage},
   types::{PayloadBox, ToUstr},
 };
 use slowshell_popups::PopupSettings;
@@ -50,6 +52,10 @@ impl PowerBrightnessAction {
 }
 
 impl Renderable for PowerBrightnessRenderable {
+  fn events(&self, _store: &Store) -> Vec<EventFilter> {
+    vec![EventFilter::Named(POWER_CHANGED.into())]
+  }
+
   fn view<'a>(
     &self,
     config: &'a Config,

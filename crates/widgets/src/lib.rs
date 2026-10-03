@@ -124,7 +124,7 @@ mod quicksettings;
 pub use quicksettings::render_tile;
 
 pub trait Renderable {
-  fn events(&self) -> Vec<EventFilter> {
+  fn events(&self, _store: &Store) -> Vec<EventFilter> {
     Vec::new()
   }
 
@@ -147,7 +147,7 @@ pub trait Renderable {
     &self,
     config: &'a Config,
     store: &'a Store,
-    id: iced_layershell::reexport::IcedId,
+    id: iced_exwlshell::reexport::IcedId,
     data: &'a dyn std::any::Any,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
@@ -185,7 +185,7 @@ pub trait Renderable {
     &self,
     config: &'a Config,
     store: &'a Store,
-    id: iced_layershell::reexport::IcedId,
+    id: iced_exwlshell::reexport::IcedId,
     data: &'a dyn std::any::Any,
   ) -> Element<'a, ItemMessage>;
 }

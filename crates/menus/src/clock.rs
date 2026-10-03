@@ -6,7 +6,7 @@ use iced::{
   Alignment, Element, Length,
   widget::{Space, column, container, row},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
@@ -43,7 +43,7 @@ impl ClockRenderable {
 }
 
 impl Renderable for ClockRenderable {
-  fn events(&self) -> Vec<EventFilter> {
+  fn events(&self, _store: &Store) -> Vec<EventFilter> {
     vec![EventFilter::Named(CLOCK_TICK.into())]
   }
 

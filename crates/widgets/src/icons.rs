@@ -8,7 +8,7 @@ use iced::{
   Color, Element, Length,
   widget::{image, svg},
 };
-use iced_layershell::reexport::core::svg::Data as SvgData;
+use iced_exwlshell::reexport::core::svg::Data as SvgData;
 use resvg::{tiny_skia, usvg};
 use slowshell_core::types::Ustr;
 

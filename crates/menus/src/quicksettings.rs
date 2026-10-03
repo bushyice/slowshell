@@ -1,10 +1,10 @@
 use std::sync::atomic::Ordering;
 
 use slowshell_commons::{
-  audio::{SharedAudioState, volume_icon},
-  bluetooth::{SharedBluetoothState, bluetooth_icon},
-  network::SharedNetworkState,
-  notifications::SharedNotificationState,
+  audio::{AUDIO_CHANGED, SharedAudioState, volume_icon},
+  bluetooth::{BT_CHANGED, SharedBluetoothState, bluetooth_icon},
+  network::{NET_CHANGED, SharedNetworkState},
+  notifications::{NOTIF_CHANGED, SharedNotificationState},
 };
 
 use std::sync::{Arc, Mutex};
@@ -13,7 +13,7 @@ use iced::{
   Alignment, Element, Length,
   widget::{Space, column, container, row},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_commons::quicksettings::*;
 use slowshell_commons::quicksettings::{
   QuickSettingsProvider, QuickSettingsRegistry, QuickSettingsTile,
@@ -22,7 +22,7 @@ use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
-  message::{ItemEffect, ItemMessage, Message},
+  message::{EventFilter, ItemEffect, ItemMessage, Message},
   types::ToUstr,
 };
 use slowshell_popups::PopupSettings;
@@ -67,6 +67,13 @@ impl QuickSettingsRenderable {
 }
 
 impl Renderable for QuickSettingsRenderable {
+  fn events(&self, store: &Store) -> Vec<EventFilter> {
+    store
+      .borrow::<QuickSettingsRegistry>()
+      .map(|registry| registry.events())
+      .unwrap_or_default()
+  }
+
   fn handle_message(&mut self, message: &ItemMessage) -> Option<ItemEffect> {
     let ItemMessage::Effect(_, ItemEffect::Custom([42, kind, slot, _])) = message else {
       return None;
@@ -494,6 +501,10 @@ impl QuickSettingsProvider for NetworkProvider {
     "network"
   }
 
+  fn events(&self) -> Vec<EventFilter> {
+    vec![EventFilter::Named(NET_CHANGED.into())]
+  }
+
   fn tiles(&self, _config: &Config, store: &Store) -> Vec<QuickSettingsTile> {
     let Some(shared) = store.borrow::<SharedNetworkState>() else {
       return Vec::new();
@@ -527,6 +538,10 @@ pub struct BluetoothProvider;
 impl QuickSettingsProvider for BluetoothProvider {
   fn id(&self) -> &str {
     "bluetooth"
+  }
+
+  fn events(&self) -> Vec<EventFilter> {
+    vec![EventFilter::Named(BT_CHANGED.into())]
   }
 
   fn tiles(&self, _config: &Config, store: &Store) -> Vec<QuickSettingsTile> {
@@ -568,6 +583,10 @@ pub struct SoundProvider;
 impl QuickSettingsProvider for SoundProvider {
   fn id(&self) -> &str {
     "sound"
+  }
+
+  fn events(&self) -> Vec<EventFilter> {
+    vec![EventFilter::Named(AUDIO_CHANGED.into())]
   }
 
   fn tiles(&self, _config: &Config, store: &Store) -> Vec<QuickSettingsTile> {
@@ -625,6 +644,10 @@ impl QuickSettingsProvider for DndProvider {
     "dnd"
   }
 
+  fn events(&self) -> Vec<EventFilter> {
+    vec![EventFilter::Named(NOTIF_CHANGED.into())]
+  }
+
   fn tiles(&self, _config: &Config, store: &Store) -> Vec<QuickSettingsTile> {
     let Some(shared) = store.borrow::<SharedNotificationState>() else {
       return Vec::new();
@@ -655,6 +678,13 @@ pub struct AirplaneProvider;
 impl QuickSettingsProvider for AirplaneProvider {
   fn id(&self) -> &str {
     "airplane"
+  }
+
+  fn events(&self) -> Vec<EventFilter> {
+    vec![
+      EventFilter::Named(NET_CHANGED.into()),
+      EventFilter::Named(BT_CHANGED.into()),
+    ]
   }
 
   fn tiles(&self, _config: &Config, store: &Store) -> Vec<QuickSettingsTile> {

@@ -4,7 +4,7 @@ use iced::{
   Alignment, Element, Length,
   widget::{Space, column, container, row},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_config::Config;
 use slowshell_core::{
   Store,

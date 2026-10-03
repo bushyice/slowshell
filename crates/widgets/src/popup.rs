@@ -6,7 +6,7 @@ use iced::{
   },
   widget::{Space, container, mouse_area, stack},
 };
-use iced_layershell::reexport::core::keyboard;
+use iced_exwlshell::reexport::core::keyboard;
 use slowshell_commons::panels::{PanelEdge, PanelPositions};
 use slowshell_core::{Store, message::ItemMessage};
 

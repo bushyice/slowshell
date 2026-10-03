@@ -189,7 +189,7 @@ pub(crate) fn message_from_abi(message: &AbiMessage) -> CoreMessage {
   match message {
     AbiMessage::Noop => CoreMessage::Noop,
     AbiMessage::Effect(effect) => CoreMessage::Effect(
-      iced_layershell::reexport::IcedId::unique(),
+      iced_exwlshell::reexport::IcedId::unique(),
       effect_from_abi(*effect),
     ),
     AbiMessage::Action(action) => CoreMessage::Action(ListenerAction::Payload {
@@ -197,7 +197,7 @@ pub(crate) fn message_from_abi(message: &AbiMessage) -> CoreMessage {
       payload: None,
     }),
     AbiMessage::EffectAction(effect, action) => CoreMessage::EffectAction(
-      iced_layershell::reexport::IcedId::unique(),
+      iced_exwlshell::reexport::IcedId::unique(),
       effect_from_abi(*effect),
       ListenerAction::Payload {
         name: action.as_str().into(),

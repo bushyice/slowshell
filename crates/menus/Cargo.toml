@@ -13,6 +13,6 @@ slowshell-commons = { path = "../commons" }
 
 iced.workspace = true
 icss.workspace = true
-iced_layershell.workspace = true
+iced_exwlshell.workspace = true
 system-tray.workspace = true
 chrono.workspace = true

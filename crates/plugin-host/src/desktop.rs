@@ -1,23 +1,23 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use iced::Element;
-use iced_layershell::reexport::{
-  Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
+use iced_exwlshell::reexport::{
+  Anchor, BlurOption, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
-  message::{EventFilter, ItemEffect, ItemMessage},
+  message::{EventFilter, ItemEffect, ItemMessage, layer_size},
   types::Ustr,
 };
 use slowshell_desktop::{
   DeployDesktopItemAction, DeployableDesktopItem, DesktopItem, MonitorScope, UpdateWhen, Visibility,
 };
 use slowshell_plugin_abi::{
-  Anchor as AbiAnchor, Context, DeployResult, DeployableDesktopItemObjectBox, DesktopItemObjectBox,
-  DesktopSettings, Event as AbiEvent, ItemEffect as AbiEffect,
-  KeyboardInteractivity as AbiKeyboardInteractivity, Layer as AbiLayer,
+  Anchor as AbiAnchor, BlurOption as AbiBlurOpyion, Context, DeployResult,
+  DeployableDesktopItemObjectBox, DesktopItemObjectBox, DesktopSettings, Event as AbiEvent,
+  ItemEffect as AbiEffect, KeyboardInteractivity as AbiKeyboardInteractivity, Layer as AbiLayer,
   UpdateWhen as AbiUpdateWhen, Visibility as AbiVisibility,
 };
 
@@ -84,11 +84,7 @@ impl DesktopItem for PluginDesktopItem {
       },
       anchor: anchor_from_bits(settings.anchor.0),
       exclusive_zone: Some(settings.exclusive_zone),
-      size: if settings.width == 0 || settings.height == 0 {
-        None
-      } else {
-        Some((settings.width, settings.height))
-      },
+      size: layer_size(settings.width, settings.height),
       margin: Some((
         settings.margin[0],
         settings.margin[1],
@@ -106,6 +102,10 @@ impl DesktopItem for PluginDesktopItem {
         OutputOption::Active
       } else {
         OutputOption::OutputName(monitor.to_owned())
+      },
+      blur_option: match settings.blur {
+        AbiBlurOpyion::None => BlurOption::None,
+        AbiBlurOpyion::Full => BlurOption::FullRegion,
       },
     }
   }

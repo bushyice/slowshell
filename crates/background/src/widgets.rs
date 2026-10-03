@@ -4,13 +4,14 @@ use iced::{
   Alignment, Element, Length,
   widget::{container, text},
 };
-use iced_layershell::reexport::{
-  Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
+use iced_exwlshell::reexport::{
+  Anchor, BlurOption, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
+  message::layer_size,
   types::{ToUstr, Ustr},
 };
 use slowshell_desktop::{
@@ -240,7 +241,7 @@ impl DesktopWidget {
         .borrow::<Renderables>()
         .and_then(|renderables| renderables.get(inner))
     {
-      events.extend(renderable.events());
+      events.extend(renderable.events(store));
     }
 
     events
@@ -294,12 +295,13 @@ impl DesktopItem for DesktopWidget {
       layer: self.layer.to_layer(),
       anchor,
       exclusive_zone: Some(-1),
-      size: Some((self.width, self.height)),
+      size: layer_size(self.width, self.height),
       margin: Some(margins),
       keyboard_interactivity: KeyboardInteractivity::None,
       events_transparent: false,
       namespace: Some(format!("slowshell-widget-{}", self.name.to_lowercase())),
       output_option: OutputOption::OutputName(monitor.to_string()),
+      blur_option: BlurOption::None,
     }
   }
 
@@ -675,7 +677,7 @@ impl Renderable for DesktopIconWidget {
     Box::new(())
   }
 
-  fn events(&self) -> Vec<EventFilter> {
+  fn events(&self, _store: &Store) -> Vec<EventFilter> {
     vec![EventFilter::Named(
       slowshell_commons::desktop::DESKTOP_ENTRIES_CHANGED.into(),
     )]
@@ -833,7 +835,7 @@ impl Renderable for ClockWidget {
     Box::new(())
   }
 
-  fn events(&self) -> Vec<EventFilter> {
+  fn events(&self, _store: &Store) -> Vec<EventFilter> {
     vec![EventFilter::Named(CLOCK_TICK.into())]
   }
 
@@ -938,7 +940,7 @@ impl Renderable for NowplayingWidget {
     Box::new(())
   }
 
-  fn events(&self) -> Vec<EventFilter> {
+  fn events(&self, _store: &Store) -> Vec<EventFilter> {
     vec![EventFilter::Named(AUDIO_CHANGED.into())]
   }
 
@@ -1123,7 +1125,7 @@ impl Renderable for SysmonWidget {
     Box::new(())
   }
 
-  fn events(&self) -> Vec<EventFilter> {
+  fn events(&self, _store: &Store) -> Vec<EventFilter> {
     vec![EventFilter::Named(SYSMON_TICK.into())]
   }
 

@@ -10,8 +10,8 @@ use iced::{
   Alignment, Element, Length,
   widget::{Space, column, container, mouse_area, row, space},
 };
-use iced_layershell::reexport::{
-  Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
+use iced_exwlshell::reexport::{
+  Anchor, BlurOption, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
 };
 use slowshell_commons::panels::PanelOrientation;
 pub use slowshell_commons::panels::{PanelEdge, PanelPositions};
@@ -27,6 +27,7 @@ use slowshell_core::{
   Store,
   commands::CommandEntry,
   listeners::ListenerAction,
+  message::layer_size,
   types::{OptionalPayloadBox, PayloadBox, PayloadBuilder, ToUstr, Ustr, Void},
 };
 use slowshell_desktop::{
@@ -1447,7 +1448,7 @@ impl DesktopItem for Panel {
       layer: Layer::Overlay,
       anchor: self.position.anchor(),
       exclusive_zone: Some(self.exclusive_zone(self.autohide)),
-      size: Some((w, h)),
+      size: layer_size(w, h),
       margin: Some(if self.autohide {
         self.collapsed_margin()
       } else {
@@ -1457,6 +1458,7 @@ impl DesktopItem for Panel {
       events_transparent: false,
       namespace: Some(format!("slowshell-panel-{}", self.name.to_lowercase())),
       output_option: OutputOption::OutputName(monitor.to_string()),
+      blur_option: BlurOption::None,
     }
   }
 

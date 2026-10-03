@@ -10,7 +10,7 @@ miette.workspace = true
 nix.workspace = true
 libc.workspace = true
 
-iced_layershell.workspace = true
+iced_exwlshell.workspace = true
 futures-channel.workspace = true
 
 ron.workspace = true

@@ -2,11 +2,11 @@ use iced::{
   Element, Length,
   widget::{column, container},
 };
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::reexport::IcedId;
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
-  message::{ItemEffect, ItemMessage},
+  message::{EventFilter, ItemEffect, ItemMessage},
 };
 use slowshell_popups::PopupSettings;
 use slowshell_widgets::{
@@ -14,9 +14,15 @@ use slowshell_widgets::{
   set_sample_processes,
 };
 
+const TICK: &str = "component/system-mon.tick";
+
 pub struct SystemMonRenderable;
 
 impl Renderable for SystemMonRenderable {
+  fn events(&self, _store: &Store) -> Vec<EventFilter> {
+    vec![EventFilter::Named(TICK.into())]
+  }
+
   fn initialize(&self, _config: &Config, store: &mut Store) -> Box<dyn std::any::Any + Send> {
     set_sample_processes(store, true);
     Box::new(())
