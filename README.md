@@ -8,13 +8,13 @@
 </h6>
 
 <h6 align="center">
-  <a href="https://slowshell.bushyice.dev">Website</a>
+  <a href="https://slowshell.bushyice.com">Website</a>
   ·
-  <a href="https://slowshell.bushyice.dev/guides/getting-started/">Getting Started</a>
+  <a href="https://slowshell.bushyice.com/guides/getting-started/">Getting Started</a>
   ·
-  <a href="https://slowshell.bushyice.dev/references/configuration/">Configuration</a>
+  <a href="https://slowshell.bushyice.com/references/configuration/">Configuration</a>
   ·
-  <a href="https://slowshell.bushyice.dev/references/">References</a>
+  <a href="https://slowshell.bushyice.com/references/">References</a>
 </h6>
 
 <p align="center">
