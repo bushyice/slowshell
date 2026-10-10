@@ -6,6 +6,7 @@ use std::{
 };
 
 use slowshell_core::Store;
+use slowshell_widgets::truncate;
 
 use crate::{SpotlightAction, SpotlightActionDef, SpotlightItem};
 
@@ -61,7 +62,7 @@ pub fn search_clipboard(query: &str, _store: &Store) -> Vec<SpotlightItem> {
         )
       } else {
         (
-          truncate(&row.preview),
+          truncate(&row.preview, MAX_TITLE),
           format!("{} chars", row.preview.chars().count()),
         )
       };
@@ -158,15 +159,6 @@ fn load_rows() -> Vec<Row> {
     }
   }
   rows
-}
-
-fn truncate(s: &str) -> String {
-  if s.chars().count() <= MAX_TITLE {
-    s.to_string()
-  } else {
-    let cut: String = s.chars().take(MAX_TITLE).collect();
-    format!("{cut}…")
-  }
 }
 
 pub fn version() -> u64 {

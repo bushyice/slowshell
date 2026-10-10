@@ -1,7 +1,7 @@
 pub mod manager;
 
 use iced::Element;
-use iced_layershell::reexport::{IcedId, Layer, NewLayerShellSettings};
+use iced_exwlshell::reexport::{IcedId, Layer, NewLayerShellSettings};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,

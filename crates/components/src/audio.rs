@@ -1,27 +1,28 @@
 use std::{
   os::fd::AsRawFd,
   sync::{
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicU64, Ordering},
   },
 };
 
 use iced::{
   Element, Event, mouse,
-  widget::{container, row, text},
+  widget::{container, row},
 };
 use nix::{
   fcntl::{FcntlArg, OFlag, fcntl},
   sys::epoll::EpollFlags,
 };
 use slowshell_commons::audio::{
-  AUDIO_CHANGED, AudioCmd, AudioState, SharedAudioState, volume_icon,
+  AUDIO_CHANGED, AudioCmd, AudioState, MprisSelection, SharedAudioState, volume_icon,
 };
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::{FdHandle, ListenerAction},
   message::{EventFilter, ItemEffect, ItemMessage},
+  persistence,
   types::{OptionalPayloadBox, PayloadBox},
 };
 use slowshell_services::util::drain_signal_fd;
@@ -31,30 +32,78 @@ use crate::{
   Component, ComponentContext, ComponentOptions, MenuConfig, popup_open_action, spaced_component,
 };
 
+const PRIMARY_PLAYER_FILE: &str = "audio-primary-player";
+
+struct GlobalAudio {
+  shared: SharedAudioState,
+  rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<AudioCmd>>>,
+}
+
+static GLOBAL: OnceLock<GlobalAudio> = OnceLock::new();
+
+fn global() -> &'static GlobalAudio {
+  GLOBAL.get_or_init(|| {
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let selected = persistence::load::<(String, String)>(PRIMARY_PLAYER_FILE)
+      .map(|(bus_name, identity)| MprisSelection { bus_name, identity });
+
+    GlobalAudio {
+      shared: Arc::new(AudioState {
+        state: Mutex::new(Default::default()),
+        player: Mutex::new(None),
+        players: Mutex::new(Vec::new()),
+        selected: Mutex::new(selected),
+        revision: AtomicU64::new(0),
+        cmd_tx,
+      }),
+      rx: Mutex::new(Some(cmd_rx)),
+    }
+  })
+}
+
+pub fn ensure(store: &mut Store) -> SharedAudioState {
+  let shared = global().shared.clone();
+  store.insert(shared.clone());
+
+  let Some(cmd_rx) = global().rx.lock().unwrap().take() else {
+    return shared;
+  };
+
+  let notify = store.borrow::<FdHandle>().and_then(|handle| {
+    let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
+    fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
+
+    let raw = read_fd.as_raw_fd();
+    handle.watch_with_flags(
+      read_fd,
+      EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
+      ListenerAction::Signal {
+        name: AUDIO_CHANGED.into(),
+        fd: raw,
+      },
+    );
+
+    Some(write_fd)
+  });
+
+  slowshell_services::audio::run(shared.clone(), cmd_rx, notify);
+
+  shared
+}
+
 pub struct Audio {
-  signal_fd: Option<i32>,
-  started: bool,
   shared: SharedAudioState,
   last_revision: u64,
   shared_in_store: bool,
-  cmd_rx: Option<tokio::sync::mpsc::UnboundedReceiver<AudioCmd>>,
 }
 
 impl Audio {
   pub fn new() -> Self {
-    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     Self {
-      signal_fd: None,
-      started: false,
-      shared: Arc::new(AudioState {
-        state: Mutex::new(Default::default()),
-        player: Mutex::new(None),
-        revision: AtomicU64::new(0),
-        cmd_tx,
-      }),
+      shared: global().shared.clone(),
       last_revision: 0,
       shared_in_store: false,
-      cmd_rx: Some(cmd_rx),
     }
   }
 }
@@ -76,47 +125,13 @@ impl Component for Audio {
       EventFilter::Payload("audio.play_pause".into()),
       EventFilter::Payload("audio.next".into()),
       EventFilter::Payload("audio.previous".into()),
+      EventFilter::Payload("audio.select_player".into()),
     ]
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
-    store.insert(self.shared.clone());
+    self.shared = ensure(store);
     self.shared_in_store = true;
-
-    if self.started {
-      return;
-    }
-    self.started = true;
-
-    let notify = store.borrow::<FdHandle>().and_then(|handle| {
-      let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
-      fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
-
-      let raw = read_fd.as_raw_fd();
-      handle.watch_with_flags(
-        read_fd,
-        EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
-        ListenerAction::Signal {
-          name: AUDIO_CHANGED.into(),
-          fd: raw,
-        },
-      );
-      self.signal_fd = Some(raw);
-
-      Some(write_fd)
-    });
-
-    let shared = self.shared.clone();
-    let cmd_rx = self.cmd_rx.take();
-    if let Some(cmd_rx) = cmd_rx {
-      slowshell_services::audio::run(shared, cmd_rx, notify);
-    }
-  }
-
-  fn stop(&mut self, store: &Store, _options: Option<&ComponentOptions>) {
-    if let (Some(handle), Some(fd)) = (store.borrow::<FdHandle>(), self.signal_fd.take()) {
-      handle.stop_timer(fd);
-    }
   }
 
   fn update(
@@ -144,9 +159,6 @@ impl Component for Audio {
       }
 
       ListenerAction::Named(name) if &**name == AUDIO_CHANGED => {
-        if let Some(fd) = self.signal_fd {
-          drain_signal_fd(fd);
-        }
         let rev = self.shared.revision.load(Ordering::SeqCst);
         if rev != self.last_revision {
           self.last_revision = rev;
@@ -197,22 +209,52 @@ impl Component for Audio {
         Ok(ItemEffect::Redraw)
       }
 
+      ListenerAction::Payload { name, payload } if &**name == "audio.select_player" => {
+        if let Some(selection) = payload.transform::<MprisSelection>() {
+          let selection = selection.clone();
+          let _ = self
+            .shared
+            .cmd_tx
+            .send(AudioCmd::SelectPlayer(selection.clone()));
+
+          if let Err(e) = persistence::save(
+            PRIMARY_PLAYER_FILE,
+            &(selection.bus_name, selection.identity),
+          ) {
+            eprintln!("[audio] failed to persist the primary player: {e}");
+          }
+        }
+        Ok(ItemEffect::Redraw)
+      }
+
       _ => Ok(ItemEffect::None),
     }
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = config.style("component");
-    let theme = &config.theme;
+    let style = config.computed(&["component"]);
+    let theme = config.palette();
 
-    let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(13.0);
+    let icon_size = style.length("icon-size").unwrap_or(14.0) as u16;
+
+    let text_color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
+    let faded = style
+      .color("color-faded")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.subtext);
+    let primary = style
+      .color("color-primary")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.primary);
 
     let (vol, muted) = {
       let state = self.shared.state.lock().unwrap();
@@ -245,11 +287,7 @@ impl Component for Audio {
       .unwrap_or(false);
 
     let icon_name = volume_icon(vol, muted);
-    let color = if muted {
-      style.color(theme, "color.faded", theme.subtext)
-    } else {
-      style.color(theme, "color", theme.text)
-    };
+    let color = if muted { faded } else { text_color };
 
     let icon = Icon::new(icon_name).size(icon_size).color(color);
 
@@ -257,11 +295,7 @@ impl Component for Audio {
 
     if show_track && track_info.is_some() {
       let (track_label, is_playing) = track_info.unwrap();
-      let track_color = if is_playing {
-        style.color(theme, "color.primary", theme.primary)
-      } else {
-        style.color(theme, "color.faded", theme.subtext)
-      };
+      let track_color = if is_playing { primary } else { faded };
 
       let truncated: String = if track_label.chars().count() > 30 {
         format!("{}…", track_label.chars().take(28).collect::<String>())
@@ -269,10 +303,15 @@ impl Component for Audio {
         track_label
       };
 
-      items.push(text(truncated).size(font_size).color(track_color).into());
+      items.push(
+        config
+          .text(truncated, &["component"])
+          .color(track_color)
+          .into(),
+      );
     } else if show_percent {
       let pct_str = format!("{}%", (vol * 100.0).round() as u32);
-      items.push(text(pct_str).size(font_size).color(color).into());
+      items.push(config.text(pct_str, &["component"]).color(color).into());
     }
 
     let content = container(row(items).spacing(4).align_y(iced::Alignment::Center));
@@ -282,6 +321,8 @@ impl Component for Audio {
       panel_name: None,
       position: ctx.position,
     };
+
+    let menu_suppressed = ctx.menu_suppressed;
 
     let action =
       move |event: &Event, layout: iced::advanced::layout::Layout<'_>, cursor: mouse::Cursor| {
@@ -308,7 +349,7 @@ impl Component for Audio {
               payload: None,
             }))
           }
-          Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+          Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if !menu_suppressed => {
             let point = cursor.position()?;
             Some(ItemMessage::Action(popup_open_action(&menu_config, point)))
           }

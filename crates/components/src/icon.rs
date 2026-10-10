@@ -33,16 +33,19 @@ impl Component for IconComp {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = config.style("component");
-    let theme = &config.theme;
-    let color = style.color(theme, "color", theme.text);
-    let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
+    let style = config.computed(&["component"]);
+    let theme = config.palette();
+    let color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
+    let icon_size = style.length("icon-size").unwrap_or(14.0) as u16;
 
     let icon = if let Some(icons) = options
       .and_then(|o| o.table("icons"))

@@ -3,7 +3,7 @@ use std::time::Duration;
 use chrono::Local;
 use iced::{
   Alignment, Element,
-  widget::{Space, column, container, text},
+  widget::{Space, column, container},
 };
 use slowshell_commons::panels::PanelOrientation;
 use slowshell_config::Config;
@@ -110,45 +110,37 @@ impl Component for Clock {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     _options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
     let vertical = ctx.orientation == PanelOrientation::Vertical;
-    let style = ctx.resolve_style(config);
-    let theme = &config.theme;
 
     let content = if vertical {
-      let font_size = style.number("font.size").unwrap_or(15.0);
-      let color = style.color(theme, "color", theme.text);
       let mut items: Vec<Element<'a, ItemMessage>> = Vec::new();
 
       for (index, part) in self.parts.iter().enumerate() {
         if index > 0 {
           items.push(Space::new().height(2).into());
         }
-        items.push(text(part.clone()).size(font_size).color(color).into());
+        items.push(config.text(part.as_str(), ctx.classes()).into());
       }
 
       if items.is_empty() {
-        items.push(text(self.time.clone()).size(font_size).color(color).into());
+        items.push(config.text(self.time.as_str(), ctx.classes()).into());
       }
 
       container(column(items).align_x(Alignment::Center))
     } else {
-      container(
-        text(self.time.clone())
-          .size(style.number("font.size").unwrap_or(13.0))
-          .color(style.color(theme, "color", theme.text)),
-      )
+      container(config.text(self.time.as_str(), ctx.classes()))
     };
 
     menu_trigger(
       content.into(),
       MenuConfig {
-        content: "clock".into(),
+        content: "menus/clock".into(),
         panel_name: None,
         position: ctx.position,
       },

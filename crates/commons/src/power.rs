@@ -78,7 +78,7 @@ pub enum PowerCmd {
 }
 
 pub struct PowerState {
-  pub data: Mutex<PowerData>,
+  pub data: Mutex<Arc<PowerData>>,
   pub revision: AtomicU64,
   pub cmd_tx: tokio::sync::mpsc::UnboundedSender<PowerCmd>,
 }

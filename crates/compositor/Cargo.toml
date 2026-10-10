@@ -22,4 +22,3 @@ tokio.workspace = true
 
 niri-ipc = { workspace = true, optional = true }
 
-futures-channel.workspace = true

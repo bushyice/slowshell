@@ -116,35 +116,37 @@ theme {
 
 // Styles
 //
-// A style is a named map. User styles *extend* the built-in style of the same
-// name, so list only the keys you want to change. Values can be numbers,
-// booleans, strings, hex colours, `transparent`, or a theme colour name
-// ("primary", "text", "red", ...). A `"key.opacity"` entry scales a colour.
+// Styles are plain CSS. The built-in styles are CSS strings, and whatever you
+// provide here is concatenated after them (so it can override anything).
 //
-// You can list all style names with `slowshell list styles`
+// The palette from the `theme` block is exposed as `:root` variables:
+//   --base --crust --mantle --primary --secondary --green --red --blue
+//   --yellow --orange --text --subtext --overlay
+// plus alpha variants `--<color>-a<NN>` where NN is a 2-digit percent
+// (e.g. `--base-a45`, `--primary-a18`, `--overlay-a15`).
+//
+// Widgets address styles purely by CSS class. Built-in classes include
+// `.component`, `.menu`, `.panel`, `.item`, `.notifications`, `.spotlight`,
+// `.windows`, plus shared text modifiers `.text-faded`, `.text-primary`,
+// `.text-secondary`, `.text-danger`, `.text-invert`.
 
 
-// include more style blocks from another file (relative to this config)
-// include-style "extra-styles.kdl"
+// include more CSS from another file (relative to this config)
+// include-css "extra.css"
 
-style "component" {
-  color "text"
-  "color.faded" "subtext"
-  "color.invert" "base"
-  "color.primary" "primary"
-  "font.size" 12
-  "icon.size" 14
-  spacing 5
-  "padding.x" 9
-  "padding.y" 5
-
-  // shared hover highlight behind interactive panel components (menus, actions).
-  // display-only components are excluded. The colour is scaled by its
-  // `.opacity`, and `"hover.background" "transparent"` disables it entirely.
-  "hover.background" "primary"
-  "hover.background.opacity" 0.18
-  "hover.radius" 4
+// inline CSS
+css """
+.component {
+  color: var(--text);
+  font-size: 12px;
+  icon-size: 14px;
+  spacing: 5px;
+  padding-x: 9px;
+  padding-y: 5px;
+  hover-background: var(--primary-a18);
+  hover-radius: 4px;
 }
+"""
 
 // Desktop widgets (free-floating renderables)
 //
@@ -302,6 +304,14 @@ panels {
         component "core/tray" {
           label "Tray"
           spacing 4
+        }
+
+        // quick settings - a menu icon that opens the quick settings popup.
+        // tiles come from built-in providers plus anything plugins contribute.
+        component "core/icon" {
+          label "Quick settings"
+          menu "menus/quick"
+          icon "preferences-system-symbolic"
         }
 
         group "Media" {

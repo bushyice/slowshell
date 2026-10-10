@@ -1,0 +1,63 @@
+.component {
+  color: var(--text);
+  color-faded: var(--subtext);
+  color-invert: var(--base);
+  color-primary: var(--primary);
+  font-size: 12px;
+  icon-size: 14px;
+  gap: 5px;
+  padding-v: 5px;
+  padding-h: 9px;
+  hover-background: var(--primary-a18);
+  hover-radius: 4px;
+}
+
+.component.vertical {
+  font-size: 15px;
+  icon-size: 18px;
+  gap: 8px;
+  padding-v: 4px;
+  padding-h: 5px;
+}
+
+.component.faded { color: var(--subtext); }
+.component.invert { color: var(--base); }
+.component.primary { color: var(--primary); }
+.component.secondary { color: var(--yellow); }
+.component.danger { color: var(--red); }
+
+.workspaces {
+  font-size: 12px;
+  gap: 4px;
+  padding-v: 0px;
+  padding-h: 10px;
+  border-radius: 999px;
+  border-width: 0px;
+  border-color: var(--overlay);
+  width-active: 32px;
+  width-inactive: 24px;
+}
+
+.workspaces.active { background-color: var(--primary); color: var(--base); }
+.workspaces.inactive { background-color: var(--text); color: var(--base); }
+
+.windows {
+  color: var(--text);
+  color-faded: var(--subtext);
+  color-active: var(--primary);
+  background-active: var(--primary-a18);
+  font-size: 11px;
+  icon-size: 22px;
+  gap: 3px;
+  padding-v: 2px;
+  padding-h: 4px;
+  border-radius: 6px;
+}
+
+.windows.item { border-radius: 6px; }
+.windows.item.active { background-color: var(--primary-a18); }
+.windows.item.open { background-color: var(--crust); }
+
+.windows.active { color: var(--primary); }
+.windows.open { color: var(--text); }
+.windows.closed { color: var(--subtext); }

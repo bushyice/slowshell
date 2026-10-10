@@ -4,8 +4,9 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
+icss.workspace = true
 iced.workspace = true
-iced_layershell.workspace = true
+iced_exwlshell.workspace = true
 slowshell-core = { path = "../core" }
 slowshell-config = { path = "../config" }
 slowshell-commons = { path = "../commons" }

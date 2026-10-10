@@ -42,7 +42,7 @@ pub struct BluetoothMenuUi {
 pub struct BluetoothState {
   pub powered: AtomicBool,
   pub discovering: AtomicBool,
-  pub state: Mutex<BluetoothInner>,
+  pub state: Mutex<Arc<BluetoothInner>>,
   pub menu: Mutex<BluetoothMenuUi>,
   pub revision: AtomicU64,
   pub cmd_tx: tokio::sync::mpsc::UnboundedSender<BluetoothCmd>,

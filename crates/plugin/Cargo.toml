@@ -1,7 +1,0 @@
-[package]
-name = "slowshell-plugin"
-version.workspace = true
-edition = "2024"
-
-[lib]
-name = "slowshell_plugin"

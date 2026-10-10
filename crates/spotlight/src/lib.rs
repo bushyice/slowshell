@@ -16,8 +16,8 @@ use iced::{
   Alignment, Element, Event, Length, keyboard,
   widget::{center, column, container, row, space, text, text::Wrapping},
 };
-use iced_layershell::reexport::{
-  Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings,
+use iced_exwlshell::reexport::{
+  Anchor, IcedId, KeyboardInteractivity, Layer, LayerSize, NewLayerShellSettings,
 };
 use slowshell_commons::desktop::DesktopEntries;
 use slowshell_config::{Config, ConfigParser};
@@ -207,10 +207,7 @@ impl Default for SpotlightModes {
         .display(&[DisplayStyle::List, DisplayStyle::Grid]),
       true,
     );
-    modes.register_version(
-      "applications",
-      slowshell_commons::desktop::DesktopEntries::global_version,
-    );
+    modes.register_version("applications", apps::applications_version);
 
     modes.register_mode(
       "clipboard",
@@ -253,7 +250,7 @@ impl Default for SpotlightModes {
 
     modes.triggers.push(Trigger {
       target_mode: calc_mode,
-      check: Box::new(|q| calc::is_math_expression(q)),
+      check: Box::new(|q| calc::try_eval(q).is_some()),
     });
 
     modes.triggers.push(Trigger {
@@ -530,7 +527,7 @@ impl DesktopItem for Spotlight {
       layer: Layer::Overlay,
       anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
       exclusive_zone: Some(-1),
-      size: None,
+      size: LayerSize::FILL,
       margin: Some((0, 0, 0, 0)),
       keyboard_interactivity: KeyboardInteractivity::Exclusive,
       events_transparent: false,
@@ -634,19 +631,25 @@ impl DesktopItem for Spotlight {
     ItemEffect::None
   }
 
-  fn view(
-    &self,
-    config: &Config,
-    store: &Store,
+  fn view<'a>(
+    &'a self,
+    config: &'a Config,
+    store: &'a Store,
     id: IcedId,
     _monitor: &str,
-  ) -> Element<'static, ItemMessage> {
+  ) -> Element<'a, ItemMessage> {
     let Some(modes) = store.borrow::<SpotlightModes>() else {
       return space().into();
     };
 
-    let style = config.style("spotlight");
-    let theme = &config.theme;
+    let spotlight_size = config.sizing(&["spotlight"]);
+    let padding = spotlight_size.padding();
+    let spacing = spotlight_size.gap;
+    let row_padding = config.sizing(&["spotlight", "row"]).padding();
+    let single_padding = config.sizing(&["spotlight", "single"]).padding();
+    let accent_color = config
+      .color(&["spotlight", "accent"], "color")
+      .unwrap_or(config.palette().primary);
 
     let (
       current_mode,
@@ -693,7 +696,7 @@ impl DesktopItem for Spotlight {
     let page = display.page();
 
     if let Some(path) = expanded {
-      return expanded_view(self.inner.clone(), id, path, &style, theme);
+      return expanded_view(self.inner.clone(), id, path, config);
     }
 
     let mode_result = match modes.modes.get(&current_mode).map(|mode| &mode.kind) {
@@ -704,61 +707,30 @@ impl DesktopItem for Spotlight {
       None => ModeResult::List(Arc::new(Vec::new())),
     };
 
-    let search_font = style.number("search.font.size").unwrap_or(22.0);
     let search_display = if search.is_empty() {
       clipped(
-        text(format!("Search {}...", current_mode))
-          .size(search_font)
-          .color(style.color(theme, "search.placeholder.color", theme.overlay))
+        config
+          .text(
+            format!("Search {}...", current_mode),
+            &["spotlight", "text-placeholder"],
+          )
           .wrapping(Wrapping::None),
       )
     } else {
       clipped(
-        text(format!("{search}|"))
-          .size(search_font)
-          .color(style.color(theme, "search.color", theme.text))
+        config
+          .text(format!("{search}|"), &["spotlight", "text-search"])
           .wrapping(Wrapping::None),
       )
     };
 
-    let search_bg = style.color(theme, "search.background", theme.mantle);
-    let radius = style.number("radius").unwrap_or(12.0);
-    let border_color = style.color(theme, "border.color", theme.overlay);
-    let border_width = style.number("border.width").unwrap_or(1.0);
-    let padding = style.number("padding").unwrap_or(14.0);
-
     let search_bar = container(search_display)
       .width(Length::Fill)
       .padding(padding)
-      .style(move |_t| container::Style {
-        background: Some(search_bg.into()),
-        border: iced::Border {
-          radius: radius.into(),
-          width: border_width,
-          color: border_color,
-        },
-        ..container::Style::default()
-      });
-
-    let result_bg = style.color(theme, "row.background", theme.mantle);
-    let selected_bg = style.color(theme, "row.selected", theme.primary);
-    let result_color = style.color(theme, "result.color", theme.text);
-    let result_selected_color = style.color(theme, "result.selected.color", theme.text);
-    let result_selected_subtitle_color =
-      style.color(theme, "result.selected.subtitle.color", theme.text);
-    let result_font = style.number("result.font.size").unwrap_or(15.0);
-    let row_padding = style.number("row.padding").unwrap_or(10.0);
-    let spacing = style.number("spacing").unwrap_or(8.0);
-    let mantle_bg = theme.mantle;
-    let subtext_color = style.color(theme, "subtitle.color", theme.subtext);
-    let hint_color = style.color(theme, "hint.color", theme.overlay);
-    let tag_color = style.color(theme, "tag.color", theme.subtext);
-    let accent_color = style.color(theme, "color.accent", theme.primary);
-    let single_font_size = style.number("single.font.size").unwrap_or(32.0);
-    let single_padding = style.number("single.padding").unwrap_or(16.0);
+      .style(config.container_cached(&["spotlight", "search"]));
 
     let mut actions: Vec<Vec<SpotlightActionDef>> = Vec::new();
-    let body: Element<'static, ItemMessage>;
+    let body: Element<'a, ItemMessage>;
 
     match mode_result {
       ModeResult::Single(Some(item)) => {
@@ -777,9 +749,8 @@ impl DesktopItem for Spotlight {
               .size(28)
               .color(accent_color),
               clipped(
-                text(item.title)
-                  .size(single_font_size)
-                  .color(result_color)
+                config
+                  .text(item.title, &["spotlight", "text-single"])
                   .wrapping(Wrapping::None)
               ),
             ]
@@ -787,9 +758,8 @@ impl DesktopItem for Spotlight {
             .align_y(Alignment::Center),
             if let Some(sub) = item.subtitle {
               clipped(
-                text(sub)
-                  .size(14.0)
-                  .color(subtext_color)
+                config
+                  .text(sub, &["spotlight", "text-single-subtitle"])
                   .wrapping(Wrapping::None),
               )
             } else {
@@ -797,9 +767,8 @@ impl DesktopItem for Spotlight {
             },
             if let Some(hint) = item.subtext {
               clipped(
-                text(hint)
-                  .size(11.0)
-                  .color(hint_color)
+                config
+                  .text(hint, &["spotlight", "text-single-hint"])
                   .wrapping(Wrapping::None),
               )
             } else {
@@ -810,20 +779,12 @@ impl DesktopItem for Spotlight {
         )
         .width(Length::Fill)
         .padding(single_padding)
-        .style(move |_t| container::Style {
-          background: Some(result_bg.into()),
-          border: iced::Border {
-            radius: radius.into(),
-            width: border_width,
-            color: border_color,
-          },
-          ..container::Style::default()
-        });
+        .style(config.container_cached(&["spotlight", "single"]));
 
         body = container(single_card).into();
       }
       ModeResult::Single(None) => {
-        body = container(text("No result").size(14.0).color(hint_color))
+        body = container(config.text("No result", &["spotlight", "text-hint"]))
           .padding(row_padding)
           .into();
       }
@@ -850,8 +811,6 @@ impl DesktopItem for Spotlight {
           inner.visible_end_idx = render_end;
         }
 
-        let row_border_width = style.number("row.border.width").unwrap_or(0.0);
-        let row_border_color = style.color(theme, "row.border.color", theme.overlay);
         let mut results_col = column![].spacing(spacing);
 
         match display {
@@ -860,32 +819,31 @@ impl DesktopItem for Spotlight {
               let i = render_start + j;
 
               let is_selected = i == selected;
-              let bg = if is_selected { selected_bg } else { result_bg };
 
               let icon_elem = item_icon(item, i, 24);
 
+              let title_classes: &[&str] = if is_selected {
+                &["spotlight", "text-result-selected"]
+              } else {
+                &["spotlight", "text-result"]
+              };
               let title_elem = clipped(
-                text(item.title.clone())
-                  .size(result_font)
-                  .color(if is_selected {
-                    result_selected_color
-                  } else {
-                    result_color
-                  })
+                config
+                  .text(item.title.clone(), title_classes)
                   .wrapping(Wrapping::None),
               );
 
               let text_col = if let Some(subtitle) = &item.subtitle {
+                let subtitle_classes: &[&str] = if is_selected {
+                  &["spotlight", "text-subtitle-selected"]
+                } else {
+                  &["spotlight", "text-subtitle"]
+                };
                 column![
                   title_elem,
                   clipped(
-                    text(subtitle.clone())
-                      .size(11.0)
-                      .color(if is_selected {
-                        result_selected_subtitle_color
-                      } else {
-                        subtext_color
-                      })
+                    config
+                      .text(subtitle.clone(), subtitle_classes)
                       .wrapping(Wrapping::None)
                   )
                 ]
@@ -902,20 +860,10 @@ impl DesktopItem for Spotlight {
 
               if let Some(tags) = &item.tags {
                 if let Some(tag) = tags.iter().next() {
-                  let tag_border_width = style.number("tag.border.width").unwrap_or(0.0);
-                  let tag_border_color = style.color(theme, "tag.border.color", theme.overlay);
                   row_content = row_content.push(
-                    container(text(tag.clone()).size(10.0).color(tag_color))
+                    container(config.text(tag.clone(), &["spotlight", "text-tag"]))
                       .padding([2.0, 6.0])
-                      .style(move |_t| container::Style {
-                        background: Some(mantle_bg.into()),
-                        border: iced::Border {
-                          radius: 4.0.into(),
-                          width: tag_border_width,
-                          color: tag_border_color,
-                        },
-                        ..container::Style::default()
-                      }),
+                      .style(config.container_cached(&["spotlight", "tag"])),
                   );
                 }
               }
@@ -932,39 +880,26 @@ impl DesktopItem for Spotlight {
                   } else {
                     action_label
                   };
-                  let action_border_width = style.number("action.border.width").unwrap_or(0.0);
-                  let action_border_color =
-                    style.color(theme, "action.border.color", theme.overlay);
                   row_content = row_content.push(
-                    container(text(label).size(10.0).color(accent_color))
+                    container(config.text(label, &["spotlight", "text-action"]))
                       .padding([2.0, 6.0])
-                      .style(move |_t| container::Style {
-                        background: Some(mantle_bg.into()),
-                        border: iced::Border {
-                          radius: 4.0.into(),
-                          width: action_border_width,
-                          color: action_border_color,
-                        },
-                        ..container::Style::default()
-                      }),
+                      .style(config.container_cached(&["spotlight", "action-chip"])),
                   );
                 }
               }
+
+              let row_classes: &[&str] = if is_selected {
+                &["spotlight", "result", "selected"]
+              } else {
+                &["spotlight", "result"]
+              };
 
               let row_container = clickable(
                 container(row_content)
                   .width(Length::Fill)
                   .height(Length::Fixed(ROW_HEIGHT))
                   .padding(row_padding)
-                  .style(move |_t| container::Style {
-                    background: Some(bg.into()),
-                    border: iced::Border {
-                      radius: radius.into(),
-                      width: row_border_width,
-                      color: row_border_color,
-                    },
-                    ..container::Style::default()
-                  })
+                  .style(config.container_cached(row_classes))
                   .into(),
                 move |_, _, _| Some(ItemMessage::Effect(id, ItemEffect::Custom([2, i, 0, 0]))),
               );
@@ -973,26 +908,25 @@ impl DesktopItem for Spotlight {
             }
           }
           DisplayStyle::Grid => {
-            let mut rows: Vec<Element<'static, ItemMessage>> = Vec::new();
-            let mut current: Vec<Element<'static, ItemMessage>> = Vec::new();
+            let mut rows: Vec<Element<'a, ItemMessage>> = Vec::new();
+            let mut current: Vec<Element<'a, ItemMessage>> = Vec::new();
 
             for (j, item) in items[render_start..render_end].iter().enumerate() {
               let i = render_start + j;
 
               let is_selected = i == selected;
-              let bg = if is_selected { selected_bg } else { result_bg };
 
-              let icon: Element<'static, ItemMessage> = container(item_icon(item, i, 36))
+              let icon: Element<'a, ItemMessage> = container(item_icon(item, i, 36))
                 .center_x(Length::Fill)
                 .into();
-              let title: Element<'static, ItemMessage> = container(
-                text(item.title.clone())
-                  .size(12.0)
-                  .color(if is_selected {
-                    result_selected_color
-                  } else {
-                    result_color
-                  })
+              let title_classes: &[&str] = if is_selected {
+                &["spotlight", "text-tile-selected"]
+              } else {
+                &["spotlight", "text-tile"]
+              };
+              let title: Element<'a, ItemMessage> = container(
+                config
+                  .text(item.title.clone(), title_classes)
                   .wrapping(Wrapping::None),
               )
               .center_x(Length::Fill)
@@ -1009,29 +943,26 @@ impl DesktopItem for Spotlight {
                   .unwrap_or_default();
                 if !action_label.is_empty() {
                   tile_column = tile_column.push(
-                    container(
-                      text(format!("[{action_label}]"))
-                        .size(10.0)
-                        .color(result_selected_color),
-                    )
+                    container(config.text(
+                      format!("[{action_label}]"),
+                      &["spotlight", "text-tile-action"],
+                    ))
                     .center_x(Length::Fill),
                   );
                 }
               }
 
+              let tile_classes: &[&str] = if is_selected {
+                &["spotlight", "result", "selected"]
+              } else {
+                &["spotlight", "result"]
+              };
+
               let tile = container(tile_column)
                 .width(Length::FillPortion(1))
                 .height(Length::Fixed(GRID_TILE_HEIGHT))
                 .padding(row_padding)
-                .style(move |_t| container::Style {
-                  background: Some(bg.into()),
-                  border: iced::Border {
-                    radius: radius.into(),
-                    width: row_border_width,
-                    color: row_border_color,
-                  },
-                  ..container::Style::default()
-                });
+                .style(config.container_cached(tile_classes));
 
               current.push(clickable(tile.into(), move |_, _, _| {
                 Some(ItemMessage::Effect(id, ItemEffect::Custom([2, i, 0, 0])))
@@ -1052,14 +983,13 @@ impl DesktopItem for Spotlight {
             results_col = column(rows).spacing(spacing);
           }
           DisplayStyle::ImageList => {
-            let mut rows: Vec<Element<'static, ItemMessage>> = Vec::new();
-            let mut current: Vec<Element<'static, ItemMessage>> = Vec::new();
+            let mut rows: Vec<Element<'a, ItemMessage>> = Vec::new();
+            let mut current: Vec<Element<'a, ItemMessage>> = Vec::new();
 
             for (j, item) in items[render_start..render_end].iter().enumerate() {
               let i = render_start + j;
 
               let is_selected = i == selected;
-              let bg = if is_selected { selected_bg } else { result_bg };
 
               let preview = match item_image(item, i) {
                 Some(image) => image,
@@ -1070,15 +1000,15 @@ impl DesktopItem for Spotlight {
               };
 
               let mut tile_content = column![preview].spacing(6);
+              let title_classes: &[&str] = if is_selected {
+                &["spotlight", "text-tile-selected"]
+              } else {
+                &["spotlight", "text-tile"]
+              };
               tile_content = tile_content.push(
                 container(
-                  text(item.title.clone())
-                    .size(12.0)
-                    .color(if is_selected {
-                      result_selected_color
-                    } else {
-                      result_color
-                    })
+                  config
+                    .text(item.title.clone(), title_classes)
                     .wrapping(Wrapping::None),
                 )
                 .center_x(Length::Fill)
@@ -1093,25 +1023,23 @@ impl DesktopItem for Spotlight {
                   .unwrap_or_default();
                 if !action_label.is_empty() {
                   tile_content = tile_content.push(
-                    container(text(action_label).size(10.0).color(accent_color))
+                    container(config.text(action_label, &["spotlight", "text-action"]))
                       .center_x(Length::Fill),
                   );
                 }
               }
 
+              let tile_classes: &[&str] = if is_selected {
+                &["spotlight", "result", "selected"]
+              } else {
+                &["spotlight", "result"]
+              };
+
               let tile = container(tile_content)
                 .width(Length::FillPortion(1))
                 .height(Length::Fixed(IMAGE_TILE_HEIGHT))
                 .padding(row_padding)
-                .style(move |_t| container::Style {
-                  background: Some(bg.into()),
-                  border: iced::Border {
-                    radius: radius.into(),
-                    width: row_border_width,
-                    color: row_border_color,
-                  },
-                  ..container::Style::default()
-                });
+                .style(config.container_cached(tile_classes));
 
               current.push(clickable(tile.into(), move |_, _, _| {
                 Some(ItemMessage::Effect(id, ItemEffect::Custom([2, i, 0, 0])))
@@ -1142,21 +1070,16 @@ impl DesktopItem for Spotlight {
     }
 
     let content = column![search_bar, body]
-      .spacing(style.number("spacing").unwrap_or(10.0))
+      .spacing(spacing)
       .padding(padding)
       .width(Length::Fixed(600.0));
-
-    let backdrop_bg = style.color(theme, "backdrop", theme.base);
 
     let main_container = center(container(content))
       .width(Length::Fill)
       .height(Length::Fill)
       .center_x(Length::Fill)
       .center_y(Length::Fill)
-      .style(move |_t| container::Style {
-        background: Some(backdrop_bg.into()),
-        ..container::Style::default()
-      });
+      .style(config.container_cached(&["spotlight", "backdrop"]));
 
     let inner_ref = self.inner.clone();
     let result_count = actions.len();
@@ -1438,14 +1361,12 @@ fn item_image(item: &SpotlightItem, index: usize) -> Option<Element<'static, Ite
   }
 }
 
-fn expanded_view(
+fn expanded_view<'a>(
   inner_ref: Arc<Mutex<SpotlightInner>>,
   id: IcedId,
   path: PathBuf,
-  style: &slowshell_config::style::Style,
-  theme: &slowshell_config::style::Theme,
-) -> Element<'static, ItemMessage> {
-  let backdrop_bg = style.color(theme, "backdrop", theme.base);
+  config: &'a Config,
+) -> Element<'a, ItemMessage> {
   let image = iced::widget::image(iced::widget::image::Handle::from_path(&path))
     .width(Length::Fill)
     .height(Length::Fill)
@@ -1454,10 +1375,7 @@ fn expanded_view(
   let view = container(image)
     .width(Length::Fill)
     .height(Length::Fill)
-    .style(move |_t| container::Style {
-      background: Some(backdrop_bg.into()),
-      ..container::Style::default()
-    });
+    .style(config.container_cached(&["spotlight", "backdrop"]));
 
   EventWrapper::new(view.into(), move |event, _, _| match event {
     Event::Keyboard(keyboard::Event::KeyPressed { .. })
@@ -1519,43 +1437,7 @@ slowshell_registry::register_resources!(
   },
   app: Item(|_, _| Ok(vec![Box::new(Spotlight::new())])),
   spotlight: Style(
-    slowshell_config::style! {
-      "background" => "crust",
-      "background.opacity" => 0.8,
-      "radius" => 12,
-      "border.width" => 1,
-      "border.color" => "overlay",
-      "border.color.opacity" => 0.3,
-      "padding" => 14,
-      "spacing" => 8,
-      "row.padding" => 10,
-      "row.background" => "mantle",
-      "row.background.opacity" => 1.6,
-      "row.border.width" => 0,
-      "row.border.color" => "overlay",
-      "row.border.color.opacity" => 0.15,
-      "row.selected" => "primary",
-      "row.selected.opacity" => 1.0,
-      "tag.border.width" => 0,
-      "tag.border.color" => "overlay",
-      "tag.border.color.opacity" => 0.15,
-      "action.border.width" => 0,
-      "action.border.color" => "overlay",
-      "action.border.color.opacity" => 0.15,
-      "search.background" => "mantle",
-      "search.background.opacity" => 1.0,
-      "search.color" => "text",
-      "search.placeholder.color" => "overlay",
-      "result.color" => "text",
-      "result.selected.color" => "base",
-      "result.selected.subtitle.color" => "mantle",
-      "backdrop" => "crust",
-      "backdrop.opacity" => 0.6,
-      "search.font.size" => 22,
-      "result.font.size" => 15,
-      "single.font.size" => 32,
-      "single.padding" => 18,
-    }
+    include_str!("style.icss").into()
   )
 );
 

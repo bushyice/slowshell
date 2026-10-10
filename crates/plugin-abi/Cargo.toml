@@ -1,0 +1,12 @@
+[package]
+name = "slowshell-plugin-abi"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+abi_stable = "0.11.3"
+kdl.workspace = true
+serde.workspace = true
+ron.workspace = true
+iced_anim.workspace = true
+icss.workspace = true

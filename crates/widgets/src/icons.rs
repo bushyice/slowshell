@@ -8,6 +8,8 @@ use iced::{
   Color, Element, Length,
   widget::{image, svg},
 };
+use iced_exwlshell::reexport::core::svg::Data as SvgData;
+use resvg::{tiny_skia, usvg};
 use slowshell_core::types::Ustr;
 
 static FALLBACK_IMAGE: LazyLock<svg::Handle> =
@@ -23,6 +25,9 @@ enum IconAsset {
 
 type IconAssetCache = Mutex<HashMap<(Ustr, u16), Option<IconAsset>>>;
 static ICON_ASSET_CACHE: OnceLock<IconAssetCache> = OnceLock::new();
+
+type SvgRasterCache = Mutex<HashMap<(u64, u16, Option<[u8; 4]>), Option<image::Handle>>>;
+static SVG_RASTER_CACHE: OnceLock<SvgRasterCache> = OnceLock::new();
 
 fn installed_themes() -> &'static HashSet<String> {
   INSTALLED_THEMES.get_or_init(|| freedesktop_icons::list_themes().into_iter().collect())
@@ -180,6 +185,14 @@ fn get_asset(name: &str, size: u16) -> Option<IconAsset> {
 }
 
 fn resolve_icon(name: &str, size: u16) -> Option<IconAsset> {
+  if name.starts_with('/') {
+    let path = Path::new(name);
+    if is_svg(path) {
+      return Some(IconAsset::Svg(svg::Handle::from_path(path)));
+    }
+    return Some(IconAsset::Png(image::Handle::from_path(path)));
+  }
+
   if name.starts_with("slowshell-icon") {
     let path = Path::new(name);
     if is_svg(path) {
@@ -297,6 +310,10 @@ impl<Message> Icon<Message> {
 
     match asset.unwrap_or_else(|| IconAsset::Svg(FALLBACK_IMAGE.clone())) {
       IconAsset::Svg(handle) => {
+        if let Some(raster) = rasterized_icon(&handle, self.size, self.color) {
+          return image(raster).width(size).height(size).into();
+        }
+
         let mut widget = svg(handle).width(size).height(size);
 
         if let Some(color) = self.color {
@@ -318,6 +335,80 @@ where
   fn from(icon: Icon<Message>) -> Self {
     icon.into_element()
   }
+}
+
+fn rasterized_icon(handle: &svg::Handle, size: u16, color: Option<Color>) -> Option<image::Handle> {
+  let size = size.max(1);
+  let color = color.map(Color::into_rgba8);
+  let key = (handle.id(), size, color);
+
+  let cache = SVG_RASTER_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+  if let Ok(guard) = cache.lock()
+    && let Some(cached) = guard.get(&key)
+  {
+    return cached.clone();
+  }
+
+  let raster = render_svg(handle, size, color);
+
+  if let Ok(mut guard) = cache.lock() {
+    guard.insert(key, raster.clone());
+  }
+
+  raster
+}
+
+fn render_svg(handle: &svg::Handle, size: u16, color: Option<[u8; 4]>) -> Option<image::Handle> {
+  let pixmap = render_svg_pixmap(handle, size)?;
+
+  let mut rgba = pixmap.take();
+
+  if let Some(color) = color {
+    rgba.chunks_exact_mut(4).for_each(|pixel| {
+      if pixel[3] > 0 {
+        pixel[0] = color[0];
+        pixel[1] = color[1];
+        pixel[2] = color[2];
+      }
+    });
+  }
+
+  Some(image::Handle::from_rgba(size as u32, size as u32, rgba))
+}
+
+fn render_svg_pixmap(handle: &svg::Handle, size: u16) -> Option<tiny_skia::Pixmap> {
+  let options = usvg::Options::default();
+
+  let tree = match handle.data() {
+    SvgData::Path(path) => {
+      let contents = std::fs::read_to_string(path).ok()?;
+      usvg::Tree::from_str(&contents, &options).ok()?
+    }
+    SvgData::Bytes(bytes) => usvg::Tree::from_data(bytes, &options).ok()?,
+  };
+
+  let pixels = size as u32;
+  let tree_size = tree.size().to_int_size().to_size();
+
+  if tree_size.width() <= 0.0 || tree_size.height() <= 0.0 {
+    return None;
+  }
+
+  let scale = pixels as f32 / tree_size.width().max(tree_size.height());
+  let offset = (
+    (pixels as f32 - tree_size.width() * scale) / 2.0,
+    (pixels as f32 - tree_size.height() * scale) / 2.0,
+  );
+  let mut pixmap = tiny_skia::Pixmap::new(pixels, pixels)?;
+
+  resvg::render(
+    &tree,
+    tiny_skia::Transform::from_translate(offset.0, offset.1).pre_scale(scale, scale),
+    &mut pixmap.as_mut(),
+  );
+
+  Some(pixmap)
 }
 
 // stupid shit

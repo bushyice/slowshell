@@ -1,11 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use iced::{
   Element, Length,
   widget::{column, container, progress_bar, row, text},
 };
 use slowshell_commons::panels::PanelOrientation;
-use slowshell_commons::system::{SharedSystemState, SystemSnapshot, SystemState};
+use slowshell_commons::system::{SharedSystemState, SystemSnapshot};
 use slowshell_config::{Config, style::Theme};
 use slowshell_core::{
   Store,
@@ -51,7 +51,7 @@ impl SystemMon {
   pub fn new() -> Self {
     Self {
       timer_fd: None,
-      shared: Arc::new(SystemState::default()),
+      shared: slowshell_commons::system::shared(),
     }
   }
 }
@@ -68,6 +68,13 @@ impl Component for SystemMon {
   }
 
   fn watch(&mut self, store: &mut Store, options: Option<&ComponentOptions>) {
+    if options.and_then(|o| o.bool("processes")) == Some(true) {
+      self
+        .shared
+        .sample_processes
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     store.insert(self.shared.clone());
 
     if self.timer_fd.is_some() {
@@ -119,14 +126,14 @@ impl Component for SystemMon {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = ctx.resolve_style(config);
-    let theme = &config.theme;
+    let style = config.computed(ctx.classes());
+    let theme = config.palette();
 
     let icon_names: [Option<&str>; 3] = options
       .and_then(|o| o.strings("icon_names"))
@@ -143,15 +150,20 @@ impl Component for SystemMon {
 
     let labels = options.and_then(|o| o.bool("labels")).unwrap_or(true);
 
+    let percents = options.and_then(|o| o.bool("percents")).unwrap_or(true);
+
     let progress = options.and_then(|o| o.bool("progress")).unwrap_or(false);
 
     let progress_direction = options
       .and_then(|o| o.str("progress-direction"))
       .unwrap_or("horizontal");
 
-    let icon_size = style.number("icon.size").unwrap_or(16.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(12.0);
-    let color = style.color(theme, "color", theme.text);
+    let icon_size = style.length("icon-size").unwrap_or(16.0) as u16;
+    let font_size = config.sizing(ctx.classes()).font_size;
+    let color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
 
     let items = Self::items(options);
     let snapshot = self.shared.snapshot.lock().unwrap().clone();
@@ -163,6 +175,7 @@ impl Component for SystemMon {
         icon_names,
         icons,
         labels,
+        percents,
         progress,
         progress_direction,
         font_size,
@@ -210,6 +223,7 @@ impl SystemMon {
     icon_names: [Option<&str>; 3],
     icons: bool,
     labels: bool,
+    percents: bool,
     progress: bool,
     progress_direction: &str,
     font_size: f32,
@@ -352,6 +366,8 @@ impl SystemMon {
       let (glyph_label, inline_value): (Option<String>, Option<String>) = if vertical && pct_item {
         if labels {
           (Some(label.to_string()), Some(value.clone()))
+        } else if percents {
+          (Some(value), None)
         } else if !icons {
           (None, Some(value.clone()))
         } else {
@@ -359,6 +375,8 @@ impl SystemMon {
         }
       } else if labels {
         (Some(format!("{label} {value}")), None)
+      } else if percents {
+        (Some(value), None)
       } else if !icons {
         (Some(value.clone()), None)
       } else {
@@ -398,7 +416,17 @@ impl SystemMon {
 
       if let Some(label) = glyph_label {
         if vertical {
-          col.insert(0, vertical_text(&label, font_size, color));
+          col.insert(
+            0,
+            if percents {
+              text(label.trim_end_matches("%").to_string())
+                .size(font_size - 2.0)
+                .color(color)
+                .into()
+            } else {
+              vertical_text(&label, font_size, color)
+            },
+          );
         } else {
           col.insert(0, text(label).size(font_size).color(color).into());
         }

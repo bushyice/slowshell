@@ -1,14 +1,14 @@
 use std::{
   os::fd::AsRawFd,
   sync::{
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicU64, Ordering},
   },
 };
 
 use iced::{
   Alignment, Element, Event, mouse,
-  widget::{container, row, text},
+  widget::{container, row},
 };
 use nix::{
   fcntl::{FcntlArg, OFlag, fcntl},
@@ -31,29 +31,44 @@ use crate::{
   Component, ComponentContext, ComponentOptions, MenuConfig, popup_open_action, spaced_component,
 };
 
+struct GlobalPower {
+  shared: SharedPowerState,
+  rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<PowerCmd>>>,
+}
+
+static GLOBAL: OnceLock<GlobalPower> = OnceLock::new();
+
+fn global() -> &'static GlobalPower {
+  GLOBAL.get_or_init(|| {
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    GlobalPower {
+      shared: Arc::new(PowerState {
+        data: Mutex::new(Default::default()),
+        revision: AtomicU64::new(0),
+        cmd_tx,
+      }),
+      rx: Mutex::new(Some(cmd_rx)),
+    }
+  })
+}
+
 pub struct Power {
   signal_fd: Option<i32>,
   started: bool,
   shared: SharedPowerState,
   last_revision: u64,
   shared_in_store: bool,
-  cmd_rx: Option<tokio::sync::mpsc::UnboundedReceiver<PowerCmd>>,
 }
 
 impl Power {
   pub fn new() -> Self {
-    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     Self {
       signal_fd: None,
       started: false,
-      shared: Arc::new(PowerState {
-        data: Mutex::new(Default::default()),
-        revision: AtomicU64::new(0),
-        cmd_tx,
-      }),
+      shared: global().shared.clone(),
       last_revision: 0,
       shared_in_store: false,
-      cmd_rx: Some(cmd_rx),
     }
   }
 
@@ -64,7 +79,6 @@ impl Power {
       shared,
       last_revision: 0,
       shared_in_store: false,
-      cmd_rx: None,
     }
   }
 }
@@ -99,29 +113,29 @@ impl Component for Power {
     }
     self.started = true;
 
-    let notify = store.borrow::<FdHandle>().and_then(|handle| {
-      let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
-      fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
-
-      let raw = read_fd.as_raw_fd();
-      handle.watch_with_flags(
-        read_fd,
-        EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
-        ListenerAction::Signal {
-          name: POWER_CHANGED.into(),
-          fd: raw,
-        },
-      );
-      self.signal_fd = Some(raw);
-
-      Some(write_fd)
-    });
-
     let shared = self.shared.clone();
-    let cmd_rx = self.cmd_rx.take();
-    let interval = _options.and_then(|o| o.int("interval")).unwrap_or(10) as u64;
+    let cmd_rx = global().rx.lock().unwrap().take();
+
     if let Some(cmd_rx) = cmd_rx {
-      slowshell_services::power::run(shared, cmd_rx, notify, interval);
+      let notify = store.borrow::<FdHandle>().and_then(|handle| {
+        let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
+        fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
+
+        let raw = read_fd.as_raw_fd();
+        handle.watch_with_flags(
+          read_fd,
+          EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
+          ListenerAction::Signal {
+            name: POWER_CHANGED.into(),
+            fd: raw,
+          },
+        );
+        self.signal_fd = Some(raw);
+
+        Some(write_fd)
+      });
+
+      slowshell_services::power::run(shared, cmd_rx, notify);
     }
   }
 
@@ -199,20 +213,36 @@ impl Component for Power {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = config.style("component");
-    let theme = &config.theme;
+    let style = config.computed(&["component"]);
+    let theme = config.palette();
 
-    let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(13.0);
-    let color = style.color(theme, "color", theme.text);
-    let faded = style.color(theme, "color.faded", theme.subtext);
-    let sec_color = style.color(theme, "color.secondary", theme.yellow);
+    let icon_size = style.length("icon-size").unwrap_or(14.0) as u16;
+    let color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
+    let faded = style
+      .color("color-faded")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.subtext);
+    let sec_color = style
+      .color("color-secondary")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.yellow);
+    let primary = style
+      .color("color-primary")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.primary);
+    let danger = style
+      .color("color-danger")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.red);
 
     let opt_battery = options.and_then(|o| o.bool("battery"));
     let opt_brightness = options.and_then(|o| o.bool("brightness"));
@@ -232,8 +262,8 @@ impl Component for Power {
       let b_icon = Icon::new(brightness_icon(data.brightness_percent))
         .size(icon_size)
         .color(sec_color);
-      let b_label = text(format!("{}%", data.brightness_percent))
-        .size(font_size)
+      let b_label = config
+        .text(format!("{}%", data.brightness_percent), &["component"])
         .color(color);
       row_items.push(b_icon.into());
       row_items.push(b_label.into());
@@ -242,13 +272,9 @@ impl Component for Power {
     if show_battery {
       let icon_name = battery_icon(data.charging, data.percent);
       let icon_color = if data.charging {
-        style.color(theme, "color.primary", theme.primary)
+        primary
       } else if let Some(p) = data.percent {
-        if p <= 20 {
-          style.color(theme, "color.danger", theme.red)
-        } else {
-          color
-        }
+        if p <= 20 { danger } else { color }
       } else {
         color
       };
@@ -258,7 +284,7 @@ impl Component for Power {
         .percent
         .map(|p| format!("{p}%"))
         .unwrap_or_else(|| "AC".into());
-      let bat_label = text(pct_str).size(font_size).color(faded);
+      let bat_label = config.text(pct_str, &["component"]).color(faded);
 
       row_items.push(bat_icon.into());
       row_items.push(bat_label.into());
@@ -268,7 +294,7 @@ impl Component for Power {
 
     let content = container(
       row(row_items)
-        .spacing(style.number("spacing").unwrap_or(4.0))
+        .spacing(config.sizing(&["component"]).gap)
         .align_y(Alignment::Center)
         .wrap(),
     );
@@ -278,6 +304,8 @@ impl Component for Power {
       panel_name: None,
       position: ctx.position,
     };
+
+    let menu_suppressed = ctx.menu_suppressed;
 
     let action =
       move |event: &Event, layout: iced::advanced::layout::Layout<'_>, cursor: mouse::Cursor| {
@@ -298,7 +326,7 @@ impl Component for Power {
               payload: Some(PayloadBox::new(step)),
             }))
           }
-          Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+          Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if !menu_suppressed => {
             let point = cursor.position()?;
             Some(ItemMessage::Action(popup_open_action(&menu_config, point)))
           }

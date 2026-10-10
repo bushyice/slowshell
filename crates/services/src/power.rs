@@ -1,4 +1,4 @@
-use std::{fs, os::fd::OwnedFd, time::Duration};
+use std::{fs, os::fd::OwnedFd, sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
 use slowshell_commons::power::{PowerCmd, PowerData, PowerProfile, SharedPowerState};
@@ -10,11 +10,10 @@ pub fn run(
   shared: SharedPowerState,
   mut cmd_rx: tokio::sync::mpsc::UnboundedReceiver<PowerCmd>,
   notify: Option<OwnedFd>,
-  duration: u64,
 ) {
   crate::shared_runtime().spawn(async move {
     loop {
-      match power_loop(&shared, &mut cmd_rx, &notify, duration).await {
+      match power_loop(&shared, &mut cmd_rx, &notify).await {
         Ok(()) => break,
         Err(e) => {
           eprintln!("[power] service loop error: {e}");
@@ -29,7 +28,6 @@ async fn power_loop(
   shared: &SharedPowerState,
   cmd_rx: &mut tokio::sync::mpsc::UnboundedReceiver<PowerCmd>,
   notify: &Option<OwnedFd>,
-  poll_seconds: u64,
 ) -> miette::Result<()> {
   let system_conn = Connection::system().await.ok();
 
@@ -99,16 +97,8 @@ async fn power_loop(
   .await;
   bump(shared, notify);
 
-  let mut interval = tokio::time::interval(Duration::from_secs(poll_seconds.max(3)));
-
   loop {
     tokio::select! {
-      _ = interval.tick() => {
-        if refresh_all(shared, battery_proxy.as_ref(), power_profiles_proxy.as_ref()).await {
-          bump(shared, notify);
-        }
-      }
-
       Some(_) = async {
         if let Some(ref mut s) = battery_stream {
           s.next().await
@@ -332,7 +322,7 @@ async fn refresh_all(
     || lock.time_remaining != new_data.time_remaining
     || lock.power_w != new_data.power_w;
 
-  *lock = new_data;
+  *lock = Arc::new(new_data);
   changed
 }
 

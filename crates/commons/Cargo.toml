@@ -5,7 +5,9 @@ edition = "2024"
 
 [dependencies]
 slowshell-core = { path = "../core" }
+slowshell-config = { path = "../config" }
 tokio.workspace = true
 system-tray.workspace = true
 freedesktop-desktop-entry.workspace = true
 libc.workspace = true
+iced.workspace = true

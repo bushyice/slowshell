@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use iced::widget::space;
-use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer, NewLayerShellSettings};
+use iced_exwlshell::reexport::{
+  Anchor, KeyboardInteractivity, Layer, LayerSize, NewLayerShellSettings,
+};
 pub use slowshell_commons::{
   panels::PanelEdge,
   popups::{PopupPosition, PopupSettings},
@@ -9,6 +11,7 @@ pub use slowshell_commons::{
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
+  commands::CommandEntry,
   listeners::ListenerAction,
   types::{PayloadBox, PayloadBuilder, ToUstr},
 };
@@ -22,7 +25,95 @@ pub struct Popup {
   current: Option<PopupSettings>,
 }
 
-impl Popup {}
+impl Popup {
+  fn base_events() -> Vec<EventFilter> {
+    vec![
+      EventFilter::Payload("popup.toggle".into()),
+      EventFilter::Payload("popup.open".into()),
+      EventFilter::Named("popup.close".into()),
+      EventFilter::Payload("popup.close".into()),
+    ]
+  }
+
+  fn events_for(&self, store: &Store) -> Vec<EventFilter> {
+    let mut events = Self::base_events();
+
+    if let Some(current) = &self.current
+      && let Some(renderable) = store
+        .borrow::<Renderables>()
+        .and_then(|renderables| renderables.get(&current.content))
+    {
+      events.extend(renderable.events(store));
+    }
+
+    events
+  }
+
+  fn renderable<'a>(&self, store: &'a Store) -> Option<&'a dyn slowshell_widgets::Renderable> {
+    let current = self.current.as_ref()?;
+    store
+      .borrow::<Renderables>()
+      .and_then(|renderables| renderables.get(&current.content))
+      .map(|renderable| renderable.as_ref())
+  }
+
+  fn with_renderable<R>(
+    &self,
+    store: &mut Store,
+    f: impl FnOnce(&mut Box<dyn slowshell_widgets::Renderable>, &mut Store) -> R,
+  ) -> Option<R> {
+    let content = self.current.as_ref()?.content.clone();
+
+    let renderable = store
+      .borrow_mut::<Renderables>()
+      .and_then(|renderables| renderables.remove(&content))?;
+
+    let mut renderable = renderable;
+    let result = f(&mut renderable, store);
+
+    if let Some(renderables) = store.borrow_mut::<Renderables>() {
+      renderables.insert(content, renderable);
+    }
+
+    Some(result)
+  }
+
+  fn open(
+    &mut self,
+    config: &Config,
+    store: &mut Store,
+    settings: &PopupSettings,
+  ) -> miette::Result<ItemEffect> {
+    let available = store
+      .borrow::<Renderables>()
+      .is_some_and(|x| x.contains_key(&settings.content));
+
+    if available {
+      let switching = self
+        .current
+        .as_ref()
+        .is_some_and(|current| current.content != settings.content);
+
+      if switching {
+        self.close_current(store);
+      }
+
+      self.current = Some(settings.clone());
+
+      self.with_renderable(store, |renderable, store| {
+        renderable.initialize(config, store);
+      });
+
+      Ok(ItemEffect::ShowAndSubscribe(self.events_for(store)))
+    } else {
+      eprintln!(
+        "[popup] no renderable registered for content '{}'",
+        settings.content
+      );
+      Ok(ItemEffect::None)
+    }
+  }
+}
 
 impl DesktopItem for Popup {
   fn id(&self) -> &str {
@@ -30,11 +121,16 @@ impl DesktopItem for Popup {
   }
 
   fn layer(&self, _config: &Config, _monitor: &str) -> NewLayerShellSettings {
+    let layer = match &self.current {
+      Some(current) if current.insets => Layer::Top,
+      _ => Layer::Overlay,
+    };
+
     NewLayerShellSettings {
-      layer: Layer::Overlay,
+      layer,
       anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
       exclusive_zone: Some(-1),
-      size: None,
+      size: LayerSize::FILL,
       margin: Some((0, 0, 0, 0)),
       keyboard_interactivity: KeyboardInteractivity::OnDemand,
       events_transparent: false,
@@ -52,22 +148,40 @@ impl DesktopItem for Popup {
   }
 
   fn init_events(&self) -> Vec<EventFilter> {
-    vec![
-      EventFilter::Payload("popup.open".into()),
-      EventFilter::Payload("popup.close".into()),
-      EventFilter::Payload("network.password".into()),
-      EventFilter::Payload("popup.redraw".into()),
-      EventFilter::Named("component/network.changed".into()),
-    ]
+    Self::base_events()
   }
 
   fn update(
     &mut self,
-    _config: &Config,
+    config: &Config,
     store: &mut Store,
     event: &ListenerAction,
   ) -> miette::Result<ItemEffect> {
     match event {
+      ListenerAction::Payload { name, payload } if name.as_ref() == "popup.toggle" => {
+        let Some(payload) = payload else {
+          return Ok(ItemEffect::None);
+        };
+
+        let _ = payload.enforce::<PopupSettings>();
+
+        let settings = payload.as_this::<PopupSettings>();
+
+        let Some(settings) = settings else {
+          return Ok(ItemEffect::None);
+        };
+
+        if self
+          .current
+          .as_ref()
+          .is_some_and(|c| c.content == settings.content)
+        {
+          self.close_current(store);
+          Ok(ItemEffect::Hide)
+        } else {
+          self.open(config, store, settings)
+        }
+      }
       ListenerAction::Payload { name, payload } if name.as_ref() == "popup.open" => {
         let Some(payload) = payload else {
           return Ok(ItemEffect::None);
@@ -81,67 +195,54 @@ impl DesktopItem for Popup {
           return Ok(ItemEffect::None);
         };
 
-        let available = store
-          .borrow::<Renderables>()
-          .is_some_and(|x| x.contains_key(&settings.content));
-
-        if available {
-          self.current = Some(settings.clone());
-
-          Ok(ItemEffect::Show)
-        } else {
-          eprintln!(
-            "[popup] no renderable registered for content '{}'",
-            settings.content
-          );
-          Ok(ItemEffect::None)
-        }
+        self.open(config, store, settings)
       }
-      ListenerAction::Payload { name, payload } if name.as_ref() == "popup.close" => {
-        let _ = payload;
-        self.current = None;
+      ListenerAction::Named(name) | ListenerAction::Payload { name, .. }
+        if name.as_ref() == "popup.close" =>
+      {
+        self.close_current(store);
         Ok(ItemEffect::Hide)
       }
-      ListenerAction::Signal { name, .. }
-        if name.as_ref() == "component/network.changed" && self.current.is_some() =>
-      {
-        Ok(ItemEffect::Redraw)
-      }
-      ListenerAction::Payload { name, .. } if name.as_ref() == "popup.redraw" => {
-        if self.current.is_some() {
-          Ok(ItemEffect::Redraw)
-        } else {
-          Ok(ItemEffect::None)
+      other => {
+        if self.current.is_none() {
+          return Ok(ItemEffect::None);
         }
-      }
-      ListenerAction::Payload { name, payload } if name.as_ref() == "network.password" => {
-        if self.current.is_some() {
-          Ok(ItemEffect::Redraw)
-        } else {
-          let _ = payload;
-          Ok(ItemEffect::None)
+
+        if let Some(Some(effect)) = self.with_renderable(store, |renderable, store| {
+          renderable.on_event(config, store, other)
+        }) {
+          return Ok(self.finish_renderable_effect(store, effect));
         }
+
+        Ok(ItemEffect::None)
       }
-      _ => Ok(ItemEffect::None),
     }
   }
 
-  fn handle_message(&mut self, store: Option<&mut Store>, message: &ItemMessage) -> ItemEffect {
+  fn handle_message(&mut self, mut store: Option<&mut Store>, message: &ItemMessage) -> ItemEffect {
     match message {
       ItemMessage::Effect(_, effect) => match effect {
         ItemEffect::Hide | ItemEffect::Destroy => {
-          self.current = None;
+          if let Some(store) = store {
+            self.close_current(store);
+          } else {
+            self.current = None;
+          }
           ItemEffect::Hide
         }
-        ItemEffect::Custom([40, a, b, c]) if let Some(current) = &self.current => {
-          if let Some(effect) = store
-            .and_then(|s| s.borrow_mut::<Renderables>())
-            .and_then(|x| x.get_mut(&current.content))
-            .and_then(|r| r.handle_message(message))
-          {
-            return effect;
+        ItemEffect::Custom([tag, ..]) if *tag == 40 || *tag == 42 => {
+          let effect = match (&self.current, store.as_deref_mut()) {
+            (Some(current), Some(store)) => store
+              .borrow_mut::<Renderables>()
+              .and_then(|x| x.get_mut(&current.content))
+              .and_then(|r| r.handle_message(message)),
+            _ => None,
+          };
+
+          match (effect, store) {
+            (Some(effect), Some(store)) => self.finish_renderable_effect(store, effect),
+            _ => ItemEffect::None,
           }
-          ItemEffect::None
         }
         other => other.clone(),
       },
@@ -156,15 +257,32 @@ impl DesktopItem for Popup {
     id: iced::window::Id,
     _monitor: &str,
   ) -> iced::Element<'a, slowshell_desktop::ItemMessage> {
-    if let Some(current) = &self.current {
-      if let Some(renderable) = store
-        .borrow::<Renderables>()
-        .and_then(|x| x.get(&current.content))
-      {
-        return renderable.view(config, store, id, current).into();
-      }
+    if let Some(renderable) = self.renderable(store)
+      && let Some(current) = &self.current
+    {
+      return renderable.view(config, store, id, current).into();
     }
+
     space().into()
+  }
+}
+
+impl Popup {
+  fn finish_renderable_effect(&mut self, store: &mut Store, effect: ItemEffect) -> ItemEffect {
+    if matches!(
+      effect,
+      ItemEffect::Hide | ItemEffect::ReallyHide | ItemEffect::Destroy | ItemEffect::ReallyDestroy
+    ) {
+      self.close_current(store);
+    }
+    effect
+  }
+
+  fn close_current(&mut self, store: &mut Store) {
+    self.with_renderable(store, |renderable, store| {
+      renderable.close(store);
+    });
+    self.current = None;
   }
 }
 
@@ -192,14 +310,18 @@ fn settings_from_payload(payload: &HashMap<&str, &str>) -> Option<PopupSettings>
     position: (x, y),
     content: payload.get("content").map(|s| (*s).to_ustr())?,
     panel_edge,
+    insets: payload.get("insets").is_some(),
   })
 }
 
 slowshell_registry::register_resources!(
   payload: Unknown(PayloadBuilder {
-    commands: &["popup.open"],
+    commands: &["popup.open", "popup.toggle"],
     build: |_, args| {
       settings_from_payload(&args.as_map()).map(PayloadBox::new)
     }
-  }.into_boxed())
+  }.into_boxed()),
+  command: Command(
+    CommandEntry::payload("popup.close").title("Close Popup")
+  ),
 );

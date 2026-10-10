@@ -62,7 +62,7 @@
           fileset = lib.fileset.unions [
             (craneLib.fileset.commonCargoSources ./.)
             ./assets
-            (lib.fileset.fileFilter (file: file.hasExt "kdl") ./.)
+            (lib.fileset.fileFilter (file: file.hasExt "kdl" || file.hasExt "icss") ./.)
           ];
         };
 

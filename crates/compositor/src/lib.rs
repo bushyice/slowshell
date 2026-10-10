@@ -3,12 +3,10 @@ pub mod niri;
 #[cfg(feature = "sway")]
 pub mod sway;
 
-use futures_channel::mpsc::UnboundedSender;
 use slowshell_config::Config;
 use slowshell_core::{
   Monitor, Store, Window, Workspace,
-  listeners::Listeners,
-  message::Message,
+  listeners::{CompositorEvent, Listeners},
   types::{Ustr, Void},
 };
 use std::collections::HashMap;
@@ -38,12 +36,8 @@ pub trait Compositor: Send + Sync {
   }
   fn is_active(&self, config: &Config) -> bool;
 
-  fn update_state(
-    &mut self,
-    _store: Option<&Store>,
-    _tx: UnboundedSender<Message>,
-  ) -> miette::Result<Void> {
-    Ok(())
+  fn update_state(&mut self, _store: Option<&Store>) -> miette::Result<CompositorEvent> {
+    Ok(CompositorEvent::ALL)
   }
 }
 
@@ -65,7 +59,7 @@ impl CompositorRegistration {
 
 #[derive(Default)]
 pub struct CompositorStore {
-  inner: HashMap<Ustr, Box<dyn Compositor>>,
+  inner: Vec<(Ustr, Box<dyn Compositor>)>,
   active: Ustr,
 }
 
@@ -77,20 +71,23 @@ impl CompositorStore {
     #[cfg(feature = "niri")]
     comps
       .inner
-      .insert("niri".into(), Box::new(niri::NiriCompositor::new()));
+      .push(("niri".into(), Box::new(niri::NiriCompositor::new())));
 
     #[cfg(feature = "sway")]
     comps
       .inner
-      .insert("sway".into(), Box::new(sway::WlrCompositor::new()));
+      .push(("sway".into(), Box::new(sway::WlrCompositor::new())));
 
     comps
   }
 
   pub fn register(&mut self, registration: CompositorRegistration) {
-    self
-      .inner
-      .insert(registration.name, (registration.factory)());
+    let entry = (registration.name, (registration.factory)());
+    if let Some(existing) = self.inner.iter_mut().find(|(name, _)| *name == entry.0) {
+      existing.1 = entry.1;
+    } else {
+      self.inner.push(entry);
+    }
   }
 
   pub fn initialize(&mut self, config: &Config, listeners: &mut Listeners) -> miette::Result<Void> {
@@ -116,30 +113,81 @@ impl CompositorStore {
   pub fn state(&self) -> miette::Result<&CompositorState> {
     self
       .inner
-      .get(&self.active)
+      .iter()
+      .find(|(name, _)| *name == self.active)
       .ok_or_else(|| miette::miette!("Current compositor not found."))
-      .map(|c| c.state())
+      .map(|(_, compositor)| compositor.state())
   }
 
-  pub fn update_state(
-    &mut self,
-    store: Option<&Store>,
-    tx: UnboundedSender<Message>,
-  ) -> miette::Result<Void> {
-    let Some(compositor) = self.inner.get_mut(&self.active) else {
+  pub fn update_state(&mut self, store: Option<&Store>) -> miette::Result<CompositorEvent> {
+    let Some((_, compositor)) = self.inner.iter_mut().find(|(name, _)| *name == self.active) else {
       return Err(miette::miette!("Current compositor not found."));
     };
 
-    compositor.update_state(store, tx)?;
-
-    Ok(())
+    compositor.update_state(store)
   }
 
   pub fn send_cmd(&mut self, cmd: CompositorCommand) -> miette::Result<Void> {
-    let Some(compositor) = self.inner.get_mut(&self.active) else {
+    let Some((_, compositor)) = self.inner.iter_mut().find(|(name, _)| *name == self.active) else {
       return Err(miette::miette!("Current compositor not found."));
     };
 
     compositor.send_cmd(cmd)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  struct FakeCompositor {
+    state: CompositorState,
+    active: bool,
+  }
+
+  impl Compositor for FakeCompositor {
+    fn state(&self) -> &CompositorState {
+      &self.state
+    }
+
+    fn send_cmd(&mut self, _cmd: CompositorCommand) -> miette::Result<Void> {
+      Ok(Void)
+    }
+
+    fn is_active(&self, _config: &Config) -> bool {
+      self.active
+    }
+
+    fn update_state(&mut self, _store: Option<&Store>) -> miette::Result<CompositorEvent> {
+      Ok(CompositorEvent::ALL)
+    }
+  }
+
+  #[test]
+  fn plugin_compositors_are_registered_after_builtins() {
+    let mut store = CompositorStore::new();
+    let builtin_count = store.inner.len();
+
+    store.register(CompositorRegistration::new(
+      "plugin",
+      Box::new(|| {
+        Box::new(FakeCompositor {
+          state: CompositorState::default(),
+          active: true,
+        })
+      }),
+    ));
+
+    assert_eq!(store.inner.len(), builtin_count + 1);
+    assert_eq!(
+      store.inner.last().map(|(name, _)| name.to_string()),
+      Some("plugin".to_owned())
+    );
+    if builtin_count > 0 {
+      assert_ne!(
+        store.inner.first().map(|(name, _)| name.to_string()),
+        Some("plugin".to_owned())
+      );
+    }
   }
 }

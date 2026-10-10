@@ -6,8 +6,10 @@ edition = "2024"
 [dependencies]
 iced.workspace = true
 iced_anim.workspace = true
-iced_layershell.workspace = true
+iced_exwlshell.workspace = true
 slowshell-core = { path = "../core" }
 slowshell-commons = { path = "../commons" }
 slowshell-config = { path = "../config" }
+icss.workspace = true
 freedesktop-icons.workspace = true
+resvg = "0.45"

@@ -8,14 +8,15 @@ use std::{
 
 use iced::{
   Element, Event, mouse,
-  widget::{container, row, text},
+  widget::{container, row},
 };
 use nix::{
   fcntl::{FcntlArg, OFlag, fcntl},
   sys::epoll::EpollFlags,
 };
 use slowshell_commons::notifications::{
-  NOTIF_CHANGED, NotificationCmd, NotificationPayload, NotificationState, SharedNotificationState,
+  NOTIF_CHANGED, NotificationCmd, NotificationPayload, NotificationSettings, NotificationState,
+  SharedNotificationState,
 };
 use slowshell_config::Config;
 use slowshell_core::{
@@ -83,6 +84,10 @@ impl Component for Notifications {
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
     store.insert(self.shared.clone());
     self.shared_in_store = true;
+
+    if !NotificationSettings::from_store(store) {
+      return;
+    }
 
     if self.started {
       return;
@@ -179,7 +184,9 @@ impl Component for Notifications {
             .cmd_tx
             .send(NotificationCmd::DismissHistory(payload.id));
           let mut ui = self.shared.ui.lock().unwrap();
-          ui.replies.remove(&payload.id);
+          std::sync::Arc::make_mut(&mut ui)
+            .replies
+            .remove(&payload.id);
         }
         Ok(ItemEffect::Redraw)
       }
@@ -194,7 +201,7 @@ impl Component for Notifications {
             .cmd_tx
             .send(NotificationCmd::InvokeAction(id, key));
           let mut ui = self.shared.ui.lock().unwrap();
-          ui.replies.remove(&id);
+          std::sync::Arc::make_mut(&mut ui).replies.remove(&id);
         }
         Ok(ItemEffect::Redraw)
       }
@@ -209,7 +216,7 @@ impl Component for Notifications {
             .cmd_tx
             .send(NotificationCmd::InvokeActionWithText(id, key, text));
           let mut ui = self.shared.ui.lock().unwrap();
-          ui.replies.remove(&id);
+          std::sync::Arc::make_mut(&mut ui).replies.remove(&id);
         }
         Ok(ItemEffect::Redraw)
       }
@@ -219,7 +226,8 @@ impl Component for Notifications {
           .transform::<NotificationPayload>()
           .and_then(|p| Some((p.id, p.text.clone()?)))
         {
-          self.shared.ui.lock().unwrap().replies.insert(id, text);
+          let mut ui = self.shared.ui.lock().unwrap();
+          std::sync::Arc::make_mut(&mut ui).replies.insert(id, text);
         }
         Ok(ItemEffect::Redraw)
       }
@@ -229,17 +237,29 @@ impl Component for Notifications {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     _options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = config.style("component");
-    let theme = &config.theme;
+    let style = config.computed(&["component"]);
+    let theme = config.palette();
 
-    let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(11.0);
+    let icon_size = style.length("icon-size").unwrap_or(14.0) as u16;
+
+    let text_color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
+    let faded = style
+      .color("color-faded")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.subtext);
+    let primary = style
+      .color("color-primary")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.primary);
 
     let dnd = self.shared.dnd.load(Ordering::Relaxed);
     let unread = {
@@ -254,11 +274,11 @@ impl Component for Notifications {
     };
 
     let icon_color = if dnd {
-      style.color(theme, "color.faded", theme.subtext)
+      faded
     } else if unread > 0 {
-      style.color(theme, "color.primary", theme.primary)
+      primary
     } else {
-      style.color(theme, "color", theme.text)
+      text_color
     };
 
     let icon: Element<'a, ItemMessage> = Icon::new(icon_name)
@@ -270,8 +290,8 @@ impl Component for Notifications {
 
     if unread > 0 && !dnd {
       row_items.push(
-        text(format!("{unread}"))
-          .size(font_size)
+        config
+          .text(format!("{unread}"), &["component"])
           .color(icon_color)
           .into(),
       );
@@ -284,6 +304,8 @@ impl Component for Notifications {
       panel_name: None,
       position: ctx.position,
     };
+
+    let menu_suppressed = ctx.menu_suppressed;
 
     let action =
       move |event: &Event, layout: iced::advanced::layout::Layout<'_>, cursor: mouse::Cursor| {
@@ -298,7 +320,7 @@ impl Component for Notifications {
             name: "notifications.toggle_dnd".into(),
             payload: None,
           })),
-          Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+          Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if !menu_suppressed => {
             let point = cursor.position()?;
             Some(ItemMessage::Action(popup_open_action(&menu_config, point)))
           }

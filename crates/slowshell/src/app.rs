@@ -4,12 +4,13 @@ use std::task::{Context, Poll};
 
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use iced::{Element, Task};
-use iced_layershell::reexport::IcedId;
+use iced_exwlshell::redraw::Scope;
+use iced_exwlshell::reexport::IcedId;
 #[cfg(feature = "panels")]
 use slowshell_components::{ComponentRegistration, Components};
 use slowshell_compositor::{CompositorRegistration, CompositorStore};
 use slowshell_config::Config;
-use slowshell_core::listeners::{FdHandle, ListenerAction, Listeners};
+use slowshell_core::listeners::{CompositorEvent, FdHandle, ListenerAction, Listeners};
 use slowshell_core::types::{PayloadBuilder, PayloadBuilderRegistry};
 use slowshell_desktop::DesktopItems;
 use slowshell_registry::{GlobalRegistry, ResourceRegistration};
@@ -49,40 +50,8 @@ fn register_plugin_compositors(registry: &mut GlobalRegistry, compositors: &mut 
   }
 }
 
-fn register_builtin_commands() {
-  #[allow(unused_imports)]
-  use slowshell_core::commands::{CommandEntry, register_default};
-
-  #[cfg(any(feature = "panels", feature = "popups"))]
-  {
-    register_default(CommandEntry::payload("popup.close").title("Close Popup"));
-    register_default(CommandEntry::payload("panel.create").title("Create Panel"));
-  }
-
-  #[cfg(feature = "components-audio")]
-  for (name, title) in [
-    ("audio.toggle_mute", "Toggle Mute"),
-    ("audio.play_pause", "Play / Pause"),
-    ("audio.next", "Next Track"),
-    ("audio.previous", "Previous Track"),
-  ] {
-    register_default(CommandEntry::payload(name).title(title));
-  }
-
-  #[cfg(feature = "components-notifications")]
-  for (name, title) in [
-    ("notifications.toggle_dnd", "Toggle Do Not Disturb"),
-    ("notifications.clear_all", "Clear Notifications"),
-  ] {
-    register_default(CommandEntry::payload(name).title(title));
-  }
-
-  #[cfg(feature = "spotlight")]
-  register_default(CommandEntry::named("spotlight.close").title("Close Spotlight"));
-}
-
 pub struct App {
-  config: Config,
+  config: Box<Config>, // box: maybe?
   store: Store,
   items: DesktopItems,
   _tx: UnboundedSender<Message>,
@@ -95,6 +64,7 @@ impl App {
     config: Config,
     tx: UnboundedSender<Message>,
   ) -> (Self, Task<Message>) {
+    let config = Box::new(config);
     let mut store = Store::new();
 
     let mut listeners = Listeners::default();
@@ -161,8 +131,6 @@ impl App {
     store.insert(preg.clone());
     store.insert(IpcListener::new(ipc_tx, preg));
 
-    register_builtin_commands();
-
     store.insert(cs);
     store.insert(slowshell_core::ActionDispatcher(tx.clone()));
 
@@ -193,6 +161,13 @@ impl App {
 
     if let Some(cs) = store.borrow::<CompositorStore>() {
       if let Ok(state) = cs.state() {
+        slowshell_core::monitors::set(
+          state
+            .monitors
+            .values()
+            .map(|monitor| (monitor.name.clone(), monitor.width, monitor.height)),
+        );
+
         tasks.push(items.sync_monitors(&config, state.monitors.keys().cloned().collect()));
       }
     }
@@ -212,6 +187,8 @@ impl App {
     #[cfg(any(feature = "panels", feature = "popups"))]
     tasks.push(items.register(&config, Box::new(Popup::default())));
 
+    tasks.push(Task::done(Message::FdUpdate(ListenerAction::StartUp)));
+
     // end of registration
 
     std::thread::spawn(move || {
@@ -230,64 +207,23 @@ impl App {
     )
   }
 
+  pub fn take_dirty_windows(&mut self) -> Option<Vec<IcedId>> {
+    self.items.take_dirty_windows()
+  }
+
   pub fn update(&mut self, message: Message) -> Task<Message> {
     match message {
       Message::Tick => {
         self.items.intialize(&mut self.store);
         Task::none()
       }
-      Message::FdUpdate(action) => {
-        let mut tasks = Vec::new();
-
-        match &action {
-          slowshell_core::listeners::ListenerAction::UpdateCompositor => {
-            let Some(mut compositor) = self.store.remove::<CompositorStore>() else {
-              return Task::none();
-            };
-
-            match compositor.update_state(Some(&self.store), self._tx.clone()) {
-              Err(e) => eprintln!("Failed to update compositor state: {e}"),
-              Ok(_) => {}
-            }
-
-            self.store.insert(compositor);
-          }
-          slowshell_core::listeners::ListenerAction::Named(name)
-          | slowshell_core::listeners::ListenerAction::Signal { name, .. }
-          | slowshell_core::listeners::ListenerAction::Timer { name, .. }
-            if name.as_ref() == "config.reload" =>
-          {
-            if let Some(fd) = self.config_watcher_fd {
-              crate::watcher::drain_inotify_fd(fd);
-            }
-            match self.config.reload() {
-              Ok(()) => {
-                slowshell_core::animations::configure(
-                  self
-                    .config
-                    .typed::<slowshell_config::AnimationsConfig>()
-                    .map(|c| c.enabled),
-                  cfg!(feature = "animations"),
-                );
-                println!("[config] Reloaded configuration");
-              }
-              Err(e) => {
-                eprintln!("[config] Failed to reload configuration:\n{e:?}");
-              }
-            }
-          }
-          _ => {}
-        }
-
-        tasks.push(
-          self
-            .items
-            .check_deployables(&self.config, &mut self.store, &action),
-        );
-        tasks.push(self.items.update(&self.config, &mut self.store, &action));
-        self.items.intialize(&mut self.store);
-        Task::batch(tasks)
-      }
+      Message::FdUpdate(action) => self.handle_action(action),
+      Message::FdBatch(actions) => Task::batch(
+        actions
+          .into_iter()
+          .map(|action| self.handle_action(action))
+          .collect::<Vec<_>>(),
+      ),
       Message::Item(msg) => match msg {
         slowshell_core::message::ItemMessage::Action(
           slowshell_core::listeners::ListenerAction::FocusWorkspace(idx),
@@ -324,7 +260,7 @@ impl App {
         slowshell_core::message::ItemMessage::Action(action) => self.update_items(&action),
         slowshell_core::message::ItemMessage::EffectAction(id, effect, action) => Task::batch([
           self.items.handle_message(
-            &self.config,
+            &*self.config,
             &slowshell_core::message::ItemMessage::Effect(id, effect),
             Some(&mut self.store),
           ),
@@ -333,7 +269,7 @@ impl App {
         slowshell_core::message::ItemMessage::Task(task) => (task)(),
         other => self
           .items
-          .handle_message(&self.config, &other, Some(&mut self.store)),
+          .handle_message(&*self.config, &other, Some(&mut self.store)),
       },
       Message::UpdateMonitors => {
         let monitors = {
@@ -341,17 +277,96 @@ impl App {
             return Task::none();
           };
           match compositor.state() {
-            Ok(state) => state.monitors.keys().cloned().collect(),
+            Ok(state) => {
+              slowshell_core::monitors::set(
+                state
+                  .monitors
+                  .values()
+                  .map(|monitor| (monitor.name.clone(), monitor.width, monitor.height)),
+              );
+
+              state.monitors.keys().cloned().collect()
+            }
             Err(_) => return Task::none(),
           }
         };
-        let task = self.items.sync_monitors(&self.config, monitors);
+        let task = self.items.sync_monitors(&*self.config, monitors);
         self.items.intialize(&mut self.store);
         task
       }
       Message::Noop => Task::none(),
       _ => Task::none(),
     }
+  }
+
+  fn handle_action(&mut self, action: slowshell_core::listeners::ListenerAction) -> Task<Message> {
+    let mut tasks = Vec::new();
+
+    let action = match action {
+      slowshell_core::listeners::ListenerAction::UpdateCompositor(_) => {
+        let Some(mut compositor) = self.store.remove::<CompositorStore>() else {
+          return Task::none();
+        };
+
+        let changed = match compositor.update_state(Some(&self.store)) {
+          Ok(changed) => changed,
+          Err(e) => {
+            eprintln!("Failed to update compositor state: {e}");
+            CompositorEvent::ALL
+          }
+        };
+
+        self.store.insert(compositor);
+
+        if changed.is_empty() {
+          return Task::none();
+        }
+
+        if changed.contains(CompositorEvent::MONITORS) {
+          tasks.push(Task::done(Message::UpdateMonitors));
+        }
+
+        slowshell_core::listeners::ListenerAction::UpdateCompositor(changed)
+      }
+      other => {
+        if let slowshell_core::listeners::ListenerAction::Named(name)
+        | slowshell_core::listeners::ListenerAction::Signal { name, .. }
+        | slowshell_core::listeners::ListenerAction::Timer { name, .. } = &other
+          && name.as_ref() == "config.reload"
+        {
+          if let Some(fd) = self.config_watcher_fd {
+            crate::watcher::drain_inotify_fd(fd);
+          }
+          match self.config.reload() {
+            Ok(()) => {
+              self.items.mark_all_dirty();
+              slowshell_core::animations::configure(
+                self
+                  .config
+                  .typed::<slowshell_config::AnimationsConfig>()
+                  .map(|c| c.enabled),
+                cfg!(feature = "animations"),
+              );
+              println!("[config] Reloaded configuration");
+            }
+            Err(e) => {
+              eprintln!("[config] Failed to reload configuration:\n{e:?}");
+            }
+          }
+        }
+
+        other
+      }
+    };
+
+    tasks.push(
+      self
+        .items
+        .check_deployables(&*self.config, &mut self.store, &action),
+    );
+    tasks.push(self.items.update(&*self.config, &mut self.store, &action));
+    self.items.intialize(&mut self.store);
+    Task::batch(tasks)
   }
 
   pub fn subscription(&self) -> iced::Subscription<Message> {
@@ -373,12 +388,34 @@ impl App {
     let mut tasks = vec![
       self
         .items
-        .check_deployables(&self.config, &mut self.store, action),
+        .check_deployables(&*self.config, &mut self.store, action),
     ];
-    tasks.push(self.items.update(&self.config, &mut self.store, action));
+    tasks.push(self.items.update(&*self.config, &mut self.store, action));
     self.items.intialize(&mut self.store);
 
     Task::batch(tasks)
+  }
+}
+
+pub fn redraw_scope(message: &Message) -> Scope {
+  use slowshell_core::message::{ItemEffect, ItemMessage};
+
+  match message {
+    Message::Noop => Scope::None,
+    Message::Item(ItemMessage::Noop) => Scope::None,
+    Message::Item(ItemMessage::Effect(_, ItemEffect::None)) => Scope::None,
+    Message::Item(ItemMessage::Action(
+      ListenerAction::FocusWorkspace(_) | ListenerAction::FocusWindow(_),
+    )) => Scope::None,
+    Message::LayoutChange { id, .. }
+    | Message::LayerChange { id, .. }
+    | Message::MarginChange { id, .. }
+    | Message::BlurOptionChange { id, .. }
+    | Message::ExclusiveZoneChange { id, .. }
+    | Message::KeyboardInteractivityChange { id, .. }
+    | Message::SetInputRegion { id, .. }
+    | Message::RemoveWindow(id) => Scope::Window(*id),
+    _ => Scope::All,
   }
 }
 

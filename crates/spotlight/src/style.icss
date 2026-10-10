@@ -1,0 +1,73 @@
+.spotlight {
+  padding-v: 14px;
+  padding-h: 14px;
+  gap: 8px;
+}
+
+.spotlight.search {
+  background-color: var(--mantle);
+  border-radius: 12px;
+  border-width: 1px;
+  border-color: var(--overlay-a30);
+}
+
+.spotlight.result {
+  background-color: var(--mantle);
+  border-radius: 12px;
+  border-width: 0px;
+  border-color: var(--overlay-a15);
+}
+
+.spotlight.result.selected {
+  background-color: var(--primary);
+}
+
+.spotlight.row {
+  padding-v: 10px;
+  padding-h: 10px;
+}
+
+.spotlight.tag {
+  background-color: var(--crust-a60);
+  border-radius: 4px;
+  border-width: 0px;
+  border-color: var(--overlay-a15);
+}
+
+.spotlight.action-chip {
+  background-color: var(--crust-a60);
+  border-radius: 4px;
+  border-width: 0px;
+  border-color: var(--overlay-a15);
+}
+
+.spotlight.single {
+  padding-v: 18px;
+  padding-h: 18px;
+  background-color: var(--mantle);
+  border-radius: 12px;
+  border-width: 1px;
+  border-color: var(--overlay-a30);
+}
+
+.spotlight.backdrop {
+  background-color: var(--crust-a60);
+}
+
+.spotlight.text-search { color: var(--text); font-size: 22px; }
+.spotlight.text-placeholder { color: var(--overlay); font-size: 22px; }
+.spotlight.text-result { color: var(--text); font-size: 15px; }
+.spotlight.text-result-selected { color: var(--base); font-size: 15px; }
+.spotlight.text-subtitle { color: var(--subtext); font-size: 11px; }
+.spotlight.text-subtitle-selected { color: var(--mantle); font-size: 11px; }
+.spotlight.text-tile { color: var(--text); font-size: 12px; }
+.spotlight.text-tile-selected { color: var(--base); font-size: 12px; }
+.spotlight.text-tag { color: var(--subtext); font-size: 10px; }
+.spotlight.text-action { color: var(--primary); font-size: 10px; }
+.spotlight.text-tile-action { color: var(--base); font-size: 10px; }
+.spotlight.text-hint { color: var(--overlay); font-size: 11px; }
+.spotlight.text-single { color: var(--text); font-size: 32px; }
+.spotlight.text-single-subtitle { color: var(--subtext); font-size: 14px; }
+.spotlight.text-single-hint { color: var(--overlay); font-size: 11px; }
+
+.spotlight.accent { color: var(--primary); }

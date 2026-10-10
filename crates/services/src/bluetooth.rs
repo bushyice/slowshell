@@ -1,4 +1,9 @@
-use std::{collections::HashMap, os::fd::OwnedFd, sync::atomic::Ordering, time::Duration};
+use std::{
+  collections::HashMap,
+  os::fd::OwnedFd,
+  sync::{Arc, atomic::Ordering},
+  time::Duration,
+};
 
 use futures_util::StreamExt;
 use slowshell_commons::bluetooth::{BluetoothCmd, BluetoothDevice, SharedBluetoothState};
@@ -212,7 +217,8 @@ async fn refresh_all(
     .discovering
     .store(adapter_discovering, Ordering::Relaxed);
 
-  let mut state = shared.state.lock().unwrap();
+  let mut guard = shared.state.lock().unwrap();
+  let state = Arc::make_mut(&mut guard);
   state.adapter_name = found_adapter;
   state.devices = devices;
 

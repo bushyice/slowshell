@@ -1,7 +1,7 @@
 use std::{
   os::fd::AsRawFd,
   sync::{
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
     atomic::{AtomicBool, AtomicU64, Ordering},
   },
 };
@@ -29,21 +29,18 @@ use crate::{
   Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger, vertical_text,
 };
 
-pub struct Network {
-  signal_fd: Option<i32>,
-  started: bool,
+struct GlobalNetwork {
   shared: SharedNetworkState,
-  last_revision: u64,
-  shared_in_store: bool,
-  cmd_rx: Option<tokio::sync::mpsc::UnboundedReceiver<NetCmd>>,
+  rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<NetCmd>>>,
 }
 
-impl Network {
-  pub fn new() -> Self {
+static GLOBAL: OnceLock<GlobalNetwork> = OnceLock::new();
+
+fn global() -> &'static GlobalNetwork {
+  GLOBAL.get_or_init(|| {
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-    Self {
-      signal_fd: None,
-      started: false,
+
+    GlobalNetwork {
       shared: Arc::new(NetworkState {
         wifi_enabled: AtomicBool::new(true),
         wifi_hardware_enabled: AtomicBool::new(true),
@@ -55,9 +52,27 @@ impl Network {
         revision: AtomicU64::new(0),
         cmd_tx,
       }),
+      rx: Mutex::new(Some(cmd_rx)),
+    }
+  })
+}
+
+pub struct Network {
+  signal_fd: Option<i32>,
+  started: bool,
+  shared: SharedNetworkState,
+  last_revision: u64,
+  shared_in_store: bool,
+}
+
+impl Network {
+  pub fn new() -> Self {
+    Self {
+      signal_fd: None,
+      started: false,
+      shared: global().shared.clone(),
       last_revision: 0,
       shared_in_store: false,
-      cmd_rx: Some(cmd_rx),
     }
   }
 }
@@ -103,27 +118,28 @@ impl Component for Network {
     }
     self.started = true;
 
-    let notify = store.borrow::<FdHandle>().and_then(|handle| {
-      let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
-      fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
-
-      let raw = read_fd.as_raw_fd();
-      handle.watch_with_flags(
-        read_fd,
-        EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
-        ListenerAction::Signal {
-          name: NET_CHANGED.into(),
-          fd: raw,
-        },
-      );
-      self.signal_fd = Some(raw);
-
-      Some(write_fd)
-    });
-
     let shared = self.shared.clone();
-    let cmd_rx = self.cmd_rx.take();
+    let cmd_rx = global().rx.lock().unwrap().take();
+
     if let Some(cmd_rx) = cmd_rx {
+      let notify = store.borrow::<FdHandle>().and_then(|handle| {
+        let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
+        fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
+
+        let raw = read_fd.as_raw_fd();
+        handle.watch_with_flags(
+          read_fd,
+          EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
+          ListenerAction::Signal {
+            name: NET_CHANGED.into(),
+            fd: raw,
+          },
+        );
+        self.signal_fd = Some(raw);
+
+        Some(write_fd)
+      });
+
       slowshell_services::network::run(shared, cmd_rx, notify);
     }
   }
@@ -227,44 +243,37 @@ impl Component for Network {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    _store: &Store,
+    &'a self,
+    config: &'a Config,
+    _store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage> {
-    let style = ctx.resolve_style(config);
-    let theme = &config.theme;
-    let icon_size = style.number("icon.size").unwrap_or(14.0) as u16;
-    let font_size = style.number("font.size").unwrap_or(12.0);
+    let style = config.computed(ctx.classes());
+    let theme = config.palette();
+    let icon_size = style.length("icon-size").unwrap_or(14.0) as u16;
+    let font_size = config.sizing(ctx.classes()).font_size;
+
+    let color = style
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.text);
+    let offline = style
+      .color("color-offline")
+      .map(|c| c.to_iced())
+      .unwrap_or(theme.subtext);
 
     let inner = self.shared.state.lock().unwrap().clone();
     let wifi_enabled = self.shared.wifi_enabled.load(Ordering::Relaxed);
 
     let (icon, color) = if let Some(wifi) = &inner.wifi_connected {
-      (
-        signal_icon(wifi.signal),
-        style.color(theme, "color", theme.text),
-      )
+      (signal_icon(wifi.signal), color)
     } else if inner.ethernet.as_ref().is_some_and(|e| e.connected) {
-      (
-        "network-wired-symbolic",
-        style.color(theme, "color", theme.text),
-      )
+      ("network-wired-symbolic", color)
     } else if !wifi_enabled {
-      (
-        "network-wireless-disabled-symbolic",
-        style
-          .get_color(theme, "color.offline")
-          .unwrap_or(theme.subtext),
-      )
+      ("network-wireless-disabled-symbolic", offline)
     } else {
-      (
-        "network-wireless-offline-symbolic",
-        style
-          .get_color(theme, "color.offline")
-          .unwrap_or(theme.subtext),
-      )
+      ("network-wireless-offline-symbolic", offline)
     };
 
     let show_icon = options.and_then(|o| o.bool("icon")).unwrap_or(true);
@@ -303,12 +312,7 @@ impl Component for Network {
         items.push(icon);
       }
       if show_ssid && let Some(label) = label {
-        items.push(
-          iced::widget::text(label)
-            .size(font_size)
-            .color(color)
-            .into(),
-        );
+        items.push(config.text(label, ctx.classes()).color(color).into());
       }
       if items.is_empty() {
         container(iced::widget::Space::new()).into()

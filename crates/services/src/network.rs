@@ -844,11 +844,11 @@ fn publish(
   }
 
   let mut guard = shared.state.lock().unwrap();
+  let guard = std::sync::Arc::make_mut(&mut guard);
   guard.wifi_connected = wifi_connected;
   guard.ethernet = ethernet;
   guard.networks = networks;
   guard.connected = connected;
-  drop(guard);
 
   bump_notify(shared, notify);
 }

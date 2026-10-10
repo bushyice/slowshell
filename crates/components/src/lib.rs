@@ -30,11 +30,14 @@ use slowshell_commons::{
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
+  commands::CommandEntry,
   listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
   types::{PayloadBox, ToUstr, Ustr},
 };
 use slowshell_widgets::{EventWrapper, HoverBackground};
+
+pub use slowshell_widgets::ComponentOptions;
 
 pub trait Component: Send {
   fn events(&self) -> Vec<EventFilter> {
@@ -66,74 +69,29 @@ pub trait Component: Send {
   }
 
   fn view<'a>(
-    &self,
-    config: &Config,
-    store: &Store,
+    &'a self,
+    config: &'a Config,
+    store: &'a Store,
     ctx: &ComponentContext,
     options: Option<&ComponentOptions>,
   ) -> Element<'a, ItemMessage>;
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct ComponentOptions {
-  inner: HashMap<Ustr, slowshell_config::Value>,
-}
-
-impl ComponentOptions {
-  pub fn number(&self, id: impl Into<Ustr>) -> Option<f32> {
-    self
-      .inner
-      .get(&id.into())
-      .and_then(|v| v.as_float().map(|x| x as f32))
-  }
-
-  pub fn int(&self, id: impl Into<Ustr>) -> Option<i32> {
-    self
-      .inner
-      .get(&id.into())
-      .and_then(|v| v.as_int().map(|x| x as i32))
-  }
-
-  pub fn str(&self, id: impl Into<Ustr>) -> Option<&str> {
-    self.inner.get(&id.into()).and_then(|v| v.as_str())
-  }
-
-  pub fn bool(&self, id: impl Into<Ustr>) -> Option<bool> {
-    self.inner.get(&id.into()).and_then(|v| v.as_bool())
-  }
-
-  pub fn table(&self, id: impl Into<Ustr>) -> Option<&[(String, slowshell_config::Value)]> {
-    self.inner.get(&id.into()).and_then(|v| v.as_table())
-  }
-
-  pub fn strings(&self, id: impl Into<Ustr>) -> Option<Vec<&str>> {
-    self
-      .inner
-      .get(&id.into())
-      .and_then(|v| v.as_array())
-      .map(|array| array.iter().filter_map(|v| v.as_str()).collect())
-  }
-}
-
-impl From<HashMap<Ustr, slowshell_config::Value>> for ComponentOptions {
-  fn from(value: HashMap<Ustr, slowshell_config::Value>) -> Self {
-    ComponentOptions { inner: value }
-  }
-}
-
 pub struct ComponentContext<'a> {
   pub panel_name: &'a str,
   pub position: PanelEdge,
   pub orientation: PanelOrientation,
   pub monitor: &'a str,
+  pub menu_suppressed: bool,
 }
 
 impl<'a> ComponentContext<'a> {
-  pub fn resolve_style(&self, config: &slowshell_config::Config) -> slowshell_config::style::Style {
+  pub fn classes(&self) -> &'static [&'static str] {
     if self.orientation == PanelOrientation::Horizontal {
-      config.style("component")
+      &["component"]
     } else {
-      config.style_any(&["component.vertical", "component"])
+      &["component", "vertical"]
     }
   }
 }
@@ -162,7 +120,7 @@ pub struct MenuConfig {
 
 pub fn popup_open_action(config: &MenuConfig, cursor: iced::Point) -> ListenerAction {
   ListenerAction::Payload {
-    name: "popup.open".to_ustr(),
+    name: "popup.toggle".to_ustr(),
     payload: Some(PayloadBox::new(PopupSettings {
       content: config.content.clone(),
       panel_edge: Some(config.position),
@@ -183,6 +141,7 @@ pub fn popup_open_action(config: &MenuConfig, cursor: iced::Point) -> ListenerAc
         ),
         PanelEdge::Right { .. } => (PopupPosition::Fixed(0.0), PopupPosition::Fixed(cursor.y)),
       },
+      insets: true,
     })),
   }
 }
@@ -205,39 +164,49 @@ pub fn fill_cross<'a, Message: 'a>(
 }
 
 pub fn spaced_component<'a>(
-  config: &Config,
+  config: &'a Config,
   ctx: &ComponentContext,
   content: Element<'a, ItemMessage>,
   hoverable: bool,
 ) -> Element<'a, ItemMessage> {
-  let style = config.style("item");
-  let spacing = style.number("spacing").unwrap_or(4.0);
-  let [y, x] = style.padding([4.0, 8.0]);
+  let item = config.sizing(&["item"]);
+  let spacing = item.gap;
   let padding = if ctx.orientation == PanelOrientation::Vertical {
-    [spacing / 2., x]
+    [spacing / 2., item.pad_h]
   } else {
-    [y, spacing / 2.]
+    [item.pad_v, spacing / 2.]
   };
 
   let body = iced::widget::container(fill_cross(content, ctx.orientation)).padding(padding);
 
-  if !hoverable {
+  if !hoverable || ctx.menu_suppressed {
     return body.into();
   }
 
-  let component_style = ctx.resolve_style(config);
-  let radius = component_style.number("hover.radius").unwrap_or(4.0);
+  hover_background(config, ctx, body.into())
+}
 
-  match component_style.get_color(&config.theme, "hover.background") {
-    Some(color) => HoverBackground::new(body, color, radius).into(),
-    None => body.into(),
+pub fn hover_background<'a>(
+  config: &'a Config,
+  ctx: &ComponentContext,
+  content: Element<'a, ItemMessage>,
+) -> Element<'a, ItemMessage> {
+  let component_style = config.computed(ctx.classes());
+  let radius = component_style.length("hover-radius").unwrap_or(4.0);
+
+  match component_style
+    .color("hover-background")
+    .map(|c| c.to_iced())
+  {
+    Some(color) => HoverBackground::new(content, color, radius).into(),
+    None => content,
   }
 }
 
 pub fn menu_trigger<'a>(
   content: Element<'a, ItemMessage>,
   config: MenuConfig,
-  app_config: &Config,
+  app_config: &'a Config,
   ctx: &ComponentContext,
   wrapper: bool,
 ) -> Element<'a, ItemMessage> {
@@ -246,6 +215,10 @@ pub fn menu_trigger<'a>(
   } else {
     fill_cross(content, ctx.orientation)
   };
+
+  if ctx.menu_suppressed {
+    return body;
+  }
 
   let action =
     move |event: &Event, layout: iced::advanced::layout::Layout<'_>, cursor: mouse::Cursor| {
@@ -353,64 +326,23 @@ pub fn register_all(components: &mut Components) {
 }
 
 slowshell_registry::register_resources!(
-  component: Style(
-    slowshell_config::style! {
-      "color" => "text",
-      "color.faded" => "subtext",
-      "color.invert" => "base",
-      "color.primary" => "primary",
-      "font.size" => 12,
-      "icon.size" => 14,
-      "spacing" => 5,
-      "padding.x" => 9,
-      "padding.y" => 5,
-      "hover.background" => "primary",
-      "hover.background.opacity" => 0.18,
-      "hover.radius" => 4,
-    }
-  ),
+  component: Style(include_str!("./styles/components.icss").to_string()),
   app: Custom(|store| {
     slowshell_commons::desktop::DesktopEntries::initialize_unless(store);
   }),
+  audio: Command(
+    CommandEntry::payload("audio.toggle_mute").title("Toggle Mute"),
+  ),
+  audio: Command(
+    CommandEntry::payload("audio.play_pause").title("Play / Pause"),
+  ),
+  audio: Command(
+    CommandEntry::payload("audio.next").title("Next Track"),
+  ),
+  audio: Command(
+    CommandEntry::payload("audio.previous").title("Previous Track"),
+  ),
 );
-
-pub fn register_vertical_style() {
-  slowshell_config::style::new_default_style(
-    "component.vertical".into(),
-    slowshell_config::style! {
-      "color" => "text",
-      "color.faded" => "subtext",
-      "color.invert" => "base",
-      "color.primary" => "primary",
-      "font.size" => 15,
-      "icon.size" => 18,
-      "spacing" => 8,
-      "padding.x" => 5,
-      "padding.y" => 4,
-      "hover.background" => "primary",
-      "hover.background.opacity" => 0.18,
-      "hover.radius" => 4,
-    },
-  );
-}
-
-pub fn register_windows_style() {
-  slowshell_config::style::new_default_style(
-    "windows".into(),
-    slowshell_config::style! {
-      "color" => "text",
-      "color.faded" => "subtext",
-      "color.active" => "primary",
-      "background.active" => "primary/0.18",
-      "font.size" => 11,
-      "icon.size" => 22,
-      "spacing" => 3,
-      "radius" => 6,
-      "padding.x" => 4,
-      "padding.y" => 2,
-    },
-  );
-}
 
 #[cfg(test)]
 mod tests {
@@ -425,7 +357,7 @@ mod tests {
     };
     let action = popup_open_action(&menu_config, iced::Point::ORIGIN);
     if let ListenerAction::Payload { name, payload } = action {
-      assert_eq!(name.as_ref(), "popup.open");
+      assert_eq!(name.as_ref(), "popup.toggle");
       let payload = payload.expect("payload should be Some");
       println!(
         "target TypeId: {:?}",
@@ -440,7 +372,9 @@ mod tests {
         settings.is_some(),
         "PopupSettings should downcast successfully"
       );
-      assert_eq!(settings.unwrap().content.as_ref(), "menus/sound");
+      let settings = settings.unwrap();
+      assert!(settings.insets);
+      assert_eq!(settings.content.as_ref(), "menus/sound");
     } else {
       panic!("Expected ListenerAction::Payload");
     }

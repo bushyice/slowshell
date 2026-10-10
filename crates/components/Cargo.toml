@@ -23,8 +23,9 @@ slowshell-services = { path = "../services", default-features = false }
 
 chrono.workspace = true
 miette.workspace = true
+icss.workspace = true
 iced.workspace = true
-iced_layershell.workspace = true
+iced_exwlshell.workspace = true
 nix.workspace = true
 tokio.workspace = true
 serde.workspace = true

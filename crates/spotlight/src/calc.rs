@@ -305,6 +305,36 @@ pub fn eval(input: &str) -> Result<f64, ()> {
     return Err(());
   }
 
+  eval_inner(trimmed)
+}
+
+pub fn try_eval(input: &str) -> Option<f64> {
+  let trimmed = input.trim();
+  if trimmed.is_empty() {
+    return None;
+  }
+
+  let has_operator = trimmed
+    .chars()
+    .any(|c| matches!(c, '+' | '-' | '*' | '/' | '%' | '^'));
+  let has_func = trimmed.contains("sqrt")
+    || trimmed.contains("cbrt")
+    || trimmed.contains("abs")
+    || trimmed.contains("sin")
+    || trimmed.contains("cos")
+    || trimmed.contains("tan")
+    || trimmed.contains("log")
+    || trimmed.contains("ln")
+    || trimmed.contains("pi");
+
+  if !has_operator && !has_func {
+    return None;
+  }
+
+  eval_inner(trimmed).ok()
+}
+
+fn eval_inner(trimmed: &str) -> Result<f64, ()> {
   let mut lexer = Lexer::new(trimmed);
   let tokens = lexer.tokenize()?;
   if tokens.is_empty() {
@@ -323,32 +353,6 @@ pub fn eval(input: &str) -> Result<f64, ()> {
   }
 
   Ok(result)
-}
-
-pub fn is_math_expression(input: &str) -> bool {
-  let trimmed = input.trim();
-  if trimmed.is_empty() {
-    return false;
-  }
-
-  let has_operator = trimmed
-    .chars()
-    .any(|c| matches!(c, '+' | '-' | '*' | '/' | '%' | '^'));
-  let has_func = trimmed.contains("sqrt")
-    || trimmed.contains("cbrt")
-    || trimmed.contains("abs")
-    || trimmed.contains("sin")
-    || trimmed.contains("cos")
-    || trimmed.contains("tan")
-    || trimmed.contains("log")
-    || trimmed.contains("ln")
-    || trimmed.contains("pi");
-
-  if !has_operator && !has_func {
-    return false;
-  }
-
-  eval(trimmed).is_ok()
 }
 
 pub fn format_result(val: f64) -> String {
@@ -383,11 +387,11 @@ mod tests {
 
   #[test]
   fn trigger_check() {
-    assert!(is_math_expression("2 + 2"));
-    assert!(is_math_expression("sqrt(16)"));
-    assert!(is_math_expression("10 * 3.5"));
-    assert!(!is_math_expression("firefox"));
-    assert!(!is_math_expression("2"));
-    assert!(!is_math_expression("2 +"));
+    assert!(try_eval("2 + 2").is_some());
+    assert!(try_eval("sqrt(16)").is_some());
+    assert!(try_eval("10 * 3.5").is_some());
+    assert!(try_eval("firefox").is_none());
+    assert!(try_eval("2").is_none());
+    assert!(try_eval("2 +").is_none());
   }
 }

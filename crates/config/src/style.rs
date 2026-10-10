@@ -1,266 +1,24 @@
-use std::{collections::HashMap, sync::LazyLock};
+use std::sync::LazyLock;
 
 use iced::Color;
-use iced::widget::container;
-use slowshell_core::types::Ustr;
 
-#[derive(Debug, Clone)]
-pub enum ColorValue {
-  Transparent,
-  Theme(String),
-  Color(String), // don't use
+pub(crate) static DEFAULT_STYLES: LazyLock<std::sync::Arc<std::sync::Mutex<Vec<String>>>> =
+  LazyLock::new(|| std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
+
+pub fn new_default_style(css: impl Into<String>) {
+  DEFAULT_STYLES.lock().unwrap().push(css.into());
 }
 
-#[derive(Debug, Clone)]
-pub enum StyleValue {
-  String(String),
-  Integer(i32),
-  Float(f32),
-  Boolean(bool),
-  Color(ColorValue),
-}
-
-impl StyleValue {
-  pub fn as_bool(&self) -> bool {
-    match self {
-      Self::Boolean(b) => *b,
-      Self::String(s) => s == "true",
-      _ => false,
+pub fn default_css() -> String {
+  let styles = DEFAULT_STYLES.lock().unwrap();
+  let mut css = String::new();
+  for fragment in styles.iter() {
+    css.push_str(fragment);
+    if !css.ends_with('\n') {
+      css.push('\n');
     }
   }
-
-  pub fn as_str(&self) -> &str {
-    match self {
-      Self::String(s) => s,
-      _ => "",
-    }
-  }
-
-  pub fn as_int(&self) -> i32 {
-    match self {
-      Self::Integer(i) => *i,
-      Self::Float(f) => *f as i32,
-      _ => 0,
-    }
-  }
-
-  pub fn as_float(&self) -> f32 {
-    match self {
-      Self::Integer(i) => *i as f32,
-      Self::Float(f) => *f,
-      _ => 0.,
-    }
-  }
-}
-
-impl From<i32> for StyleValue {
-  fn from(value: i32) -> Self {
-    StyleValue::Integer(value)
-  }
-}
-
-impl From<f32> for StyleValue {
-  fn from(value: f32) -> Self {
-    StyleValue::Float(value)
-  }
-}
-
-impl From<bool> for StyleValue {
-  fn from(value: bool) -> Self {
-    StyleValue::Boolean(value)
-  }
-}
-
-impl From<&str> for StyleValue {
-  fn from(value: &str) -> Self {
-    StyleValue::from(value.to_string())
-  }
-}
-
-impl From<String> for StyleValue {
-  fn from(value: String) -> Self {
-    if value.eq_ignore_ascii_case("transparent") {
-      return StyleValue::Color(ColorValue::Transparent);
-    }
-    if value.starts_with('#') && parse_hex(&value).is_some() {
-      return StyleValue::Color(ColorValue::Color(value));
-    }
-    StyleValue::String(value)
-  }
-}
-
-impl From<ColorValue> for StyleValue {
-  fn from(value: ColorValue) -> Self {
-    StyleValue::Color(value)
-  }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct Style {
-  map: HashMap<String, StyleValue>,
-}
-
-impl Style {
-  pub fn insert(&mut self, key: impl Into<String>, value: impl Into<StyleValue>) {
-    self.map.insert(key.into(), value.into());
-  }
-
-  pub fn get(&self, key: &str) -> Option<&StyleValue> {
-    self.map.get(key)
-  }
-
-  pub fn entries(&self) -> impl Iterator<Item = (&str, &StyleValue)> {
-    self.map.iter().map(|(key, value)| (key.as_str(), value))
-  }
-
-  pub fn extend(&mut self, other: Style) {
-    self.map.extend(other.map);
-  }
-
-  pub fn is_empty(&self) -> bool {
-    self.map.is_empty()
-  }
-
-  pub fn number(&self, key: &str) -> Option<f32> {
-    match self.get(key)? {
-      StyleValue::Integer(i) => Some(*i as f32),
-      StyleValue::Float(f) => Some(*f),
-      StyleValue::String(s) => s.parse().ok(),
-      _ => None,
-    }
-  }
-
-  pub fn bool(&self, key: &str) -> bool {
-    self.get(key).map(StyleValue::as_bool).unwrap_or(false)
-  }
-
-  pub fn get_color(&self, theme: &Theme, key: &str) -> Option<Color> {
-    let color = match self.get(key)? {
-      StyleValue::Color(ColorValue::Transparent) => Color::TRANSPARENT,
-      StyleValue::Color(ColorValue::Theme(name)) => theme.color(name)?,
-      StyleValue::Color(ColorValue::Color(hex)) => parse_hex(hex)?,
-      StyleValue::String(name) => theme.color(name)?,
-      _ => return None,
-    };
-
-    Some(apply_opacity(color, self.number(&format!("{key}.opacity"))))
-  }
-
-  pub fn color(&self, theme: &Theme, key: &str, default: Color) -> Color {
-    self.get_color(theme, key).unwrap_or(default)
-  }
-
-  pub fn padding(&self, default: impl Into<[f32; 2]>) -> [f32; 2] {
-    if let Some(x) = self.number("padding.x") {
-      let y = self.number("padding.y").unwrap_or(x);
-      return [y, x];
-    }
-    if let Some(p) = self.number("padding") {
-      return [p, p];
-    }
-    if let Some(StyleValue::String(s)) = self.get("padding") {
-      let trimmed = s.trim();
-      if let Some(rest) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        let mut parts = rest.split(',').filter_map(|p| p.trim().parse::<f32>().ok());
-        if let (Some(x), Some(y)) = (parts.next(), parts.next()) {
-          return [y, x];
-        }
-      }
-      if let Ok(p) = trimmed.parse() {
-        return [p, p];
-      }
-    }
-    default.into()
-  }
-
-  pub fn container_style(&self, theme: &Theme) -> container::Style {
-    let mut style = container::Style::default();
-
-    if let Some(background) = self.get_color(theme, "background") {
-      style.background = Some(background.into());
-    }
-
-    style.border.color = self.get_color(theme, "border.color").unwrap_or_default();
-    style.border.width = self.number("border.width").unwrap_or(0.0);
-    if let Some(radius) = self.number("radius") {
-      style.border.radius = radius.into();
-    }
-
-    // if let Some(color) = self.get_color(theme, "shadow.color") {
-    //   style.shadow.color = color;
-    // }
-    // style.shadow.blur_radius = self
-    //   .number("shadow.blur")
-    //   .unwrap_or(style.shadow.blur_radius);
-
-    style
-  }
-}
-
-#[macro_export]
-macro_rules! style {
-  ($($key:literal => $value:expr),* $(,)?) => {
-    {
-      let mut __style = $crate::style::Style::default();
-      $(
-        __style.insert($key, $value);
-      )*
-      __style
-    }
-  };
-}
-
-pub type StyleMap = Style;
-
-pub(crate) static DEFAULT_STYLES: LazyLock<std::sync::Arc<std::sync::Mutex<HashMap<Ustr, Style>>>> =
-  LazyLock::new(|| std::sync::Arc::new(std::sync::Mutex::new(Default::default())));
-
-pub fn new_default_style(name: Ustr, style: Style) {
-  DEFAULT_STYLES.lock().unwrap().insert(name, style);
-}
-
-fn apply_opacity(color: Color, opacity: Option<f32>) -> Color {
-  match opacity {
-    Some(op) => Color::from_rgba(color.r, color.g, color.b, (color.a * op).clamp(0.0, 1.0)),
-    None => color,
-  }
-}
-
-pub fn parse_hex(hex: &str) -> Option<Color> {
-  let hex = hex.strip_prefix('#').unwrap_or(hex);
-  let channels = match hex.len() {
-    3 | 6 => 3,
-    4 | 8 => 4,
-    _ => return None,
-  };
-  let step = if hex.len() <= 4 { 1 } else { 2 };
-
-  let mut nibbles = [0u8; 8];
-  for (i, byte) in hex.bytes().enumerate() {
-    nibbles[i] = match byte {
-      b'0'..=b'9' => byte - b'0',
-      b'a'..=b'f' => byte - b'a' + 10,
-      b'A'..=b'F' => byte - b'A' + 10,
-      _ => return None,
-    };
-  }
-
-  let mut out = [0u8; 4];
-  out[3] = 255;
-  for i in 0..channels {
-    if step == 1 {
-      out[i] = nibbles[i] * 16 + nibbles[i];
-    } else {
-      out[i] = nibbles[2 * i] * 16 + nibbles[2 * i + 1];
-    }
-  }
-
-  Some(Color::from_rgba8(
-    out[0],
-    out[1],
-    out[2],
-    out[3] as f32 / 255.0,
-  ))
+  css
 }
 
 #[derive(Debug)]
@@ -306,6 +64,10 @@ impl Default for Theme {
   }
 }
 
+const ALPHAS: &[u8] = &[
+  5, 10, 15, 18, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95,
+];
+
 impl Theme {
   pub fn color(&self, name: &str) -> Option<Color> {
     Some(match name {
@@ -338,6 +100,38 @@ impl Theme {
     overlay
   }
 
+  pub fn to_css(&self) -> String {
+    let entries = [
+      ("base", self.base),
+      ("crust", self.crust),
+      ("mantle", self.mantle),
+      ("primary", self.primary),
+      ("secondary", self.secondary),
+      ("green", self.green),
+      ("red", self.red),
+      ("blue", self.blue),
+      ("yellow", self.yellow),
+      ("orange", self.orange),
+      ("text", self.text),
+      ("subtext", self.subtext),
+      ("overlay", self.overlay),
+    ];
+
+    let mut body = String::new();
+    for (name, color) in entries {
+      body.push_str(&format!("  --{name}: {};\n", color_hex(color)));
+      let [r, g, b, _] = color.into_rgba8();
+      for alpha in ALPHAS {
+        body.push_str(&format!(
+          "  --{name}-a{alpha:02}: rgba({r}, {g}, {b}, {});\n",
+          *alpha as f32 / 100.0
+        ));
+      }
+    }
+
+    format!(":root {{\n{body}}}\n")
+  }
+
   pub(crate) fn apply(&mut self, key: &str, hex: &str) {
     if let Some(color) = parse_hex(hex) {
       match key {
@@ -360,6 +154,120 @@ impl Theme {
   }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TextStyle {
+  pub size: Option<f32>,
+  pub color: Option<Color>,
+  pub weight: Option<iced::font::Weight>,
+}
+
+pub fn container_style(
+  computed: &icss::theme::resolve::computed::ComputedStyle,
+) -> Option<iced::widget::container::Style> {
+  let background = computed
+    .color("background-color")
+    .map(|color| iced::Background::Color(color.to_iced()));
+  let text_color = computed.color("color").map(|color| color.to_iced());
+  let border_width = computed.length("border-width").unwrap_or(0.0);
+  let border_radius = computed.length("border-radius").unwrap_or(0.0);
+  let border_color = computed
+    .color("border-color")
+    .map(|color| color.to_iced())
+    .unwrap_or(Color::TRANSPARENT);
+  let shadow = computed
+    .shadow("box-shadow")
+    .map(|(x, y, blur, color)| iced::Shadow {
+      color: color.to_iced(),
+      offset: iced::Vector::new(x, y),
+      blur_radius: blur,
+    })
+    .unwrap_or_default();
+
+  if background.is_none() && text_color.is_none() && border_width == 0.0 {
+    return None;
+  }
+
+  Some(iced::widget::container::Style {
+    background,
+    text_color,
+    border: iced::Border {
+      color: border_color,
+      width: border_width,
+      radius: border_radius.into(),
+    },
+    shadow,
+    snap: false,
+  })
+}
+
+fn color_hex(color: Color) -> String {
+  let [r, g, b, a] = color.into_rgba8();
+  if a == 255 {
+    format!("#{r:02x}{g:02x}{b:02x}")
+  } else {
+    format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
+  }
+}
+
+pub fn parse_hex(hex: &str) -> Option<Color> {
+  let hex = hex.strip_prefix('#').unwrap_or(hex);
+  let channels = match hex.len() {
+    3 | 6 => 3,
+    4 | 8 => 4,
+    _ => return None,
+  };
+  let step = if hex.len() <= 4 { 1 } else { 2 };
+
+  let mut nibbles = [0u8; 8];
+  for (i, byte) in hex.bytes().enumerate() {
+    nibbles[i] = match byte {
+      b'0'..=b'9' => byte - b'0',
+      b'a'..=b'f' => byte - b'a' + 10,
+      b'A'..=b'F' => byte - b'A' + 10,
+      _ => return None,
+    };
+  }
+
+  let mut out = [0u8; 4];
+  out[3] = 255;
+  for i in 0..channels {
+    if step == 1 {
+      out[i] = nibbles[i] * 16 + nibbles[i];
+    } else {
+      out[i] = nibbles[2 * i] * 16 + nibbles[2 * i + 1];
+    }
+  }
+
+  Some(Color::from_rgba8(
+    out[0],
+    out[1],
+    out[2],
+    out[3] as f32 / 255.0,
+  ))
+}
+
+pub fn parse_image_path(value: &str) -> Option<String> {
+  let value = value.trim();
+  if value.is_empty() || value.eq_ignore_ascii_case("none") {
+    return None;
+  }
+
+  let inner = if let Some(open) = value.find('(') {
+    let rest = &value[open + 1..];
+    let end = rest.rfind(')').unwrap_or(rest.len());
+    rest[..end].trim()
+  } else {
+    value
+  };
+
+  let inner = inner.trim().trim_matches(|c| c == '"' || c == '\'');
+  if inner.is_empty() || inner.eq_ignore_ascii_case("none") {
+    return None;
+  }
+
+  Some(inner.to_string())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -376,17 +284,46 @@ mod tests {
   }
 
   #[test]
-  fn style_mining() {
-    let style = style! {
-      "background" => "primary",
-      "padding.x" => 8,
-      "padding.y" => 4,
-    };
-    let theme = Theme::default();
-    assert_eq!(style.padding([0.0, 0.0]), [4.0, 8.0]);
+  fn alpha_variants_exist() {
+    let css = Theme::default().to_css();
+    assert!(css.contains("--base-a45:"));
+    assert!(css.contains("--primary-a18:"));
+  }
+
+  #[test]
+  fn image_paths_are_extracted_from_raw_values() {
+    assert_eq!(parse_image_path("/a/b.png").as_deref(), Some("/a/b.png"));
     assert_eq!(
-      style.color(&theme, "background", Color::BLACK),
-      theme.primary
+      parse_image_path("\"/a b.png\"").as_deref(),
+      Some("/a b.png")
     );
+    assert_eq!(
+      parse_image_path("url(\"/a.png\")").as_deref(),
+      Some("/a.png")
+    );
+    assert_eq!(
+      parse_image_path("url ( \"/a.png\" )").as_deref(),
+      Some("/a.png")
+    );
+    assert_eq!(
+      parse_image_path("url ( \"/a(b).png\" )").as_deref(),
+      Some("/a(b).png")
+    );
+    assert_eq!(
+      parse_image_path("'~/watch.png'").as_deref(),
+      Some("~/watch.png")
+    );
+    assert_eq!(parse_image_path("none"), None);
+    assert_eq!(parse_image_path("NONE"), None);
+    assert_eq!(parse_image_path(""), None);
+    assert_eq!(parse_image_path("url()"), None);
+  }
+
+  #[test]
+  fn default_css_is_plain_css() {
+    let css = ".test { background-color: var(--primary); }";
+    let theme = icss::Theme::load(&format!("{}\n{css}", Theme::default().to_css())).unwrap();
+    let computed = theme.resolve(&["test"], None);
+    assert!(computed.color("background-color").is_some());
   }
 }

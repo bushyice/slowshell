@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+  sync::{Arc, OnceLock},
+  time::Duration,
+};
 
 use slowshell_commons::system::{ProcessInfo, SharedSystemState, SystemSnapshot};
 use sysinfo::{
@@ -8,6 +11,12 @@ use sysinfo::{
 
 // TODO: Add sort-by
 pub fn run(shared: SharedSystemState, update_time: Duration) {
+  static STARTED: OnceLock<()> = OnceLock::new();
+
+  if STARTED.set(()).is_err() {
+    return;
+  }
+
   std::thread::spawn(move || {
     let mut sys = System::new_with_specifics(
       RefreshKind::nothing()
@@ -61,11 +70,23 @@ fn sample(
       .processes()
       .iter()
       .filter_map(|(pid, proc_info)| {
+        let name = proc_info.exe()?.file_stem()?.to_string_lossy().into_owned();
+        let name_display = if name.chars().count() > 14 {
+          format!("{}…", name.chars().take(13).collect::<String>())
+        } else {
+          name.clone()
+        };
+        let memory = proc_info.memory();
+        let cpu_usage = proc_info.cpu_usage();
+
         Some(ProcessInfo {
           pid: pid.as_u32(),
-          name: proc_info.exe()?.file_stem()?.to_string_lossy().into_owned(),
-          cpu_usage: proc_info.cpu_usage(),
-          memory: proc_info.memory(),
+          name,
+          name_display,
+          cpu_usage,
+          cpu_display: format!("{cpu_usage:.0}%"),
+          memory,
+          memory_display: format_memory(memory),
         })
       })
       .collect();
@@ -111,7 +132,7 @@ fn sample(
   }
 
   let mut guard = shared.snapshot.lock().unwrap();
-  *guard = SystemSnapshot {
+  *guard = Arc::new(SystemSnapshot {
     cpu_usage,
     mem_usage,
     mem_total: total,
@@ -122,5 +143,14 @@ fn sample(
     network_rx: rx,
     network_tx: tx,
     top_processes: processes,
-  };
+  });
+}
+
+fn format_memory(bytes: u64) -> String {
+  let mb = bytes as f64 / 1024.0 / 1024.0;
+  if mb >= 1024.0 {
+    format!("{:.1}G", mb / 1024.0)
+  } else {
+    format!("{:.0}M", mb)
+  }
 }

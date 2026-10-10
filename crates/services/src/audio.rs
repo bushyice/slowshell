@@ -2,12 +2,14 @@ use std::{
   collections::HashMap,
   io::{BufRead, BufReader},
   os::fd::OwnedFd,
-  sync::atomic::Ordering,
+  sync::{Arc, atomic::Ordering},
   time::Duration,
 };
 
 use futures_util::StreamExt;
-use slowshell_commons::audio::{AudioCmd, AudioSink, MprisPlayer, SharedAudioState};
+use slowshell_commons::audio::{
+  AudioCmd, AudioSink, MprisPlayer, MprisSelection, SharedAudioState,
+};
 use zbus::zvariant::Value;
 
 use crate::util;
@@ -43,13 +45,16 @@ async fn audio_loop(
     .await
     .into_diagnostic()?;
 
-  refresh_audio_wpctl(shared);
-  refresh_mpris(&session_conn, shared).await.ok();
-  bump(shared, notify);
-
-  let dbus_proxy = zbus::fdo::DBusProxy::new(&session_conn)
+  let dbus_proxy = zbus::fdo::DBusProxy::builder(&session_conn)
+    .cache_properties(zbus::proxy::CacheProperties::No)
+    .build()
     .await
     .into_diagnostic()?;
+
+  refresh_audio_wpctl(shared);
+  refresh_mpris(&session_conn, &dbus_proxy, shared).await.ok();
+  bump(shared, notify);
+
   let mut name_owner_changed = dbus_proxy
     .receive_name_owner_changed()
     .await
@@ -88,12 +93,38 @@ async fn audio_loop(
     })
     .ok();
 
-  let mut mpris_poll_interval = tokio::time::interval(Duration::from_millis(1500));
+  let mpris_props_rule = zbus::MatchRule::builder()
+    .msg_type(zbus::message::Type::Signal)
+    .interface("org.freedesktop.DBus.Properties")
+    .into_diagnostic()?
+    .member("PropertiesChanged")
+    .into_diagnostic()?
+    .path("/org/mpris/MediaPlayer2")
+    .into_diagnostic()?
+    .add_arg("org.mpris.MediaPlayer2.Player")
+    .into_diagnostic()?
+    .build();
+
+  let mut mpris_props =
+    zbus::MessageStream::for_match_rule(mpris_props_rule, &session_conn, Some(16))
+      .await
+      .into_diagnostic()?;
+
+  let mut mpris_fallback = tokio::time::interval_at(
+    tokio::time::Instant::now() + Duration::from_secs(30),
+    Duration::from_secs(30),
+  );
 
   loop {
     tokio::select! {
       Some(cmd) = cmd_rx.recv() => {
+        let select_player = matches!(cmd, AudioCmd::SelectPlayer(_));
         handle_cmd(&session_conn, shared, cmd).await;
+
+        if select_player {
+          refresh_mpris(&session_conn, &dbus_proxy, shared).await.ok();
+        }
+
         refresh_audio_wpctl(shared);
         bump(shared, notify);
       }
@@ -105,12 +136,19 @@ async fn audio_loop(
       }
 
       Some(_) = name_owner_changed.next() => {
-        refresh_mpris(&session_conn, shared).await.ok();
+        refresh_mpris(&session_conn, &dbus_proxy, shared).await.ok();
         bump(shared, notify);
       }
 
-      _ = mpris_poll_interval.tick() => {
-        let mpris_changed = refresh_mpris(&session_conn, shared).await.unwrap_or(false);
+      Some(_) = mpris_props.next() => {
+        let mpris_changed = refresh_mpris(&session_conn, &dbus_proxy, shared).await.unwrap_or(false);
+        if mpris_changed {
+          bump(shared, notify);
+        }
+      }
+
+      _ = mpris_fallback.tick() => {
+        let mpris_changed = refresh_mpris(&session_conn, &dbus_proxy, shared).await.unwrap_or(false);
         if mpris_changed {
           bump(shared, notify);
         }
@@ -227,12 +265,13 @@ fn refresh_audio_wpctl(shared: &SharedAudioState) -> bool {
     }
   }
 
-  let mut state = shared.state.lock().unwrap();
-  let changed = (state.volume - default_vol).abs() > 0.005
-    || state.muted != default_muted
-    || state.sinks.len() != sinks.len()
-    || state.default_sink_name != default_name;
+  let mut guard = shared.state.lock().unwrap();
+  let changed = (guard.volume - default_vol).abs() > 0.005
+    || guard.muted != default_muted
+    || guard.sinks.len() != sinks.len()
+    || guard.default_sink_name != default_name;
 
+  let state = Arc::make_mut(&mut guard);
   state.volume = default_vol;
   state.muted = default_muted;
   state.default_sink_name = default_name;
@@ -241,48 +280,52 @@ fn refresh_audio_wpctl(shared: &SharedAudioState) -> bool {
   changed
 }
 
-async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> miette::Result<bool> {
+async fn refresh_mpris(
+  conn: &zbus::Connection,
+  dbus_proxy: &zbus::fdo::DBusProxy<'_>,
+  shared: &SharedAudioState,
+) -> miette::Result<bool> {
   use miette::IntoDiagnostic;
 
-  let dbus_proxy = zbus::fdo::DBusProxy::new(conn).await.into_diagnostic()?;
   let names = dbus_proxy.list_names().await.into_diagnostic()?;
 
-  let mut mpris_buses = Vec::new();
-  for name in names {
-    if name.starts_with("org.mpris.MediaPlayer2.") {
-      mpris_buses.push(name.to_string());
-    }
-  }
+  let mut mpris_buses: Vec<String> = names
+    .into_iter()
+    .filter(|name| name.starts_with("org.mpris.MediaPlayer2."))
+    .map(|name| name.to_string())
+    .collect();
+  mpris_buses.sort();
 
-  if mpris_buses.is_empty() {
-    let mut cur = shared.player.lock().unwrap();
-    let changed = cur.is_some();
-    *cur = None;
-    return Ok(changed);
-  }
-
-  let mut chosen_player: Option<MprisPlayer> = None;
+  let mut players: Vec<MprisPlayer> = Vec::with_capacity(mpris_buses.len());
 
   for bus in mpris_buses {
-    let Ok(player_proxy) = zbus::Proxy::new_owned(
-      conn.clone(),
-      bus.clone(),
-      "/org/mpris/MediaPlayer2",
-      "org.mpris.MediaPlayer2.Player",
-    )
-    .await
-    else {
-      continue;
+    let player_proxy = match zbus::proxy::Builder::<zbus::Proxy<'_>>::new(conn)
+      .destination(bus.clone())
+      .and_then(|builder| builder.path("/org/mpris/MediaPlayer2"))
+      .and_then(|builder| builder.interface("org.mpris.MediaPlayer2.Player"))
+    {
+      Ok(builder) => builder
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+        .ok(),
+      Err(_) => None,
     };
 
-    let Ok(root_proxy) = zbus::Proxy::new_owned(
-      conn.clone(),
-      bus.clone(),
-      "/org/mpris/MediaPlayer2",
-      "org.mpris.MediaPlayer2",
-    )
-    .await
-    else {
+    let root_proxy = match zbus::proxy::Builder::<zbus::Proxy<'_>>::new(conn)
+      .destination(bus.clone())
+      .and_then(|builder| builder.path("/org/mpris/MediaPlayer2"))
+      .and_then(|builder| builder.interface("org.mpris.MediaPlayer2"))
+    {
+      Ok(builder) => builder
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+        .ok(),
+      Err(_) => None,
+    };
+
+    let (Some(player_proxy), Some(root_proxy)) = (player_proxy, root_proxy) else {
       continue;
     };
 
@@ -350,7 +393,7 @@ async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> mi
       .await
       .unwrap_or(true);
 
-    let player = MprisPlayer {
+    players.push(MprisPlayer {
       bus_name: bus,
       identity,
       title,
@@ -361,23 +404,16 @@ async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> mi
       can_play_pause,
       can_go_next,
       can_go_previous,
-    };
-
-    let is_playing = player.playback_status == "Playing";
-    let has_title = !player.title.is_empty();
-
-    if is_playing {
-      chosen_player = Some(player);
-      break;
-    } else if has_title && chosen_player.is_none() {
-      chosen_player = Some(player);
-    } else if chosen_player.is_none() {
-      chosen_player = Some(player);
-    }
+    });
   }
 
+  let selected = shared.selected.lock().unwrap().clone();
+  let chosen = choose_player(&players, selected.as_ref()).cloned();
+
   let mut cur = shared.player.lock().unwrap();
-  let changed = match (&*cur, &chosen_player) {
+  let mut cur_players = shared.players.lock().unwrap();
+
+  let player_changed = match (&*cur, &chosen) {
     (Some(old), Some(new_p)) => {
       old.title != new_p.title
         || old.artist != new_p.artist
@@ -388,8 +424,53 @@ async fn refresh_mpris(conn: &zbus::Connection, shared: &SharedAudioState) -> mi
     _ => true,
   };
 
-  *cur = chosen_player;
-  Ok(changed)
+  let players_changed = cur_players.len() != players.len()
+    || cur_players
+      .iter()
+      .zip(players.iter())
+      .any(|(old, new_p)| old.as_ref() != new_p);
+
+  *cur = chosen.map(Arc::new);
+  *cur_players = players.into_iter().map(Arc::new).collect();
+
+  Ok(player_changed || players_changed)
+}
+
+fn choose_player<'a>(
+  players: &'a [MprisPlayer],
+  selected: Option<&MprisSelection>,
+) -> Option<&'a MprisPlayer> {
+  if let Some(selection) = selected {
+    if let Some(player) = players.iter().find(|p| p.bus_name == selection.bus_name) {
+      return Some(player);
+    }
+
+    if !selection.identity.is_empty()
+      && let Some(player) = players.iter().find(|p| p.identity == selection.identity)
+    {
+      return Some(player);
+    }
+  }
+
+  players
+    .iter()
+    .find(|p| p.playback_status == "Playing")
+    .or_else(|| players.iter().find(|p| !p.title.is_empty()))
+    .or_else(|| players.first())
+}
+
+async fn mpris_player_proxy<'c>(conn: &zbus::Connection, bus: String) -> Option<zbus::Proxy<'c>> {
+  zbus::proxy::Builder::<zbus::Proxy<'c>>::new(conn)
+    .destination(bus)
+    .ok()?
+    .path("/org/mpris/MediaPlayer2")
+    .ok()?
+    .interface("org.mpris.MediaPlayer2.Player")
+    .ok()?
+    .cache_properties(zbus::proxy::CacheProperties::No)
+    .build()
+    .await
+    .ok()
 }
 
 async fn handle_cmd(conn: &zbus::Connection, shared: &SharedAudioState, cmd: AudioCmd) {
@@ -434,14 +515,7 @@ async fn handle_cmd(conn: &zbus::Connection, shared: &SharedAudioState, cmd: Aud
         .as_ref()
         .map(|p| p.bus_name.clone());
       if let Some(bus) = bus_name {
-        if let Ok(proxy) = zbus::Proxy::new_owned(
-          conn.clone(),
-          bus,
-          "/org/mpris/MediaPlayer2",
-          "org.mpris.MediaPlayer2.Player",
-        )
-        .await
-        {
+        if let Some(proxy) = mpris_player_proxy(conn, bus).await {
           let _ = proxy.call_method("PlayPause", &()).await;
         }
       }
@@ -454,14 +528,7 @@ async fn handle_cmd(conn: &zbus::Connection, shared: &SharedAudioState, cmd: Aud
         .as_ref()
         .map(|p| p.bus_name.clone());
       if let Some(bus) = bus_name {
-        if let Ok(proxy) = zbus::Proxy::new_owned(
-          conn.clone(),
-          bus,
-          "/org/mpris/MediaPlayer2",
-          "org.mpris.MediaPlayer2.Player",
-        )
-        .await
-        {
+        if let Some(proxy) = mpris_player_proxy(conn, bus).await {
           let _ = proxy.call_method("Next", &()).await;
         }
       }
@@ -474,17 +541,13 @@ async fn handle_cmd(conn: &zbus::Connection, shared: &SharedAudioState, cmd: Aud
         .as_ref()
         .map(|p| p.bus_name.clone());
       if let Some(bus) = bus_name {
-        if let Ok(proxy) = zbus::Proxy::new_owned(
-          conn.clone(),
-          bus,
-          "/org/mpris/MediaPlayer2",
-          "org.mpris.MediaPlayer2.Player",
-        )
-        .await
-        {
+        if let Some(proxy) = mpris_player_proxy(conn, bus).await {
           let _ = proxy.call_method("Previous", &()).await;
         }
       }
+    }
+    AudioCmd::SelectPlayer(selection) => {
+      *shared.selected.lock().unwrap() = Some(selection);
     }
   }
 }

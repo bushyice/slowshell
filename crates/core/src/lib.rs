@@ -1,6 +1,7 @@
 use std::{
   any::{Any, TypeId},
   collections::HashMap,
+  ffi::c_void,
 };
 
 use crate::types::{PayloadBox, PayloadBuilderRegistry, Ustr};
@@ -9,6 +10,7 @@ pub mod animations;
 pub mod commands;
 pub mod listeners;
 pub mod message;
+pub mod monitors;
 pub mod persistence;
 pub mod types;
 
@@ -105,8 +107,92 @@ trait HandleStateTuple: Sized {
   ) -> miette::Result<R>;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StoreKey {
+  pub type_name: &'static str,
+  pub size: usize,
+  pub align: usize,
+}
+
+impl StoreKey {
+  pub fn of<T: 'static>() -> Self {
+    Self {
+      type_name: std::any::type_name::<T>(),
+      size: core::mem::size_of::<T>(),
+      align: core::mem::align_of::<T>(),
+    }
+  }
+
+  pub fn matches<T: 'static>(&self) -> bool {
+    self == &Self::of::<T>()
+  }
+}
+
+pub struct ErasedEntry {
+  pub key: StoreKey,
+  pub ptr: *mut c_void,
+  pub drop_fn: extern "C" fn(*mut c_void),
+}
+
+impl ErasedEntry {
+  pub fn new<T: 'static>(value: T) -> Self {
+    extern "C" fn drop_it<T>(ptr: *mut c_void) {
+      unsafe { drop(Box::from_raw(ptr as *mut T)) };
+    }
+    Self {
+      key: StoreKey::of::<T>(),
+      ptr: Box::into_raw(Box::new(value)) as *mut c_void,
+      drop_fn: drop_it::<T>,
+    }
+  }
+
+  pub fn take<T: 'static>(mut self) -> Option<T> {
+    if !self.key.matches::<T>() {
+      return None;
+    }
+    let ptr = self.ptr;
+    self.ptr = core::ptr::null_mut();
+    Some(unsafe { *Box::from_raw(ptr as *mut T) })
+  }
+}
+
+impl Drop for ErasedEntry {
+  fn drop(&mut self) {
+    if !self.ptr.is_null() {
+      (self.drop_fn)(self.ptr);
+      self.ptr = core::ptr::null_mut();
+    }
+  }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum StoreId {
+  TypeId(TypeId),
+  Erased(StoreKey),
+}
+
+enum Entry {
+  Any(Box<dyn Any>),
+  Erased(ErasedEntry),
+}
+
+impl Entry {
+  fn ptr_mut<T: 'static>(&mut self) -> Option<*mut T> {
+    match self {
+      Entry::Any(boxed) => boxed.downcast_mut::<T>().map(|value| value as *mut T),
+      Entry::Erased(entry) => {
+        if entry.key.matches::<T>() {
+          Some(entry.ptr as *mut T)
+        } else {
+          None
+        }
+      }
+    }
+  }
+}
+
 pub struct Store {
-  contents: HashMap<TypeId, Box<dyn Any>>,
+  contents: HashMap<StoreId, Entry>,
 }
 
 impl Store {
@@ -117,40 +203,113 @@ impl Store {
   }
 
   pub fn insert_raw(&mut self, type_id: TypeId, val: Box<dyn Any>) -> bool {
-    if self.contents.contains_key(&type_id) {
+    let id = StoreId::TypeId(type_id);
+    if self.contents.contains_key(&id) {
       return false;
     }
 
-    self.contents.insert(type_id, val);
+    self.contents.insert(id, Entry::Any(val));
     true
   }
 
   pub fn insert<T: 'static>(&mut self, val: T) -> bool {
-    let type_id = TypeId::of::<T>();
+    let id = StoreId::Erased(StoreKey::of::<T>());
+    if self.contents.contains_key(&id) {
+      return false;
+    }
 
-    self.insert_raw(type_id, Box::new(val))
+    self
+      .contents
+      .insert(id, Entry::Erased(ErasedEntry::new(val)));
+    true
+  }
+
+  fn lookup_ids<T: 'static>() -> [StoreId; 2] {
+    [
+      StoreId::Erased(StoreKey::of::<T>()),
+      StoreId::TypeId(TypeId::of::<T>()),
+    ]
   }
 
   pub fn borrow<T: 'static>(&self) -> Option<&T> {
-    self
-      .contents
-      .get(&TypeId::of::<T>())
-      .and_then(|x| x.downcast_ref::<T>())
+    for id in Self::lookup_ids::<T>() {
+      match self.contents.get(&id) {
+        Some(Entry::Any(boxed)) => {
+          if let Some(value) = boxed.downcast_ref::<T>() {
+            return Some(value);
+          }
+        }
+        Some(Entry::Erased(entry)) if entry.key.matches::<T>() => {
+          return Some(unsafe { &*(entry.ptr as *const T) });
+        }
+        _ => {}
+      }
+    }
+    None
   }
 
   pub fn borrow_mut<T: 'static>(&mut self) -> Option<&mut T> {
-    self
-      .contents
-      .get_mut(&TypeId::of::<T>())
-      .and_then(|x| x.downcast_mut::<T>())
+    for id in Self::lookup_ids::<T>() {
+      let matches = match self.contents.get_mut(&id) {
+        Some(entry) => entry.ptr_mut::<T>(),
+        None => None,
+      };
+      if let Some(ptr) = matches {
+        return Some(unsafe { &mut *ptr });
+      }
+    }
+    None
   }
 
   pub fn remove<T: 'static>(&mut self) -> Option<T> {
-    self
-      .contents
-      .remove(&TypeId::of::<T>())
-      .and_then(|x| x.downcast::<T>().ok())
-      .map(|x| *x)
+    for id in Self::lookup_ids::<T>() {
+      let matches = matches!(self.contents.get(&id), Some(Entry::Erased(entry)) if entry.key.matches::<T>())
+        || matches!(self.contents.get(&id), Some(Entry::Any(boxed)) if boxed.is::<T>());
+      if !matches {
+        continue;
+      }
+      return match self.contents.remove(&id) {
+        Some(Entry::Any(boxed)) => boxed.downcast::<T>().ok().map(|boxed| *boxed),
+        Some(Entry::Erased(entry)) => entry.take::<T>(),
+        None => None,
+      };
+    }
+    None
+  }
+
+  pub fn erased_insert(&mut self, entry: ErasedEntry) -> bool {
+    let id = StoreId::Erased(entry.key);
+    if self.contents.contains_key(&id) {
+      return false;
+    }
+    self.contents.insert(id, Entry::Erased(entry));
+    true
+  }
+
+  pub fn erased_contains(&self, key: StoreKey) -> bool {
+    matches!(
+      self.contents.get(&StoreId::Erased(key)),
+      Some(Entry::Erased(entry)) if entry.key == key
+    )
+  }
+
+  pub fn erased_get(&self, key: StoreKey) -> Option<*mut c_void> {
+    match self.contents.get(&StoreId::Erased(key)) {
+      Some(Entry::Erased(entry)) if entry.key == key => Some(entry.ptr),
+      _ => None,
+    }
+  }
+
+  pub fn erased_remove(&mut self, key: StoreKey) -> Option<ErasedEntry> {
+    let id = StoreId::Erased(key);
+    let matches = matches!(self.contents.get(&id), Some(Entry::Erased(entry)) if entry.key == key);
+    if !matches {
+      return None;
+    }
+    match self.contents.remove(&id) {
+      Some(Entry::Erased(entry)) => Some(entry),
+      _ => None,
+    }
   }
 
   #[allow(warnings)]
@@ -173,7 +332,7 @@ macro_rules! impl_handle_tuple {
         f: impl FnOnce(&mut Store, Self) -> miette::Result<R>,
       ) -> miette::Result<R> {
         {
-          let keys = [$(TypeId::of::<$T>()),+];
+          let keys = [$(StoreKey::of::<$T>()),+];
 
           for i in 0..keys.len() {
             for j in (i + 1)..keys.len() {
@@ -187,14 +346,15 @@ macro_rules! impl_handle_tuple {
         $(
           #[allow(non_snake_case)]
           let mut $T = {
-            let key = TypeId::of::<$T>();
+            let mut taken = None;
+            for id in Store::lookup_ids::<$T>() {
+              if let Some(entry) = store.contents.remove(&id) {
+                taken = Some((id, entry));
+                break;
+              }
+            }
 
-            let val = store
-              .contents
-              .remove(&key)
-              .ok_or_else(|| miette::miette!("Missing instance"))?;
-
-            (key, val)
+            taken.ok_or_else(|| miette::miette!("Missing instance"))?
           };
         )+
 
@@ -202,12 +362,12 @@ macro_rules! impl_handle_tuple {
           let tuple = (
             $(
               {
-                let downcasted = $T
+                let ptr = $T
                   .1
-                  .downcast_mut::<$T>()
+                  .ptr_mut::<$T>()
                   .ok_or_else(|| miette::miette!("Type mismatch"))?;
 
-                unsafe { &mut *(downcasted as *mut $T) }
+                unsafe { &mut *ptr }
               },
             )+
           );
