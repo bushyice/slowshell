@@ -20,22 +20,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: zola@0.23.6
 
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build documentation page
+      - name: Build documentation
         run: |
           set -euo pipefail
-          mkdir -p public
-          cargo run --locked -p xtask -- page html --out-html public/index.html
-          echo "page: $(wc -c < public/index.html) bytes"
+          zola --root docs build
 
       - uses: actions/configure-pages@v6
 
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: public
+          path: docs/public
 
   deploy:
     needs: build
