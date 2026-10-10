@@ -103,6 +103,7 @@
               homepage = "https://tangled.org/bushyice.com/slowshell";
               mainProgram = "slowshell";
               platforms = lib.platforms.linux;
+              license = lib.licenses.gpl3Plus;
             };
           }
         );
