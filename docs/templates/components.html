@@ -1,0 +1,106 @@
+{% component tree() %}
+<div class="file-tree">
+<div class="file-tree-body">
+{% set lines = body | split(pat="\n") %}
+{% set_global current_depth = 0 %}
+{% for raw_line in lines %}
+{% set line_trim = raw_line | trim %}
+{% if line_trim | length > 0 %}
+{% set comment = "" %}
+{% set line_clean = raw_line %}
+{% if raw_line is containing(pat="//") %}
+{% set parts = raw_line | split(pat="//") %}
+{% set line_clean = parts[0] %}
+{% set comment = parts[1] | trim %}
+{% elif raw_line is containing(pat="#") %}
+{% set parts = raw_line | split(pat="#") %}
+{% set line_clean = parts[0] %}
+{% set comment = parts[1] | trim %}
+{% endif %}
+{% set norm = line_clean | replace(from="├── ", to="  ") | replace(from="└── ", to="  ") | replace(from="│   ", to="  ") | replace(from="│ ", to="  ") %}
+{% set depth = 0 %}
+{% if norm is starting_with(pat="        ") %}{% set depth = 4 %}
+{% elif norm is starting_with(pat="      ") %}{% set depth = 3 %}
+{% elif norm is starting_with(pat="    ") %}{% set depth = 2 %}
+{% elif norm is starting_with(pat="  ") %}{% set depth = 1 %}
+{% endif %}
+{% set item_name = norm | trim %}
+{% if item_name | length > 0 %}
+{% set is_dir = false %}
+{% if item_name is ending_with(pat="/") or item_name is ending_with(pat="\\") %}
+{% set is_dir = true %}
+{% endif %}
+{% set clean_name = item_name | regex_replace(pattern="[/\\\\]+$", rep="") %}
+{% if depth < current_depth %}
+{% set diff = current_depth - depth %}
+{% if diff == 1 %}</div></details>
+{% elif diff == 2 %}</div></details></div></details>
+{% elif diff == 3 %}</div></details></div></details></div></details>
+{% elif diff >= 4 %}</div></details></div></details></div></details></div></details>
+{% endif %}
+{% set_global current_depth = depth %}
+{% endif %}
+{% if is_dir %}
+<details class="tree-folder" open>
+<summary class="tree-item tree-dir"><span class="tree-toggle"><svg class="tree-arrow-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span><span class="tree-icon tree-icon-folder"><svg class="tree-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"></path></svg></span><span class="tree-name">{{ clean_name }}</span><span class="tree-slash">/</span>{% if comment %}<span class="tree-comment">// {{ comment }}</span>{% endif %}</summary>
+<div class="tree-children">
+{% set_global current_depth = depth + 1 %}
+{% else %}
+{% set file_cls = "" %}
+{% if clean_name is ending_with(pat=".rs") %}{% set file_cls = " file-rust" %}
+{% elif clean_name is ending_with(pat=".toml") or clean_name is ending_with(pat=".kdl") or clean_name is ending_with(pat=".json") or clean_name is ending_with(pat=".yaml") or clean_name is ending_with(pat=".yml") %}{% set file_cls = " file-config" %}
+{% elif clean_name is ending_with(pat=".md") or clean_name is ending_with(pat=".txt") %}{% set file_cls = " file-doc" %}
+{% endif %}
+<div class="tree-item tree-file"><span class="tree-spacer"></span><span class="tree-icon tree-icon-file{{ file_cls }}"><svg class="tree-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></span><span class="tree-name">{{ clean_name }}</span>{% if comment %}<span class="tree-comment">// {{ comment }}</span>{% endif %}</div>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% if current_depth == 1 %}</div></details>
+{% elif current_depth == 2 %}</div></details></div></details>
+{% elif current_depth == 3 %}</div></details></div></details></div></details>
+{% elif current_depth >= 4 %}</div></details></div></details></div></details></div></details>
+{% endif %}
+</div>
+</div>
+{% endcomponent tree %}
+
+{% component tabs(id="group") %}
+<div class="tabs">
+{% set chunks = body | split(pat="===") %}
+{% for chunk in chunks %}
+{% if chunk | trim | length > 0 %}
+{% set lines = chunk | split(pat="\n") %}
+{% set title = lines[0] | trim %}
+{% set content = chunk | replace(from=lines[0], to="") | trim %}
+<input type="radio" name="tabs-{{ id }}" id="tab-{{ id }}-{{ loop.index }}" class="tab-radio" {% if loop.index == 2 %}checked{% endif %}>
+<label for="tab-{{ id }}-{{ loop.index }}" class="tab-label">{{ title }}</label>
+<div class="tab-panel">
+{{ content | markdown | safe }}
+</div>
+{% endif %}
+{% endfor %}
+</div>
+{% endcomponent tabs %}
+
+{% component cards() %}
+<div class="card-grid">
+{% set lines = body | split(pat="\n") %}
+{% for line in lines %}
+{% if line | trim | length > 0 %}
+{% set trimmed = line | trim | regex_replace(pattern="^-\\s*", rep="") | trim %}
+{% set parts = trimmed | split(pat=":") %}
+{% set raw_title = parts[0] | trim %}
+{% set title_part = raw_title | regex_replace(pattern="^(nf-[a-zA-Z0-9_-]+)\\s+", rep="<i class=\"nf $1\"></i> ") %}
+{% set desc_part = "" %}
+{% if parts | length > 1 %}
+{% set desc_part = parts[1] | trim %}
+{% endif %}
+<div class="doc-card">
+<div class="doc-card-title">{{ title_part | safe }}</div>
+{% if desc_part %}<div class="doc-card-desc">{{ desc_part | safe }}</div>{% endif %}
+</div>
+{% endif %}
+{% endfor %}
+</div>
+{% endcomponent cards %}

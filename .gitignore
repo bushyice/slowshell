@@ -1,3 +1,4 @@
 /target
 .direnv/
 /dist/
+docs/public/
