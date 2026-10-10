@@ -1,0 +1,30 @@
+title = "Slowshell"
+base_url = "https://slowshell.bushyice.com"
+description = "A wayland desktop shell. Tweakable, pluggable, lightweight."
+compile_sass = false
+build_search_index = true
+
+[markdown]
+render_emoji = false
+insert_anchor_links = "right"
+
+[markdown.highlighting]
+extra_themes = ["themes/slowshell-dark.json", "themes/slowshell-light.json"]
+light_theme = "slowshell-light"
+dark_theme = "slowshell-dark"
+
+[extra]
+version = "0.1.0-alpha"
+repo_url = "https://tangled.org/bushyice.com/slowshell"
+screenshot_url = "https://github.com/bushyice/slowshell/blob/main/assets/screenshot.png?raw=true"
+icon_url = "https://raw.githubusercontent.com/bushyice/slowshell/refs/heads/main/assets/icon-shell.svg"
+sections = ["guides/_index.md", "references/_index.md", "modules/_index.md", "philosophy/_index.md", "plugins/_index.md"]
+all_sections = [
+  "guides/_index.md",
+  "references/_index.md",
+  "plugins/_index.md",
+  "philosophy/_index.md",
+  "modules/_index.md",
+  "modules/panels/_index.md",
+  "modules/panels/components/_index.md",
+]

@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} · {{ config.title }}{% endblock title %}
+{% block description %}{{ page.description | default(value=config.description) }}{% endblock description %}
+{% block opengraph %}
+<meta property="og:title" content="{{ page.title }} · {{ config.title }}">
+<meta property="og:description" content="{{ page.description | default(value=config.description) }}">
+{% endblock opengraph %}
+
+{% block content %}
+<div class="page-layout">
+  <article class="doc-page">
+    <div class="breadcrumbs">
+      {% for ancestor in page.ancestors %}
+        {% set a_sec = get_section(path=ancestor) %}
+        <a href="{{ a_sec.permalink }}">{{ a_sec.title }}</a>
+        <span class="breadcrumb-sep">/</span>
+      {% endfor %}
+      <span class="breadcrumb-current">{{ page.title }}</span>
+    </div>
+
+    <header class="page-header">
+      <h1 class="page-title">{{ page.title }}</h1>
+      {% if page.description %}
+        <p class="page-desc">{{ page.description }}</p>
+      {% endif %}
+    </header>
+
+    {% set body_html = page.content %}
+
+    {% set home_sec = get_section(path="_index.md", allow_missing=true) %}
+    {% set home_url = get_url(path="") %}
+    {% if home_sec and home_sec.toc %}
+      {% for h in home_sec.toc %}
+        {% set clean_title = h.title | replace(from="\\", to="\\\\") | replace(from="?", to="\\?") | replace(from="(", to="\\(") | replace(from=")", to="\\)") | replace(from="[", to="\\[") | replace(from="]", to="\\]") %}
+        {% set pat_home_h1 = "(?i)\\[\\[Slowshell#(?:" ~ clean_title ~ "|" ~ h.id ~ ")\\|([^\\]]+)\\]\\]" %}
+        {% set rep_home_h1 = "<a class=\"wikilink\" href=\"" ~ home_url ~ "#" ~ h.id ~ "\">$1</a>" %}
+        {% set_global body_html = body_html | regex_replace(pattern=pat_home_h1, rep=rep_home_h1) %}
+
+        {% set pat_home_h2 = "(?i)\\[\\[Slowshell#(?:" ~ clean_title ~ "|" ~ h.id ~ ")\\]\\]" %}
+        {% set rep_home_h2 = "<a class=\"wikilink\" href=\"" ~ home_url ~ "#" ~ h.id ~ "\">Slowshell &gt; " ~ h.title ~ "</a>" %}
+        {% set_global body_html = body_html | regex_replace(pattern=pat_home_h2, rep=rep_home_h2) %}
+      {% endfor %}
+    {% endif %}
+    {% set pat_home_s1 = "(?i)\\[\\[Slowshell#([a-zA-Z0-9_\\-]+)\\|([^\\]]+)\\]\\]" %}
+    {% set rep_home_s1 = "<a class=\"wikilink\" href=\"" ~ home_url ~ "#$1\">$2</a>" %}
+    {% set_global body_html = body_html | regex_replace(pattern=pat_home_s1, rep=rep_home_s1) %}
+
+    {% set pat_home_s2 = "(?i)\\[\\[Slowshell#([a-zA-Z0-9_\\-]+)\\]\\]" %}
+    {% set rep_home_s2 = "<a class=\"wikilink\" href=\"" ~ home_url ~ "#$1\">Slowshell &gt; $1</a>" %}
+    {% set_global body_html = body_html | regex_replace(pattern=pat_home_s2, rep=rep_home_s2) %}
+
+    {% set pat_home1 = "(?i)\\[\\[Slowshell\\|([^\\]]+)\\]\\]" %}
+    {% set rep_home1 = "<a class=\"wikilink\" href=\"" ~ home_url ~ "\">$1</a>" %}
+    {% set_global body_html = body_html | regex_replace(pattern=pat_home1, rep=rep_home1) %}
+
+    {% set pat_home2 = "(?i)\\[\\[Slowshell\\]\\]" %}
+    {% set rep_home2 = "<a class=\"wikilink\" href=\"" ~ home_url ~ "\">Slowshell</a>" %}
+    {% set_global body_html = body_html | regex_replace(pattern=pat_home2, rep=rep_home2) %}
+
+    {% set sec_paths = config.extra.all_sections | default(value=["guides/_index.md", "references/_index.md", "modules/_index.md", "modules/panels/_index.md", "modules/panels/components/_index.md"]) %}
+    {% for sp in sec_paths %}
+      {% set sec = get_section(path=sp, allow_missing=true) %}
+      {% if sec %}
+        {% for p in sec.pages %}
+          {% if p.toc %}
+            {% for h in p.toc %}
+              {% set clean_title = h.title | replace(from="\\", to="\\\\") | replace(from="?", to="\\?") | replace(from="(", to="\\(") | replace(from=")", to="\\)") | replace(from="[", to="\\[") | replace(from="]", to="\\]") %}
+              {% set pat_h1 = "(?i)\\[\\[" ~ p.title ~ "#(?:" ~ clean_title ~ "|" ~ h.id ~ ")\\|([^\\]]+)\\]\\]" %}
+              {% set rep_h1 = "<a class=\"wikilink\" href=\"" ~ h.permalink ~ "\">$1</a>" %}
+              {% set_global body_html = body_html | regex_replace(pattern=pat_h1, rep=rep_h1) %}
+
+              {% set pat_h2 = "(?i)\\[\\[" ~ p.title ~ "#(?:" ~ clean_title ~ "|" ~ h.id ~ ")\\]\\]" %}
+              {% set rep_h2 = "<a class=\"wikilink\" href=\"" ~ h.permalink ~ "\">" ~ p.title ~ " &gt; " ~ h.title ~ "</a>" %}
+              {% set_global body_html = body_html | regex_replace(pattern=pat_h2, rep=rep_h2) %}
+
+              {% if h.children %}
+                {% for h2 in h.children %}
+                  {% set clean_title2 = h2.title | replace(from="\\", to="\\\\") | replace(from="?", to="\\?") | replace(from="(", to="\\(") | replace(from=")", to="\\)") | replace(from="[", to="\\[") | replace(from="]", to="\\]") %}
+                  {% set pat_h2_1 = "(?i)\\[\\[" ~ p.title ~ "#(?:" ~ clean_title2 ~ "|" ~ h2.id ~ ")\\|([^\\]]+)\\]\\]" %}
+                  {% set rep_h2_1 = "<a class=\"wikilink\" href=\"" ~ h2.permalink ~ "\">$1</a>" %}
+                  {% set_global body_html = body_html | regex_replace(pattern=pat_h2_1, rep=rep_h2_1) %}
+
+                  {% set pat_h2_2 = "(?i)\\[\\[" ~ p.title ~ "#(?:" ~ clean_title2 ~ "|" ~ h2.id ~ ")\\]\\]" %}
+                  {% set rep_h2_2 = "<a class=\"wikilink\" href=\"" ~ h2.permalink ~ "\">" ~ p.title ~ " &gt; " ~ h2.title ~ "</a>" %}
+                  {% set_global body_html = body_html | regex_replace(pattern=pat_h2_2, rep=rep_h2_2) %}
+                {% endfor %}
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+
+          {% set pat_s1 = "(?i)\\[\\[" ~ p.title ~ "#([a-zA-Z0-9_\\-]+)\\|([^\\]]+)\\]\\]" %}
+          {% set rep_s1 = "<a class=\"wikilink\" href=\"" ~ p.permalink ~ "#$1\">$2</a>" %}
+          {% set_global body_html = body_html | regex_replace(pattern=pat_s1, rep=rep_s1) %}
+
+          {% set pat_s2 = "(?i)\\[\\[" ~ p.title ~ "#([a-zA-Z0-9_\\-]+)\\]\\]" %}
+          {% set rep_s2 = "<a class=\"wikilink\" href=\"" ~ p.permalink ~ "#$1\">" ~ p.title ~ " &gt; $1</a>" %}
+          {% set_global body_html = body_html | regex_replace(pattern=pat_s2, rep=rep_s2) %}
+
+          {% set pat1 = "(?i)\\[\\[" ~ p.title ~ "\\|([^\\]]+)\\]\\]" %}
+          {% set rep1 = "<a class=\"wikilink\" href=\"" ~ p.permalink ~ "\">$1</a>" %}
+          {% set_global body_html = body_html | regex_replace(pattern=pat1, rep=rep1) %}
+
+          {% set pat2 = "(?i)\\[\\[" ~ p.title ~ "\\]\\]" %}
+          {% set rep2 = "<a class=\"wikilink\" href=\"" ~ p.permalink ~ "\">" ~ p.title ~ "</a>" %}
+          {% set_global body_html = body_html | regex_replace(pattern=pat2, rep=rep2) %}
+        {% endfor %}
+
+        {% if sec.toc %}
+          {% for h in sec.toc %}
+            {% set clean_title = h.title | replace(from="\\", to="\\\\") | replace(from="?", to="\\?") | replace(from="(", to="\\(") | replace(from=")", to="\\)") | replace(from="[", to="\\[") | replace(from="]", to="\\]") %}
+            {% set pat_h1 = "(?i)\\[\\[" ~ sec.title ~ "#(?:" ~ clean_title ~ "|" ~ h.id ~ ")\\|([^\\]]+)\\]\\]" %}
+            {% set rep_h1 = "<a class=\"wikilink\" href=\"" ~ h.permalink ~ "\">$1</a>" %}
+            {% set_global body_html = body_html | regex_replace(pattern=pat_h1, rep=rep_h1) %}
+
+            {% set pat_h2 = "(?i)\\[\\[" ~ sec.title ~ "#(?:" ~ clean_title ~ "|" ~ h.id ~ ")\\]\\]" %}
+            {% set rep_h2 = "<a class=\"wikilink\" href=\"" ~ h.permalink ~ "\">" ~ sec.title ~ " &gt; " ~ h.title ~ "</a>" %}
+            {% set_global body_html = body_html | regex_replace(pattern=pat_h2, rep=rep_h2) %}
+
+            {% if h.children %}
+              {% for h2 in h.children %}
+                {% set clean_title2 = h2.title | replace(from="\\", to="\\\\") | replace(from="?", to="\\?") | replace(from="(", to="\\(") | replace(from=")", to="\\)") | replace(from="[", to="\\[") | replace(from="]", to="\\]") %}
+                {% set pat_h2_1 = "(?i)\\[\\[" ~ sec.title ~ "#(?:" ~ clean_title2 ~ "|" ~ h2.id ~ ")\\|([^\\]]+)\\]\\]" %}
+                {% set rep_h2_1 = "<a class=\"wikilink\" href=\"" ~ h2.permalink ~ "\">$1</a>" %}
+                {% set_global body_html = body_html | regex_replace(pattern=pat_h2_1, rep=rep_h2_1) %}
+
+                {% set pat_h2_2 = "(?i)\\[\\[" ~ sec.title ~ "#(?:" ~ clean_title2 ~ "|" ~ h2.id ~ ")\\]\\]" %}
+                {% set rep_h2_2 = "<a class=\"wikilink\" href=\"" ~ h2.permalink ~ "\">" ~ sec.title ~ " &gt; " ~ h2.title ~ "</a>" %}
+                {% set_global body_html = body_html | regex_replace(pattern=pat_h2_2, rep=rep_h2_2) %}
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+
+        {% set pat_s1 = "(?i)\\[\\[" ~ sec.title ~ "#([a-zA-Z0-9_\\-]+)\\|([^\\]]+)\\]\\]" %}
+        {% set rep_s1 = "<a class=\"wikilink\" href=\"" ~ sec.permalink ~ "#$1\">$2</a>" %}
+        {% set_global body_html = body_html | regex_replace(pattern=pat_s1, rep=rep_s1) %}
+
+        {% set pat_s2 = "(?i)\\[\\[" ~ sec.title ~ "#([a-zA-Z0-9_\\-]+)\\]\\]" %}
+        {% set rep_s2 = "<a class=\"wikilink\" href=\"" ~ sec.permalink ~ "#$1\">" ~ sec.title ~ " &gt; $1</a>" %}
+        {% set_global body_html = body_html | regex_replace(pattern=pat_s2, rep=rep_s2) %}
+
+        {% set pat1 = "(?i)\\[\\[" ~ sec.title ~ "\\|([^\\]]+)\\]\\]" %}
+        {% set rep1 = "<a class=\"wikilink\" href=\"" ~ sec.permalink ~ "\">$1</a>" %}
+        {% set_global body_html = body_html | regex_replace(pattern=pat1, rep=rep1) %}
+
+        {% set pat2 = "(?i)\\[\\[" ~ sec.title ~ "\\]\\]" %}
+        {% set rep2 = "<a class=\"wikilink\" href=\"" ~ sec.permalink ~ "\">" ~ sec.title ~ "</a>" %}
+        {% set_global body_html = body_html | regex_replace(pattern=pat2, rep=rep2) %}
+      {% endif %}
+    {% endfor %}
+
+    {% if page.toc %}
+      {% for h in page.toc %}
+        {% set clean_title = h.title | replace(from="\\", to="\\\\") | replace(from="?", to="\\?") | replace(from="(", to="\\(") | replace(from=")", to="\\)") | replace(from="[", to="\\[") | replace(from="]", to="\\]") %}
+        {% set pat_sh1 = "(?i)\\[\\[#(?:" ~ clean_title ~ "|" ~ h.id ~ ")\\|([^\\]]+)\\]\\]" %}
+        {% set rep_sh1 = "<a class=\"wikilink\" href=\"#" ~ h.id ~ "\">$1</a>" %}
+        {% set_global body_html = body_html | regex_replace(pattern=pat_sh1, rep=rep_sh1) %}
+
+        {% set pat_sh2 = "(?i)\\[\\[#(?:" ~ clean_title ~ "|" ~ h.id ~ ")\\]\\]" %}
+        {% set rep_sh2 = "<a class=\"wikilink\" href=\"#" ~ h.id ~ "\">" ~ h.title ~ "</a>" %}
+        {% set_global body_html = body_html | regex_replace(pattern=pat_sh2, rep=rep_sh2) %}
+
+        {% if h.children %}
+          {% for h2 in h.children %}
+            {% set clean_title2 = h2.title | replace(from="\\", to="\\\\") | replace(from="?", to="\\?") | replace(from="(", to="\\(") | replace(from=")", to="\\)") | replace(from="[", to="\\[") | replace(from="]", to="\\]") %}
+            {% set pat_sh2_1 = "(?i)\\[\\[#(?:" ~ clean_title2 ~ "|" ~ h2.id ~ ")\\|([^\\]]+)\\]\\]" %}
+            {% set rep_sh2_1 = "<a class=\"wikilink\" href=\"#" ~ h2.id ~ "\">$1</a>" %}
+            {% set_global body_html = body_html | regex_replace(pattern=pat_sh2_1, rep=rep_sh2_1) %}
+
+            {% set pat_sh2_2 = "(?i)\\[\\[#(?:" ~ clean_title2 ~ "|" ~ h2.id ~ ")\\]\\]" %}
+            {% set rep_sh2_2 = "<a class=\"wikilink\" href=\"#" ~ h2.id ~ "\">" ~ h2.title ~ "</a>" %}
+            {% set_global body_html = body_html | regex_replace(pattern=pat_sh2_2, rep=rep_sh2_2) %}
+
+            {% if h2.children %}
+              {% for h3 in h2.children %}
+                {% set clean_title3 = h3.title | replace(from="\\", to="\\\\") | replace(from="?", to="\\?") | replace(from="(", to="\\(") | replace(from=")", to="\\)") | replace(from="[", to="\\[") | replace(from="]", to="\\]") %}
+                {% set pat_sh3_1 = "(?i)\\[\\[#(?:" ~ clean_title3 ~ "|" ~ h3.id ~ ")\\|([^\\]]+)\\]\\]" %}
+                {% set rep_sh3_1 = "<a class=\"wikilink\" href=\"#" ~ h3.id ~ "\">$1</a>" %}
+                {% set_global body_html = body_html | regex_replace(pattern=pat_sh3_1, rep=rep_sh3_1) %}
+
+                {% set pat_sh3_2 = "(?i)\\[\\[#(?:" ~ clean_title3 ~ "|" ~ h3.id ~ ")\\]\\]" %}
+                {% set rep_sh3_2 = "<a class=\"wikilink\" href=\"#" ~ h3.id ~ "\">" ~ h3.title ~ "</a>" %}
+                {% set_global body_html = body_html | regex_replace(pattern=pat_sh3_2, rep=rep_sh3_2) %}
+              {% endfor %}
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+
+    {% set pat_ssh1 = "(?i)\\[\\[#([a-zA-Z0-9_\\-]+)\\|([^\\]]+)\\]\\]" %}
+    {% set rep_ssh1 = "<a class=\"wikilink\" href=\"#$1\">$2</a>" %}
+    {% set_global body_html = body_html | regex_replace(pattern=pat_ssh1, rep=rep_ssh1) %}
+
+    {% set pat_ssh2 = "(?i)\\[\\[#([a-zA-Z0-9_\\-]+)\\]\\]" %}
+    {% set rep_ssh2 = "<a class=\"wikilink\" href=\"#$1\">$1</a>" %}
+    {% set_global body_html = body_html | regex_replace(pattern=pat_ssh2, rep=rep_ssh2) %}
+
+    <div class="markdown-body">
+      {{ body_html | safe }}
+    </div>
+
+    {% set_global backlink_items = "" %}
+    {% set_global backlink_count = 0 %}
+    {% set target_lower = page.title | lower %}
+    {% set tag1 = "[[" ~ target_lower ~ "]]" %}
+    {% set tag2 = "[[" ~ target_lower ~ "|" %}
+    {% set tag3 = "[[" ~ target_lower ~ "#" %}
+
+    {% if home_sec %}
+      {% set home_lower = home_sec.content | lower %}
+      {% if home_lower is containing(pat=tag1) or home_lower is containing(pat=tag2) or home_lower is containing(pat=tag3) or home_sec.content is containing(pat=page.permalink) %}
+        {% set_global backlink_count = backlink_count + 1 %}
+        {% set card = "<a href=\"" ~ home_sec.permalink ~ "\" class=\"backlink-card\"><span class=\"backlink-title\">" ~ home_sec.title ~ "</span>" %}
+        {% if home_sec.description %}
+          {% set card = card ~ "<span class=\"backlink-desc\">" ~ home_sec.description ~ "</span>" %}
+        {% endif %}
+        {% set card = card ~ "</a>" %}
+        {% set_global backlink_items = backlink_items ~ card %}
+      {% endif %}
+    {% endif %}
+
+    {% for sp in sec_paths %}
+      {% set sec = get_section(path=sp, allow_missing=true) %}
+      {% if sec %}
+        {% if sec.permalink != page.permalink and sec.content %}
+          {% set sec_lower = sec.content | lower %}
+          {% if sec_lower is containing(pat=tag1) or sec_lower is containing(pat=tag2) or sec_lower is containing(pat=tag3) or sec.content is containing(pat=page.permalink) %}
+            {% set_global backlink_count = backlink_count + 1 %}
+            {% set card = "<a href=\"" ~ sec.permalink ~ "\" class=\"backlink-card\"><span class=\"backlink-title\">" ~ sec.title ~ "</span>" %}
+            {% if sec.description %}
+              {% set card = card ~ "<span class=\"backlink-desc\">" ~ sec.description ~ "</span>" %}
+            {% endif %}
+            {% set card = card ~ "</a>" %}
+            {% set_global backlink_items = backlink_items ~ card %}
+          {% endif %}
+        {% endif %}
+
+        {% for other in sec.pages %}
+          {% if other.permalink != page.permalink %}
+            {% set other_lower = other.content | lower %}
+            {% if other_lower is containing(pat=tag1) or other_lower is containing(pat=tag2) or other_lower is containing(pat=tag3) or other.content is containing(pat=page.permalink) %}
+              {% set_global backlink_count = backlink_count + 1 %}
+              {% set card = "<a href=\"" ~ other.permalink ~ "\" class=\"backlink-card\"><span class=\"backlink-title\">" ~ other.title ~ "</span>" %}
+              {% if other.description %}
+                {% set card = card ~ "<span class=\"backlink-desc\">" ~ other.description ~ "</span>" %}
+              {% endif %}
+              {% set card = card ~ "</a>" %}
+              {% set_global backlink_items = backlink_items ~ card %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+    {% endfor %}
+
+    {% if backlink_count > 0 %}
+      <div class="backlinks-box">
+        <div class="backlinks-header">
+          <span class="backlinks-title">Backlinks</span>
+          <span class="backlinks-count">({{ backlink_count }})</span>
+        </div>
+        <div class="backlinks-grid">
+          {{ backlink_items | safe }}
+        </div>
+      </div>
+    {% endif %}
+
+    {% if page.lower or page.higher %}
+      <nav class="page-nav">
+        {% if page.lower %}
+          <a href="{{ page.lower.permalink }}" class="page-nav-link prev">
+            <span class="nav-arrow">←</span>
+            <div class="nav-text">
+              <span class="nav-sub">Previous</span>
+              <span class="nav-title">{{ page.lower.title }}</span>
+            </div>
+          </a>
+        {% else %}
+          <div class="page-nav-spacer"></div>
+        {% endif %}
+
+        {% if page.higher %}
+          <a href="{{ page.higher.permalink }}" class="page-nav-link next">
+            <div class="nav-text">
+              <span class="nav-sub">Next</span>
+              <span class="nav-title">{{ page.higher.title }}</span>
+            </div>
+            <span class="nav-arrow">→</span>
+          </a>
+        {% endif %}
+      </nav>
+    {% endif %}
+  </article>
+
+  {% if page.toc and page.toc | length > 0 %}
+    <aside class="toc-sidebar">
+      <div class="toc-sticky">
+        <div class="toc-title">On this page</div>
+        <ul class="toc-list">
+          {% for h1 in page.toc %}
+            <li>
+              <a href="{{ h1.permalink }}">{{ h1.title }}</a>
+              {% if h1.children %}
+                <ul>
+                  {% for h2 in h1.children %}
+                    <li><a href="{{ h2.permalink }}">{{ h2.title }}</a></li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </aside>
+  {% endif %}
+</div>
+{% endblock content %}

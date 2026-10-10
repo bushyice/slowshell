@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+  <meta name="description" content="{% block description %}{{ config.description }}{% endblock description %}">
+  <meta name="theme-color" content="#0e1c24">
+
+  {% block opengraph %}
+  <meta property="og:title" content="{{ config.title }}">
+  <meta property="og:description" content="{{ config.description }}">
+  {% endblock opengraph %}
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="{{ config.extra.screenshot_url }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="{{ config.extra.screenshot_url }}">
+
+  <link rel="icon" type="image/svg+xml" href="{{ config.extra.icon_url }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Inconsolata:wght@400;600;700&family=Source+Code+Pro:wght@400;600&display=swap">
+  <link rel="stylesheet" href="https://www.nerdfonts.com/assets/css/webfont.css">
+
+  <link rel="stylesheet" href="{{ get_url(path='style.css') }}">
+</head>
+<body>
+
+  <input type="checkbox" id="theme-toggle" class="theme-toggle-checkbox" aria-label="Toggle theme">
+  <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-hidden="true">
+
+  <div class="site-wrapper">
+    <header class="mobile-header">
+      <label for="nav-toggle" class="mobile-menu-btn" aria-label="Toggle navigation">Menu</label>
+      <a href="{{ get_url(path='') }}" class="mobile-brand">Slowshell</a>
+      <span class="mobile-version">v{{ config.extra.version }}</span>
+    </header>
+
+    <div class="layout-container">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <a href="{{ get_url(path='') }}" class="sidebar-brand">
+            <img src="{{ config.extra.icon_url }}" alt="Slowshell Logo" class="sidebar-logo">
+            <span class="sidebar-title">Slowshell</span>
+            <span class="sidebar-badge">v{{ config.extra.version }}</span>
+          </a>
+        </div>
+
+        <nav class="sidebar-nav">
+          <div class="nav-section">
+            <a href="{{ get_url(path='') }}" class="nav-link {% if current_url and current_url == get_url(path='') %}active{% endif %}">
+              Home
+            </a>
+          </div>
+
+          {% set sec_paths = config.extra.sections | default(value=["guides/_index.md", "references/_index.md", "modules/_index.md", "philosophy/_index.md", "plugins/_index.md"]) %}
+          {% for sp in sec_paths %}
+            {% set sec = get_section(path=sp, allow_missing=true) %}
+            {% if sec and (sec.pages or sec.subsections) %}
+            <div class="nav-section">
+              <div class="nav-section-title">
+                <a href="{{ sec.permalink }}">{{ sec.title }}</a>
+              </div>
+              <ul class="nav-list">
+                {% for p in sec.pages %}
+                  <li>
+                    <a href="{{ p.permalink }}" class="nav-link {% if current_url and current_url == p.permalink %}active{% endif %}">
+                      {{ p.title }}
+                    </a>
+                  </li>
+                {% endfor %}
+
+                {% if sec.subsections %}
+                  {% for sub1_path in sec.subsections %}
+                    {% set sub1 = get_section(path=sub1_path) %}
+                    <li>
+                      <a href="{{ sub1.permalink }}" class="nav-link {% if current_url and current_url == sub1.permalink %}active{% endif %}">
+                        {{ sub1.title }}
+                      </a>
+                      {% if sub1.pages or sub1.subsections %}
+                        <ul class="nav-sublist">
+                          {% for p in sub1.pages %}
+                            <li>
+                              <a href="{{ p.permalink }}" class="nav-link {% if current_url and current_url == p.permalink %}active{% endif %}">
+                                {{ p.title }}
+                              </a>
+                            </li>
+                          {% endfor %}
+
+                          {% if sub1.subsections %}
+                            {% for sub2_path in sub1.subsections %}
+                              {% set sub2 = get_section(path=sub2_path) %}
+                              <li>
+                                <a href="{{ sub2.permalink }}" class="nav-link nav-subheading {% if current_url and current_url == sub2.permalink %}active{% endif %}">
+                                  {{ sub2.title }}
+                                </a>
+                                {% if sub2.pages %}
+                                  <ul class="nav-sublist">
+                                    {% for p in sub2.pages %}
+                                      <li>
+                                        <a href="{{ p.permalink }}" class="nav-link {% if current_url and current_url == p.permalink %}active{% endif %}">
+                                          {{ p.title }}
+                                        </a>
+                                      </li>
+                                    {% endfor %}
+                                  </ul>
+                                {% endif %}
+                              </li>
+                            {% endfor %}
+                          {% endif %}
+                        </ul>
+                      {% endif %}
+                    </li>
+                  {% endfor %}
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+          {% endfor %}
+        </nav>
+
+        <div class="sidebar-footer">
+          <label for="theme-toggle" class="theme-toggle-btn" title="Toggle dark/light mode">
+            <span class="theme-label-light"><i class="nf nf-oct-sun"></i> Light</span>
+            <span class="theme-label-dark"><i class="nf nf-oct-moon"></i> Dark</span>
+          </label>
+          <a href="{{ config.extra.repo_url }}" target="_blank" rel="noopener" class="sidebar-link">Repo ↗</a>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <div class="content-container">
+          {% block content %}{% endblock content %}
+        </div>
+      </main>
+    </div>
+  </div>
+
+</body>
+</html>

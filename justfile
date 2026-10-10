@@ -23,3 +23,9 @@ run:
 
 test:
   cargo nextest r
+
+docs:
+  zola --root docs build
+
+docs-serve:
+  zola --root docs serve
