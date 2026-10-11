@@ -4,7 +4,52 @@ use futures_util::StreamExt;
 use slowshell_commons::power::{PowerCmd, PowerData, PowerProfile, SharedPowerState};
 use zbus::{Connection, Proxy};
 
-use crate::util;
+use crate::{lifecycle::ServiceSlot, util};
+
+pub(crate) struct GlobalPower {
+  shared: SharedPowerState,
+  slot: ServiceSlot<PowerCmd>,
+}
+
+static GLOBAL: std::sync::OnceLock<GlobalPower> = std::sync::OnceLock::new();
+
+fn global() -> &'static GlobalPower {
+  use slowshell_commons::power::PowerState;
+  use std::sync::{Arc, Mutex, atomic::AtomicU64};
+
+  GLOBAL.get_or_init(|| {
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    GlobalPower {
+      shared: Arc::new(PowerState {
+        data: Mutex::new(Default::default()),
+        revision: AtomicU64::new(0),
+        cmd_tx,
+      }),
+      slot: ServiceSlot::new(cmd_rx),
+    }
+  })
+}
+
+pub fn shared() -> SharedPowerState {
+  global().shared.clone()
+}
+
+pub fn ensure(store: &mut slowshell_core::Store) -> SharedPowerState {
+  let global = global();
+  store.insert(global.shared.clone());
+
+  if let Some(cmd_rx) = global.slot.take() {
+    let notify = crate::lifecycle::watch_notify(store, slowshell_commons::power::POWER_CHANGED);
+    run(global.shared.clone(), cmd_rx, notify);
+  }
+
+  global.shared.clone()
+}
+
+pub fn running() -> bool {
+  global().slot.running()
+}
 
 pub fn run(
   shared: SharedPowerState,

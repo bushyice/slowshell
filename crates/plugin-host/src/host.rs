@@ -18,8 +18,8 @@ use slowshell_plugin_abi::{
   AudioState, BluetoothState, Color, ComponentFactoryBox, CompositorFactoryBox, CompositorState,
   ConfigParserBox, DesktopItemFactoryBox, ErasedRef, ErasedValue, Host, Host_TO, NetworkState,
   Notification, PayloadBox, PayloadFactoryBox, PayloadParserBox, PowerState,
-  QuickSettingsFactoryBox, RenderableFactoryBox, SpotlightFactoryBox, StoreCallbackBox,
-  SystemState, Theme, TrayState, TypeKey,
+  QuickSettingsFactoryBox, RenderableFactoryBox, ServiceFactoryBox, SpotlightFactoryBox,
+  StoreCallbackBox, SystemState, Theme, TrayState, TypeKey,
 };
 
 use crate::{
@@ -255,7 +255,8 @@ impl Host for HostImpl {
 
   fn dispatch(&self, command: RStr<'_>) -> bool {
     let Some(store) = current_store() else {
-      return false;
+      return crate::service::current_dispatcher()
+        .is_some_and(|dispatcher| dispatcher.dispatch(command.as_str()));
     };
     let Some(dispatcher) = store.borrow::<slowshell_core::ActionDispatcher>() else {
       return false;
@@ -265,7 +266,16 @@ impl Host for HostImpl {
 
   fn dispatch_with_string(&self, name: RStr<'_>, payload: RStr<'_>) -> bool {
     let Some(store) = current_store() else {
-      return false;
+      let Some(dispatcher) = crate::service::current_dispatcher() else {
+        return false;
+      };
+      let Some(builders) = crate::service::current_builders() else {
+        return false;
+      };
+      let Some(args) = slowshell_core::types::split_args(payload.as_str()) else {
+        return false;
+      };
+      return dispatcher.dispatch_with_args(name.as_str(), &args, &builders);
     };
     let Some(dispatcher) = store.borrow::<slowshell_core::ActionDispatcher>() else {
       return false;
@@ -523,6 +533,50 @@ impl Host for HostImpl {
     });
   }
 
+  fn register_service(&self, name: RString, factory: ServiceFactoryBox, autostart: bool) {
+    crate::state::PENDING.with(|pending| {
+      pending.borrow_mut().push(Pending::Service {
+        name: name.to_string(),
+        factory,
+        autostart,
+      });
+    });
+  }
+
+  fn service_start(&self, name: RStr<'_>) -> bool {
+    crate::service::start(name.as_str())
+  }
+
+  fn service_stop(&self, name: RStr<'_>) -> bool {
+    crate::service::stop(name.as_str())
+  }
+
+  fn service_running(&self, name: RStr<'_>) -> bool {
+    crate::service::is_running(name.as_str())
+  }
+
+  fn service_send(&self, name: RStr<'_>, message: RStr<'_>) -> bool {
+    crate::service::send(name.as_str(), message.as_str())
+  }
+
+  fn service_notify(&self) -> bool {
+    crate::service::notify_current()
+  }
+
+  fn service_sleep(&self, millis: u64) -> bool {
+    crate::service::sleep(millis)
+  }
+
+  fn service_stopping(&self) -> bool {
+    crate::service::stopping()
+  }
+
+  fn service_recv(&self, timeout_millis: u32) -> ROption<RString> {
+    crate::service::recv(timeout_millis).map_or(ROption::RNone, |message| {
+      ROption::RSome(RString::from(message))
+    })
+  }
+
   fn register_command(&self, name: RString, title: RString, description: RString) {
     crate::state::PENDING.with(|pending| {
       pending.borrow_mut().push(Pending::Command {
@@ -558,15 +612,14 @@ impl Host for HostImpl {
   }
 
   fn dispatch_payload(&self, name: RStr<'_>, payload: PayloadBox) -> bool {
+    let payload = slowshell_core::types::PayloadBox::new(payload);
     let Some(store) = current_store() else {
-      return false;
+      return crate::service::current_dispatcher()
+        .is_some_and(|dispatcher| dispatcher.dispatch_payload(name.as_str(), Some(payload)));
     };
     let Some(dispatcher) = store.borrow::<slowshell_core::ActionDispatcher>() else {
       return false;
     };
-    dispatcher.dispatch_payload(
-      name.as_str(),
-      Some(slowshell_core::types::PayloadBox::new(payload)),
-    )
+    dispatcher.dispatch_payload(name.as_str(), Some(payload))
   }
 }

@@ -567,3 +567,42 @@ pub trait ConfigParser: Send + Sync + 'static {
 }
 
 pub type ConfigParserBox = ConfigParser_TO<RBox<()>>;
+
+pub trait Service: Send + 'static {
+  fn new(ctx: &Context<'_>) -> Self;
+  fn run(&mut self, ctx: &crate::host::ServiceContext<'_>);
+}
+
+#[sabi_trait]
+pub trait ServiceObject: Send + 'static {
+  fn run(&mut self, ctx: &crate::host::ServiceContext<'_>);
+}
+
+pub type ServiceObjectBox = ServiceObject_TO<RBox<()>>;
+
+#[sabi_trait]
+pub trait ServiceFactory: Send + Sync + 'static {
+  fn create(&self, ctx: &Context<'_>) -> ServiceObjectBox;
+}
+
+pub type ServiceFactoryBox = ServiceFactory_TO<RBox<()>>;
+
+struct ServiceAdapter<T>(T);
+
+impl<T: Service> ServiceObject for ServiceAdapter<T> {
+  fn run(&mut self, ctx: &crate::host::ServiceContext<'_>) {
+    self.0.run(ctx);
+  }
+}
+
+struct ServiceFactoryImpl<T>(PhantomData<fn() -> T>);
+
+impl<T: Service> ServiceFactory for ServiceFactoryImpl<T> {
+  fn create(&self, ctx: &Context<'_>) -> ServiceObjectBox {
+    ServiceObjectBox::from_value(ServiceAdapter(T::new(ctx)), TD_Opaque)
+  }
+}
+
+pub fn service_factory<T: Service>() -> ServiceFactoryBox {
+  ServiceFactoryBox::from_value(ServiceFactoryImpl::<T>(PhantomData), TD_Opaque)
+}

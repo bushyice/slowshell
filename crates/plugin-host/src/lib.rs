@@ -1,6 +1,7 @@
 mod config;
 mod events;
 mod host;
+mod service;
 mod services;
 mod state;
 mod store;
@@ -181,6 +182,10 @@ impl PluginHost {
           type_id: std::any::TypeId::of::<PluginConfigs>(),
           de: config::parse_plugin_configs,
         })),
+      );
+      registry.include_in(
+        "app",
+        ResourceRegistration::CustomConfig(service::start_autostart),
       );
     }
 
@@ -698,6 +703,13 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
           name,
           parser,
         ));
+      }
+      Pending::Service {
+        name,
+        factory,
+        autostart,
+      } => {
+        service::register(plugin_id, name, factory, autostart);
       }
       Pending::Spotlight { name, factory } => {
         #[cfg(feature = "spotlight")]

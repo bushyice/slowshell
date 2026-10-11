@@ -9,10 +9,21 @@ use sysinfo::{
   UpdateKind,
 };
 
-// TODO: Add sort-by
-pub fn run(shared: SharedSystemState, update_time: Duration) {
-  static STARTED: OnceLock<()> = OnceLock::new();
+pub fn ensure(store: &mut slowshell_core::Store, update_time: Duration) -> SharedSystemState {
+  let shared = slowshell_commons::system::shared();
+  store.insert(shared.clone());
+  run(shared.clone(), update_time);
+  shared
+}
 
+pub fn running() -> bool {
+  STARTED.get().is_some()
+}
+
+// TODO: Add sort-by
+static STARTED: OnceLock<()> = OnceLock::new();
+
+pub fn run(shared: SharedSystemState, update_time: Duration) {
   if STARTED.set(()).is_err() {
     return;
   }

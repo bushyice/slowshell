@@ -136,7 +136,28 @@ states:
 | `ctx.power_state()` | Battery, brightness, power profiles |
 | `ctx.compositor_state()` | Monitors, workspaces, active window, overview |
 
-Most of these services only start once a component that owns them shows up in a panel.
+Most of these services only start once a component that owns them shows up in a panel —
+or once a plugin starts them, see below.
+
+## Services
+
+[[Services]] can be started dynamically whenever you need to ensure
+that a certain state is available before you fetch it. 
+
+**Example**:
+```rust
+if !ctx.service_running("network") {
+  ctx.service_start("network");  // true once it's up
+}
+let wifi = ctx.network_state();  // now populated
+```
+
+- `ctx.service_start(name)`: starts a built-in or plugin service once and returns whether
+  it is running.
+- `ctx.service_running(name)`: checks without starting.
+- `ctx.service_send(name, message)`: posts a string to a service inbox (only for plugin services).
+- `ctx.service_stop(name)`: stops a service (also only for plugins).
+
 
 ## The shared store
 

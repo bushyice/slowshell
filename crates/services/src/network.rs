@@ -12,7 +12,61 @@ use slowshell_commons::network::{
 };
 use zbus::zvariant::{OwnedObjectPath, Value};
 
-use crate::util;
+use crate::{lifecycle::ServiceSlot, util};
+
+pub(crate) struct GlobalNetwork {
+  shared: SharedNetworkState,
+  slot: ServiceSlot<NetCmd>,
+}
+
+static GLOBAL: std::sync::OnceLock<GlobalNetwork> = std::sync::OnceLock::new();
+
+fn global() -> &'static GlobalNetwork {
+  use slowshell_commons::network::NetworkState;
+  use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, AtomicU64},
+  };
+
+  GLOBAL.get_or_init(|| {
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    GlobalNetwork {
+      shared: Arc::new(NetworkState {
+        wifi_enabled: AtomicBool::new(true),
+        wifi_hardware_enabled: AtomicBool::new(true),
+        scanning: AtomicBool::new(false),
+        busy: AtomicBool::new(false),
+        state: Mutex::new(Default::default()),
+        menu: Mutex::new(Default::default()),
+        saved_ssids: Mutex::new(None),
+        revision: AtomicU64::new(0),
+        cmd_tx,
+      }),
+      slot: ServiceSlot::new(cmd_rx),
+    }
+  })
+}
+
+pub fn shared() -> SharedNetworkState {
+  global().shared.clone()
+}
+
+pub fn ensure(store: &mut slowshell_core::Store) -> SharedNetworkState {
+  let global = global();
+  store.insert(global.shared.clone());
+
+  if let Some(cmd_rx) = global.slot.take() {
+    let notify = crate::lifecycle::watch_notify(store, slowshell_commons::network::NET_CHANGED);
+    run(global.shared.clone(), cmd_rx, notify);
+  }
+
+  global.shared.clone()
+}
+
+pub fn running() -> bool {
+  global().slot.running()
+}
 
 const DEST: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";

@@ -12,7 +12,61 @@ use slowshell_commons::audio::{
 };
 use zbus::zvariant::Value;
 
-use crate::util;
+use crate::{lifecycle::ServiceSlot, util};
+
+pub(crate) struct GlobalAudio {
+  shared: SharedAudioState,
+  slot: ServiceSlot<AudioCmd>,
+}
+
+static GLOBAL: std::sync::OnceLock<GlobalAudio> = std::sync::OnceLock::new();
+
+pub const PRIMARY_PLAYER_FILE: &str = "audio-primary-player";
+
+fn global() -> &'static GlobalAudio {
+  use slowshell_commons::audio::{AudioState, MprisSelection};
+  use slowshell_core::persistence;
+  use std::sync::{Arc, Mutex, atomic::AtomicU64};
+
+  GLOBAL.get_or_init(|| {
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let selected = persistence::load::<(String, String)>(PRIMARY_PLAYER_FILE)
+      .map(|(bus_name, identity)| MprisSelection { bus_name, identity });
+
+    GlobalAudio {
+      shared: Arc::new(AudioState {
+        state: Mutex::new(Default::default()),
+        player: Mutex::new(None),
+        players: Mutex::new(Vec::new()),
+        selected: Mutex::new(selected),
+        revision: AtomicU64::new(0),
+        cmd_tx,
+      }),
+      slot: ServiceSlot::new(cmd_rx),
+    }
+  })
+}
+
+pub fn shared() -> SharedAudioState {
+  global().shared.clone()
+}
+
+pub fn ensure(store: &mut slowshell_core::Store) -> SharedAudioState {
+  let global = global();
+  store.insert(global.shared.clone());
+
+  if let Some(cmd_rx) = global.slot.take() {
+    let notify = crate::lifecycle::watch_notify(store, slowshell_commons::audio::AUDIO_CHANGED);
+    run(global.shared.clone(), cmd_rx, notify);
+  }
+
+  global.shared.clone()
+}
+
+pub fn running() -> bool {
+  global().slot.running()
+}
 
 pub fn run(
   shared: SharedAudioState,

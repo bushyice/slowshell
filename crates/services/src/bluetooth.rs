@@ -9,7 +9,58 @@ use futures_util::StreamExt;
 use slowshell_commons::bluetooth::{BluetoothCmd, BluetoothDevice, SharedBluetoothState};
 use zbus::zvariant::{ObjectPath, Value};
 
-use crate::util;
+use crate::{lifecycle::ServiceSlot, util};
+
+pub(crate) struct GlobalBluetooth {
+  shared: SharedBluetoothState,
+  slot: ServiceSlot<BluetoothCmd>,
+}
+
+static GLOBAL: std::sync::OnceLock<GlobalBluetooth> = std::sync::OnceLock::new();
+
+fn global() -> &'static GlobalBluetooth {
+  use slowshell_commons::bluetooth::BluetoothState;
+  use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, AtomicU64},
+  };
+
+  GLOBAL.get_or_init(|| {
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    GlobalBluetooth {
+      shared: Arc::new(BluetoothState {
+        powered: AtomicBool::new(false),
+        discovering: AtomicBool::new(false),
+        state: Mutex::new(Default::default()),
+        menu: Mutex::new(Default::default()),
+        revision: AtomicU64::new(0),
+        cmd_tx,
+      }),
+      slot: ServiceSlot::new(cmd_rx),
+    }
+  })
+}
+
+pub fn shared() -> SharedBluetoothState {
+  global().shared.clone()
+}
+
+pub fn ensure(store: &mut slowshell_core::Store) -> SharedBluetoothState {
+  let global = global();
+  store.insert(global.shared.clone());
+
+  if let Some(cmd_rx) = global.slot.take() {
+    let notify = crate::lifecycle::watch_notify(store, slowshell_commons::bluetooth::BT_CHANGED);
+    run(global.shared.clone(), cmd_rx, notify);
+  }
+
+  global.shared.clone()
+}
+
+pub fn running() -> bool {
+  global().slot.running()
+}
 
 const BLUEZ_DEST: &str = "org.bluez";
 const ADAPTER_IFACE: &str = "org.bluez.Adapter1";

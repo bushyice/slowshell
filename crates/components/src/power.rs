@@ -1,26 +1,16 @@
-use std::{
-  os::fd::AsRawFd,
-  sync::{
-    Arc, Mutex, OnceLock,
-    atomic::{AtomicU64, Ordering},
-  },
-};
+use std::sync::atomic::Ordering;
 
 use iced::{
   Alignment, Element, Event, mouse,
   widget::{container, row},
 };
-use nix::{
-  fcntl::{FcntlArg, OFlag, fcntl},
-  sys::epoll::EpollFlags,
-};
 use slowshell_commons::power::{
-  POWER_CHANGED, PowerCmd, PowerState, SharedPowerState, battery_icon, brightness_icon,
+  POWER_CHANGED, PowerCmd, SharedPowerState, battery_icon, brightness_icon,
 };
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
-  listeners::{FdHandle, ListenerAction},
+  listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
   types::{OptionalPayloadBox, PayloadBox, ToUstr, Ustr},
 };
@@ -31,31 +21,7 @@ use crate::{
   Component, ComponentContext, ComponentOptions, MenuConfig, popup_open_action, spaced_component,
 };
 
-struct GlobalPower {
-  shared: SharedPowerState,
-  rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<PowerCmd>>>,
-}
-
-static GLOBAL: OnceLock<GlobalPower> = OnceLock::new();
-
-fn global() -> &'static GlobalPower {
-  GLOBAL.get_or_init(|| {
-    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-
-    GlobalPower {
-      shared: Arc::new(PowerState {
-        data: Mutex::new(Default::default()),
-        revision: AtomicU64::new(0),
-        cmd_tx,
-      }),
-      rx: Mutex::new(Some(cmd_rx)),
-    }
-  })
-}
-
 pub struct Power {
-  signal_fd: Option<i32>,
-  started: bool,
   shared: SharedPowerState,
   last_revision: u64,
   shared_in_store: bool,
@@ -64,9 +30,7 @@ pub struct Power {
 impl Power {
   pub fn new() -> Self {
     Self {
-      signal_fd: None,
-      started: false,
-      shared: global().shared.clone(),
+      shared: slowshell_services::power::shared(),
       last_revision: 0,
       shared_in_store: false,
     }
@@ -74,8 +38,6 @@ impl Power {
 
   pub fn with_shared(shared: SharedPowerState) -> Self {
     Self {
-      signal_fd: None,
-      started: false,
       shared,
       last_revision: 0,
       shared_in_store: false,
@@ -100,49 +62,8 @@ impl Component for Power {
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
-    if let Some(existing) = store.borrow::<SharedPowerState>() {
-      self.shared = existing.clone();
-      self.shared_in_store = true;
-    } else {
-      store.insert(self.shared.clone());
-      self.shared_in_store = true;
-    }
-
-    if self.started {
-      return;
-    }
-    self.started = true;
-
-    let shared = self.shared.clone();
-    let cmd_rx = global().rx.lock().unwrap().take();
-
-    if let Some(cmd_rx) = cmd_rx {
-      let notify = store.borrow::<FdHandle>().and_then(|handle| {
-        let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
-        fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
-
-        let raw = read_fd.as_raw_fd();
-        handle.watch_with_flags(
-          read_fd,
-          EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
-          ListenerAction::Signal {
-            name: POWER_CHANGED.into(),
-            fd: raw,
-          },
-        );
-        self.signal_fd = Some(raw);
-
-        Some(write_fd)
-      });
-
-      slowshell_services::power::run(shared, cmd_rx, notify);
-    }
-  }
-
-  fn stop(&mut self, store: &Store, _options: Option<&ComponentOptions>) {
-    if let (Some(handle), Some(fd)) = (store.borrow::<FdHandle>(), self.signal_fd.take()) {
-      handle.stop_timer(fd);
-    }
+    self.shared = slowshell_services::power::ensure(store);
+    self.shared_in_store = true;
   }
 
   fn update(
@@ -174,9 +95,6 @@ impl Component for Power {
       }
 
       ListenerAction::Named(name) if &**name == POWER_CHANGED => {
-        if let Some(fd) = self.signal_fd {
-          drain_signal_fd(fd);
-        }
         let rev = self.shared.revision.load(Ordering::SeqCst);
         if rev != self.last_revision {
           self.last_revision = rev;

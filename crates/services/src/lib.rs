@@ -2,6 +2,8 @@
 pub mod audio;
 #[cfg(feature = "bluetooth")]
 pub mod bluetooth;
+#[allow(dead_code)]
+pub(crate) mod lifecycle;
 #[cfg(feature = "network")]
 pub mod network;
 #[cfg(feature = "notifications")]
