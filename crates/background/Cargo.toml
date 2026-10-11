@@ -7,7 +7,7 @@ edition = "2024"
 [features]
 default = ["widgets", "audio"]
 widgets = []
-audio = ["slowshell-components/audio"]
+audio = ["slowshell-services/audio"]
 
 [dependencies]
 slowshell-core = { path = "../core" }
@@ -17,7 +17,6 @@ slowshell-desktop = { path = "../desktop" }
 slowshell-registry = { path = "../registry" }
 slowshell-widgets = { path = "../widgets" }
 slowshell-services = { path = "../services" }
-slowshell-components = { path = "../components", optional = true }
 
 iced_exwlshell.workspace = true
 iced.workspace = true

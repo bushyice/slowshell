@@ -91,8 +91,7 @@ impl Component for SystemMon {
       self.timer_fd = Some(fd);
     }
 
-    let shared = self.shared.clone();
-    slowshell_services::system::run(shared, Duration::from_secs(update_time));
+    self.shared = slowshell_services::system::ensure(store, Duration::from_secs(update_time));
   }
 
   fn stop(&mut self, store: &Store, _options: Option<&ComponentOptions>) {

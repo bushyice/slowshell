@@ -929,7 +929,7 @@ impl Renderable for NowplayingWidget {
   ) -> Box<dyn Any + Send> {
     #[cfg(feature = "audio")]
     {
-      slowshell_components::audio::ensure(store);
+      slowshell_services::audio::ensure(store);
     }
 
     #[cfg(not(feature = "audio"))]
@@ -1110,9 +1110,7 @@ impl Renderable for SysmonWidget {
       .unwrap_or(5)
       .clamp(1, 3600) as u64;
 
-    let shared = slowshell_commons::system::shared();
-    store.insert(shared.clone());
-    slowshell_services::system::run(shared, Duration::from_secs(interval));
+    slowshell_services::system::ensure(store, Duration::from_secs(interval));
 
     if options.and_then(|o| o.bool("processes")) == Some(true) {
       set_sample_processes(store, true);

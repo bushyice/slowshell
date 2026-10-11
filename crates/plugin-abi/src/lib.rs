@@ -31,14 +31,14 @@ pub mod prelude {
     Args, CompositorEvent, Event, EventFilter, ItemEffect, Message, WidgetEvent, WidgetEventKind,
   };
   pub use crate::export_plugin;
-  pub use crate::host::{Context, Host, HostRef, Options, StyleRef};
+  pub use crate::host::{Context, Host, HostRef, Options, ServiceContext, StyleRef};
   pub use crate::payload::{PayloadBox, PayloadParser, PayloadParserBox};
   pub use crate::root::{PluginDependency, PluginMod, PluginMod_Ref};
   pub use crate::sdk::HostExt;
   pub use crate::store::{Store, StoreBorrow};
   pub use crate::surfaces::{
     Component, Compositor, DeployResult, DeployableDesktopItem, DeployedItem, DesktopItem, Payload,
-    QuickSettings, Renderable, Spotlight,
+    QuickSettings, Renderable, Service, Spotlight,
   };
   pub use crate::types::*;
   pub use abi_stable::std_types::{RBox, ROption, RResult, RSlice, RStr, RString, RVec};

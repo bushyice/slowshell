@@ -11,7 +11,7 @@ use crate::{
   surfaces::{
     ComponentFactoryBox, CompositorFactoryBox, ConfigParserBox, DeployableDesktopItemFactoryBox,
     DesktopItemFactoryBox, PayloadFactoryBox, QuickSettingsFactoryBox, RenderableFactoryBox,
-    SpotlightFactoryBox,
+    ServiceFactoryBox, SpotlightFactoryBox,
   },
   types::{
     AudioState, BluetoothState, CanvasRef, Color, CompositorState, Length, NetworkState, Node,
@@ -88,6 +88,17 @@ pub trait Host: Send + Sync + 'static {
   fn canvas(&self, width: u32, height: u32) -> ROption<CanvasRef>;
 
   fn store_touch(&self, key: TypeKey) -> bool;
+
+  fn register_service(&self, name: RString, factory: ServiceFactoryBox, autostart: bool);
+  fn service_start(&self, name: RStr<'_>) -> bool;
+  fn service_stop(&self, name: RStr<'_>) -> bool;
+  fn service_running(&self, name: RStr<'_>) -> bool;
+  fn service_send(&self, name: RStr<'_>, message: RStr<'_>) -> bool;
+
+  fn service_notify(&self) -> bool;
+  fn service_sleep(&self, millis: u64) -> bool;
+  fn service_stopping(&self) -> bool;
+  fn service_recv(&self, timeout_millis: u32) -> ROption<RString>;
 }
 
 pub type HostRef<'a> = &'a Host_TO<RBox<()>>;
@@ -197,6 +208,24 @@ impl<'a> Context<'a> {
 
   pub fn dispatch_payload(&self, name: &str, payload: PayloadBox) -> bool {
     self.host.dispatch_payload(RStr::from_str(name), payload)
+  }
+
+  pub fn service_start(&self, name: &str) -> bool {
+    self.host.service_start(RStr::from_str(name))
+  }
+
+  pub fn service_stop(&self, name: &str) -> bool {
+    self.host.service_stop(RStr::from_str(name))
+  }
+
+  pub fn service_running(&self, name: &str) -> bool {
+    self.host.service_running(RStr::from_str(name))
+  }
+
+  pub fn service_send(&self, name: &str, message: &str) -> bool {
+    self
+      .host
+      .service_send(RStr::from_str(name), RStr::from_str(message))
   }
 
   pub fn persistence_get_raw(&self, key: &str) -> Option<RString> {
@@ -378,6 +407,169 @@ impl<'a> Context<'a> {
       .get(name)
       .and_then(|value| value.downcast_ref::<T>())
       .map(f)
+  }
+}
+
+#[repr(C)]
+#[derive(StableAbi, Clone, Copy)]
+pub struct ServiceContext<'a> {
+  host: HostRef<'a>,
+}
+
+impl<'a> ServiceContext<'a> {
+  pub fn new(host: HostRef<'a>) -> Self {
+    Self { host }
+  }
+
+  pub fn host(&self) -> HostRef<'a> {
+    self.host
+  }
+
+  pub fn log(&self, level: i32, message: impl Into<RString>) {
+    self.host.log(level, message.into());
+  }
+
+  pub fn error(&self, code: u32, message: impl Into<RString>) {
+    self.host.plugin_error(code, message.into());
+  }
+
+  pub fn sleep(&self, millis: u64) -> bool {
+    self.host.service_sleep(millis)
+  }
+
+  pub fn stopping(&self) -> bool {
+    self.host.service_stopping()
+  }
+
+  pub fn changed(&self) -> bool {
+    self.host.service_notify()
+  }
+
+  pub fn recv(&self, timeout_millis: u32) -> Option<RString> {
+    match self.host.service_recv(timeout_millis) {
+      ROption::RSome(message) => Some(message),
+      ROption::RNone => None,
+    }
+  }
+
+  pub fn send(&self, name: &str, message: &str) -> bool {
+    self
+      .host
+      .service_send(RStr::from_str(name), RStr::from_str(message))
+  }
+
+  pub fn dispatch(&self, command: &str) -> bool {
+    self.host.dispatch(RStr::from_str(command))
+  }
+
+  pub fn dispatch_with_string(&self, name: &str, payload: &str) -> bool {
+    self
+      .host
+      .dispatch_with_string(RStr::from_str(name), RStr::from_str(payload))
+  }
+
+  pub fn config_str(&self, key: &str) -> Option<RString> {
+    match self.host.config_str(RStr::from_str(key)) {
+      ROption::RSome(value) => Some(value),
+      ROption::RNone => None,
+    }
+  }
+
+  pub fn config_f64(&self, key: &str) -> Option<f64> {
+    match self.host.config_f64(RStr::from_str(key)) {
+      ROption::RSome(value) => Some(value),
+      ROption::RNone => None,
+    }
+  }
+
+  pub fn config_i64(&self, key: &str) -> Option<i64> {
+    match self.host.config_i64(RStr::from_str(key)) {
+      ROption::RSome(value) => Some(value),
+      ROption::RNone => None,
+    }
+  }
+
+  pub fn config_bool(&self, key: &str) -> Option<bool> {
+    match self.host.config_bool(RStr::from_str(key)) {
+      ROption::RSome(value) => Some(value),
+      ROption::RNone => None,
+    }
+  }
+
+  pub fn config<T: Send + Sync + Clone + 'static>(&self, name: &str) -> Option<T> {
+    self.with_config(name, |value: &T| value.clone())
+  }
+
+  pub fn with_config<T: Send + Sync + 'static, R>(
+    &self,
+    name: &str,
+    f: impl FnOnce(&T) -> R,
+  ) -> Option<R> {
+    crate::sdk::config_values()
+      .lock()
+      .unwrap()
+      .get(name)
+      .and_then(|value| value.downcast_ref::<T>())
+      .map(f)
+  }
+
+  pub fn persistence_get_raw(&self, key: &str) -> Option<RString> {
+    match self.host.persistence_get(RStr::from_str(key)) {
+      ROption::RSome(value) => Some(value),
+      ROption::RNone => None,
+    }
+  }
+
+  pub fn persistence_set_raw(&self, key: &str, value: &str) -> bool {
+    self
+      .host
+      .persistence_set(RStr::from_str(key), RStr::from_str(value))
+  }
+
+  pub fn persistence_remove(&self, key: &str) -> bool {
+    self.host.persistence_remove(RStr::from_str(key))
+  }
+
+  pub fn persistence_get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+    let raw = self.persistence_get_raw(key)?;
+    match ron::from_str::<T>(&raw) {
+      Ok(value) => Some(value),
+      Err(e) => {
+        self.log(1, format!("[persistence] failed to decode {key:?}: {e}"));
+        None
+      }
+    }
+  }
+
+  pub fn persistence_open_or_get<T>(&self, key: &str, default: T) -> T
+  where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+  {
+    match self.persistence_get(key) {
+      Some(value) => value,
+      None => {
+        self.persistence_set(key, &default);
+        default
+      }
+    }
+  }
+
+  pub fn persistence_set<T: serde::Serialize>(&self, key: &str, value: &T) -> bool {
+    match ron::ser::to_string(value) {
+      Ok(raw) => self.persistence_set_raw(key, &raw),
+      Err(_) => false,
+    }
+  }
+
+  pub fn persistence_has(&self, key: &str) -> bool {
+    self.persistence_get_raw(key).is_some()
+  }
+
+  pub fn notify(&self, notification: &Notification) -> Option<u32> {
+    match self.host.notify(notification.clone()) {
+      ROption::RSome(id) => Some(id),
+      ROption::RNone => None,
+    }
   }
 }
 

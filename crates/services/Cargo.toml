@@ -14,9 +14,11 @@ tray = ["dep:system-tray"]
 
 [dependencies]
 slowshell-commons = { path = "../commons" }
+slowshell-core = { path = "../core" }
 
 miette.workspace = true
 libc.workspace = true
+nix.workspace = true
 tokio.workspace = true
 zbus = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }

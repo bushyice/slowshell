@@ -2,7 +2,59 @@ use std::{os::fd::OwnedFd, sync::Arc};
 
 use slowshell_commons::tray::{SharedTrayState, TrayCmd};
 
-use crate::util;
+use crate::{lifecycle::ServiceSlot, util};
+
+pub const TRAY_TICK: &str = "component/tray.tick";
+
+pub(crate) struct GlobalTray {
+  shared: SharedTrayState,
+  slot: ServiceSlot<TrayCmd>,
+}
+
+static GLOBAL: std::sync::OnceLock<GlobalTray> = std::sync::OnceLock::new();
+
+fn global() -> &'static GlobalTray {
+  use slowshell_commons::tray::{TrayState, TrayStateInner};
+  use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, atomic::AtomicU64},
+  };
+
+  GLOBAL.get_or_init(|| {
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    GlobalTray {
+      shared: Arc::new(TrayState {
+        state: Mutex::new(TrayStateInner::default()),
+        revision: AtomicU64::new(0),
+        selected: Mutex::new(None),
+        menus: Mutex::new(HashMap::new()),
+        nav: Mutex::new(Arc::new(Vec::new())),
+        cmd_tx,
+      }),
+      slot: ServiceSlot::new(cmd_rx),
+    }
+  })
+}
+
+pub fn shared() -> SharedTrayState {
+  global().shared.clone()
+}
+
+pub fn ensure(store: &mut slowshell_core::Store) -> SharedTrayState {
+  let global = global();
+  store.insert(global.shared.clone());
+
+  if let Some(cmd_rx) = global.slot.take() {
+    let notify = crate::lifecycle::watch_notify(store, TRAY_TICK);
+    run(global.shared.clone(), cmd_rx, notify);
+  }
+
+  global.shared.clone()
+}
+
+pub fn running() -> bool {
+  global().slot.running()
+}
 
 pub fn run(
   shared: SharedTrayState,

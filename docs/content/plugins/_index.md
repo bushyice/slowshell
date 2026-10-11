@@ -25,6 +25,7 @@ are very extensible, and additive with plugins.
 - [[Components Overview|Panel Components]]
 - [[Architecture#Renderables|renderable widget]]
 - [[Architecture#Desktop Items|Desktop Items]]
+- [[Services|Background services]]
 - [[Spotlight#Modes|Spotlight modes]]
 - [[IPC#Commands|IPC Parsers and Commands]]
 - [[Quick settings]]

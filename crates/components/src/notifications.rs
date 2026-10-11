@@ -1,27 +1,16 @@
-use std::{
-  os::fd::AsRawFd,
-  sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
-  },
-};
+use std::sync::atomic::Ordering;
 
 use iced::{
   Element, Event, mouse,
   widget::{container, row},
 };
-use nix::{
-  fcntl::{FcntlArg, OFlag, fcntl},
-  sys::epoll::EpollFlags,
-};
 use slowshell_commons::notifications::{
-  NOTIF_CHANGED, NotificationCmd, NotificationPayload, NotificationSettings, NotificationState,
-  SharedNotificationState,
+  NOTIF_CHANGED, NotificationCmd, NotificationPayload, SharedNotificationState,
 };
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
-  listeners::{FdHandle, ListenerAction},
+  listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
   types::OptionalPayloadBox,
 };
@@ -33,31 +22,17 @@ use crate::{
 };
 
 pub struct Notifications {
-  signal_fd: Option<i32>,
-  started: bool,
   shared: SharedNotificationState,
   last_revision: u64,
   shared_in_store: bool,
-  cmd_rx: Option<tokio::sync::mpsc::UnboundedReceiver<NotificationCmd>>,
 }
 
 impl Notifications {
   pub fn new() -> Self {
-    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     Self {
-      signal_fd: None,
-      started: false,
-      shared: Arc::new(NotificationState {
-        dnd: AtomicBool::new(false),
-        state: Mutex::new(Default::default()),
-        ui: Mutex::new(Default::default()),
-        revision: AtomicU64::new(0),
-        cmd_tx,
-        notify_fd: AtomicI32::new(-1),
-      }),
+      shared: slowshell_services::notifications::shared(),
       last_revision: 0,
       shared_in_store: false,
-      cmd_rx: Some(cmd_rx),
     }
   }
 }
@@ -82,52 +57,8 @@ impl Component for Notifications {
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
-    store.insert(self.shared.clone());
+    self.shared = slowshell_services::notifications::ensure(store);
     self.shared_in_store = true;
-
-    if !NotificationSettings::from_store(store) {
-      return;
-    }
-
-    if self.started {
-      return;
-    }
-    self.started = true;
-
-    let notify = store.borrow::<FdHandle>().and_then(|handle| {
-      let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
-      fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
-
-      let raw = read_fd.as_raw_fd();
-      handle.watch_with_flags(
-        read_fd,
-        EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
-        ListenerAction::Signal {
-          name: NOTIF_CHANGED.into(),
-          fd: raw,
-        },
-      );
-      self.signal_fd = Some(raw);
-
-      self
-        .shared
-        .notify_fd
-        .store(write_fd.as_raw_fd(), Ordering::Relaxed);
-
-      Some(write_fd)
-    });
-
-    let shared = self.shared.clone();
-    let cmd_rx = self.cmd_rx.take();
-    if let Some(cmd_rx) = cmd_rx {
-      slowshell_services::notifications::run(shared, cmd_rx, notify);
-    }
-  }
-
-  fn stop(&mut self, store: &Store, _options: Option<&ComponentOptions>) {
-    if let (Some(handle), Some(fd)) = (store.borrow::<FdHandle>(), self.signal_fd.take()) {
-      handle.stop_timer(fd);
-    }
   }
 
   fn update(
@@ -155,9 +86,6 @@ impl Component for Notifications {
       }
 
       ListenerAction::Named(name) if &**name == NOTIF_CHANGED => {
-        if let Some(fd) = self.signal_fd {
-          drain_signal_fd(fd);
-        }
         let rev = self.shared.revision.load(Ordering::SeqCst);
         if rev != self.last_revision {
           self.last_revision = rev;

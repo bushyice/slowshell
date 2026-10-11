@@ -1,24 +1,14 @@
-use std::{
-  os::fd::AsRawFd,
-  sync::{
-    Arc, Mutex, OnceLock,
-    atomic::{AtomicBool, AtomicU64, Ordering},
-  },
-};
+use std::sync::atomic::Ordering;
 
 use iced::{Element, widget::container};
-use nix::{
-  fcntl::{FcntlArg, OFlag, fcntl},
-  sys::epoll::EpollFlags,
-};
 use slowshell_commons::network::{
-  NET_CHANGED, NetCmd, NetworkPayload, NetworkState, SharedNetworkState, signal_icon,
+  NET_CHANGED, NetCmd, NetworkPayload, SharedNetworkState, signal_icon,
 };
 use slowshell_commons::panels::PanelOrientation;
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
-  listeners::{FdHandle, ListenerAction},
+  listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
   types::OptionalPayloadBox,
 };
@@ -29,37 +19,7 @@ use crate::{
   Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger, vertical_text,
 };
 
-struct GlobalNetwork {
-  shared: SharedNetworkState,
-  rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<NetCmd>>>,
-}
-
-static GLOBAL: OnceLock<GlobalNetwork> = OnceLock::new();
-
-fn global() -> &'static GlobalNetwork {
-  GLOBAL.get_or_init(|| {
-    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-
-    GlobalNetwork {
-      shared: Arc::new(NetworkState {
-        wifi_enabled: AtomicBool::new(true),
-        wifi_hardware_enabled: AtomicBool::new(true),
-        scanning: AtomicBool::new(false),
-        busy: AtomicBool::new(false),
-        state: Mutex::new(Default::default()),
-        menu: Mutex::new(Default::default()),
-        saved_ssids: Mutex::new(None),
-        revision: AtomicU64::new(0),
-        cmd_tx,
-      }),
-      rx: Mutex::new(Some(cmd_rx)),
-    }
-  })
-}
-
 pub struct Network {
-  signal_fd: Option<i32>,
-  started: bool,
   shared: SharedNetworkState,
   last_revision: u64,
   shared_in_store: bool,
@@ -68,9 +28,7 @@ pub struct Network {
 impl Network {
   pub fn new() -> Self {
     Self {
-      signal_fd: None,
-      started: false,
-      shared: global().shared.clone(),
+      shared: slowshell_services::network::shared(),
       last_revision: 0,
       shared_in_store: false,
     }
@@ -110,44 +68,8 @@ impl Component for Network {
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
-    store.insert(self.shared.clone());
+    self.shared = slowshell_services::network::ensure(store);
     self.shared_in_store = true;
-
-    if self.started {
-      return;
-    }
-    self.started = true;
-
-    let shared = self.shared.clone();
-    let cmd_rx = global().rx.lock().unwrap().take();
-
-    if let Some(cmd_rx) = cmd_rx {
-      let notify = store.borrow::<FdHandle>().and_then(|handle| {
-        let (read_fd, write_fd) = nix::unistd::pipe().ok()?;
-        fcntl(&read_fd, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).ok()?;
-
-        let raw = read_fd.as_raw_fd();
-        handle.watch_with_flags(
-          read_fd,
-          EpollFlags::EPOLLIN | EpollFlags::EPOLLET,
-          ListenerAction::Signal {
-            name: NET_CHANGED.into(),
-            fd: raw,
-          },
-        );
-        self.signal_fd = Some(raw);
-
-        Some(write_fd)
-      });
-
-      slowshell_services::network::run(shared, cmd_rx, notify);
-    }
-  }
-
-  fn stop(&mut self, store: &Store, _options: Option<&ComponentOptions>) {
-    if let (Some(handle), Some(fd)) = (store.borrow::<FdHandle>(), self.signal_fd.take()) {
-      handle.stop_timer(fd);
-    }
   }
 
   fn update(
@@ -163,9 +85,7 @@ impl Component for Network {
     }
 
     match event {
-      ListenerAction::Signal { name, fd }
-        if &**name == NET_CHANGED && Some(*fd) == self.signal_fd =>
-      {
+      ListenerAction::Signal { name, fd } if &**name == NET_CHANGED => {
         drain_signal_fd(*fd);
         let revision = self.shared.revision.load(Ordering::Relaxed);
         if revision != self.last_revision {

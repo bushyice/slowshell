@@ -51,12 +51,12 @@ notifications = ["dep:slowshell-notifications"]
 compositor-niri = ["slowshell-compositor/niri"]
 compositor-sway = ["slowshell-compositor/sway"]
 
-components-audio = ["slowshell-components?/audio", "slowshell-background?/audio"]
-components-bluetooth = ["slowshell-components?/bluetooth"]
-components-network = ["slowshell-components?/network"]
-components-notifications = ["slowshell-components?/notifications"]
-components-power = ["slowshell-components?/power"]
-components-tray = ["slowshell-components?/tray"]
+components-audio = ["slowshell-components?/audio", "slowshell-background?/audio", "slowshell-plugin-host?/service-audio"]
+components-bluetooth = ["slowshell-components?/bluetooth", "slowshell-plugin-host?/service-bluetooth"]
+components-network = ["slowshell-components?/network", "slowshell-plugin-host?/service-network"]
+components-notifications = ["slowshell-components?/notifications", "slowshell-plugin-host?/service-notifications"]
+components-power = ["slowshell-components?/power", "slowshell-plugin-host?/service-power"]
+components-tray = ["slowshell-components?/tray", "slowshell-plugin-host?/service-tray"]
 
 animations = []
 

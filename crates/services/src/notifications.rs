@@ -14,6 +14,72 @@ use slowshell_commons::notifications::{
 };
 use zbus::{Connection, zvariant::Value};
 
+use crate::lifecycle::ServiceSlot;
+
+pub(crate) struct GlobalNotifications {
+  shared: SharedNotificationState,
+  slot: ServiceSlot<NotificationCmd>,
+}
+
+static GLOBAL: std::sync::OnceLock<GlobalNotifications> = std::sync::OnceLock::new();
+
+fn global() -> &'static GlobalNotifications {
+  use slowshell_commons::notifications::NotificationState;
+  use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, AtomicI32, AtomicU64},
+  };
+
+  GLOBAL.get_or_init(|| {
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    GlobalNotifications {
+      shared: Arc::new(NotificationState {
+        dnd: AtomicBool::new(false),
+        state: Mutex::new(Default::default()),
+        ui: Mutex::new(Default::default()),
+        revision: AtomicU64::new(0),
+        cmd_tx,
+        notify_fd: AtomicI32::new(-1),
+      }),
+      slot: ServiceSlot::new(cmd_rx),
+    }
+  })
+}
+
+pub fn shared() -> SharedNotificationState {
+  global().shared.clone()
+}
+
+pub fn ensure(store: &mut slowshell_core::Store) -> SharedNotificationState {
+  use std::{os::fd::AsRawFd, sync::atomic::Ordering};
+
+  let global = global();
+  store.insert(global.shared.clone());
+
+  if let Some(cmd_rx) = global.slot.take() {
+    if slowshell_commons::notifications::NotificationSettings::from_store(store) {
+      let notify =
+        crate::lifecycle::watch_notify(store, slowshell_commons::notifications::NOTIF_CHANGED);
+      if let Some(write_fd) = &notify {
+        global
+          .shared
+          .notify_fd
+          .store(write_fd.as_raw_fd(), Ordering::Relaxed);
+      }
+      run(global.shared.clone(), cmd_rx, notify);
+    } else {
+      global.slot.restore(cmd_rx);
+    }
+  }
+
+  global.shared.clone()
+}
+
+pub fn running() -> bool {
+  global().slot.running()
+}
+
 pub struct NotificationServer {
   shared: SharedNotificationState,
   #[allow(dead_code)]
