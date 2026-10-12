@@ -4,6 +4,7 @@
 {% block description %}{{ page.description | default(value=config.description) }}{% endblock description %}
 {% block opengraph %}
 <meta property="og:title" content="{{ page.title }} · {{ config.title }}">
+<meta property="og:site_name" content="Slowshell">
 <meta property="og:description" content="{{ page.description | default(value=config.description) }}">
 {% endblock opengraph %}
 

@@ -196,6 +196,8 @@ panels {
         // core/icon - a standalone clickable / menu icon
         //   action  command dispatched on click
         //   menu    renderable opened on click
+        //   exec    sys command on left click
+        //   exec-alt sys command on right click
         //   icon    a single icon name
         //   icons   a table of icon names where the first one that resolves is used
         component "core/icon" {
