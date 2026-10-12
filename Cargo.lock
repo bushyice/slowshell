@@ -4628,7 +4628,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "clap",
  "futures-channel",
@@ -4657,7 +4657,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-background"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "chrono",
  "iced",
@@ -4678,7 +4678,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-commons"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "freedesktop-desktop-entry",
  "iced",
@@ -4691,7 +4691,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-components"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "chrono",
  "freedesktop-desktop-entry",
@@ -4713,7 +4713,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-compositor"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "async-trait",
  "miette",
@@ -4728,7 +4728,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-config"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "iced",
  "icss",
@@ -4740,7 +4740,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-core"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "futures-channel",
  "iced_exwlshell",
@@ -4754,7 +4754,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-desktop"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "iced",
  "iced_exwlshell",
@@ -4766,7 +4766,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-ipc"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "futures-channel",
  "miette",
@@ -4775,7 +4775,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-menus"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "chrono",
  "iced",
@@ -4792,7 +4792,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-notifications"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "iced",
  "iced_exwlshell",
@@ -4809,7 +4809,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-panels"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "iced",
  "iced_anim",
@@ -4827,7 +4827,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-plugin-abi"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "abi_stable",
  "iced_anim",
@@ -4839,7 +4839,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-plugin-host"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "abi_stable",
  "futures-channel",
@@ -4868,7 +4868,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-popups"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "iced",
  "iced_exwlshell",
@@ -4883,7 +4883,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-registry"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "iced",
  "miette",
@@ -4896,7 +4896,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-services"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "futures-util",
  "libc",
@@ -4912,7 +4912,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-spotlight"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "futures-channel",
  "iced",
@@ -4931,7 +4931,7 @@ dependencies = [
 
 [[package]]
 name = "slowshell-widgets"
-version = "0.1.1-alpha"
+version = "0.1.2-alpha"
 dependencies = [
  "freedesktop-icons",
  "iced",

@@ -57,6 +57,7 @@ A simple clickable icon.
 |---|---|---|---|
 | `action` | string | none | [[IPC]] action dispatched on click, e.g. `"panel.main.toggle"`. |
 | `menu` | string | none | Menu to open, e.g. `"menus/quick"`. |
+| `exec`/`exec-alt` | string array | none | System commands. (left/right click) |
 | `icon` | string | `"applications-system-symbolic"` | A free-desktop icon name. |
 | `icons` | table | none | "one of these" |
 
@@ -64,6 +65,8 @@ A simple clickable icon.
 component "core/icon" {
   label "Quick settings"
   menu "menus/quick"
+  // or
+  exec "sh" "-c" "some command here"
   icon "preferences-system-symbolic"
 }
 ```

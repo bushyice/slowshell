@@ -1,7 +1,7 @@
 use iced::{Element, mouse, widget::mouse_area};
 use slowshell_config::Config;
 use slowshell_core::{Store, listeners::ListenerAction, message::ItemMessage};
-use slowshell_widgets::Icon;
+use slowshell_widgets::{Icon, clickable};
 
 use crate::{
   Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger, spaced_component,
@@ -10,6 +10,8 @@ use crate::{
 #[derive(Default)]
 pub struct IconComp {
   action: Option<ItemMessage>,
+  exec: Option<Vec<String>>,
+  exec_alt: Option<Vec<String>>,
 }
 
 impl Component for IconComp {
@@ -29,7 +31,15 @@ impl Component for IconComp {
           .map(|_| ListenerAction::Named(action.into()))
           .unwrap_or(ListenerAction::Named(action.into())),
       )
-    })
+    });
+
+    self.exec = options
+      .and_then(|o| o.strings("exec"))
+      .map(|v| v.into_iter().map(Into::into).collect());
+
+    self.exec_alt = options
+      .and_then(|o| o.strings("exec-alt"))
+      .map(|v| v.into_iter().map(Into::into).collect());
   }
 
   fn view<'a>(
@@ -80,6 +90,43 @@ impl Component for IconComp {
         .interaction(mouse::Interaction::Pointer)
         .on_press(action.clone())
         .into()
+    } else if let Some(exec) = &self.exec {
+      let exec_alt = &self.exec_alt;
+
+      clickable(
+        mouse_area(spaced_component(config, ctx, icon, true))
+          .interaction(mouse::Interaction::Pointer)
+          .into(),
+        move |event, _, _| {
+          let iced::Event::Mouse(iced::advanced::mouse::Event::ButtonPressed(button)) = event
+          else {
+            return None;
+          };
+
+          let exec = if matches!(button, mouse::Button::Right) {
+            if let Some(exec) = exec_alt {
+              exec
+            } else {
+              return None;
+            }
+          } else {
+            exec
+          };
+
+          use std::process::{Command, Stdio};
+
+          if let Some((program, args)) = exec.split_first() {
+            let _ = Command::new(program)
+              .args(args)
+              .stdin(Stdio::null())
+              .stdout(Stdio::null())
+              .stderr(Stdio::null())
+              .spawn();
+          }
+
+          None
+        },
+      )
     } else {
       spaced_component(config, ctx, icon, false)
     }
