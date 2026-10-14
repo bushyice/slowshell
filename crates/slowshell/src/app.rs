@@ -257,6 +257,19 @@ impl App {
           }
           Task::none()
         }
+        slowshell_core::message::ItemMessage::Action(
+          slowshell_core::listeners::ListenerAction::FocusMonitor(name),
+        ) => {
+          let Some(compositor) = self.store.borrow_mut::<CompositorStore>() else {
+            return Task::none();
+          };
+          if let Err(e) =
+            compositor.send_cmd(slowshell_compositor::CompositorCommand::FocusMonitor(name))
+          {
+            eprintln!("Failed to focus monitor: {e}");
+          }
+          Task::none()
+        }
         slowshell_core::message::ItemMessage::Action(action) => self.update_items(&action),
         slowshell_core::message::ItemMessage::EffectAction(id, effect, action) => Task::batch([
           self.items.handle_message(

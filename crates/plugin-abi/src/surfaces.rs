@@ -377,6 +377,15 @@ pub fn deployable_desktop_item_factory<T: DeployableDesktopItem>() -> Deployable
   )
 }
 
+#[repr(C)]
+#[derive(StableAbi, Clone, Debug)]
+pub enum CompositorCommand {
+  FocusWorkspace(i32),
+  FocusWindow(u64),
+  FocusMonitor(RString),
+  Custom(PayloadBox),
+}
+
 pub trait Compositor: Send + 'static {
   fn new(ctx: &Context<'_>) -> Self;
   fn is_active(&self) -> bool {
@@ -384,7 +393,7 @@ pub trait Compositor: Send + 'static {
   }
   fn initialize(&mut self, _ctx: &Context<'_>) {}
   fn update_state(&mut self, _ctx: &Context<'_>) {}
-  fn send_command(&mut self, _ctx: &Context<'_>, _command: u32, _arg: i32) {}
+  fn send_command(&mut self, _ctx: &Context<'_>, _command: &CompositorCommand) {}
 }
 
 #[sabi_trait]
@@ -392,7 +401,7 @@ pub trait CompositorObject: Send + 'static {
   fn is_active(&self) -> bool;
   fn initialize(&mut self, ctx: &Context<'_>);
   fn update_state(&mut self, ctx: &Context<'_>);
-  fn send_command(&mut self, ctx: &Context<'_>, command: u32, arg: i32);
+  fn send_command(&mut self, ctx: &Context<'_>, command: &CompositorCommand);
 }
 
 pub type CompositorObjectBox = CompositorObject_TO<RBox<()>>;
@@ -419,8 +428,8 @@ impl<T: Compositor> CompositorObject for CompositorAdapter<T> {
     self.0.update_state(ctx);
   }
 
-  fn send_command(&mut self, ctx: &Context<'_>, command: u32, arg: i32) {
-    self.0.send_command(ctx, command, arg);
+  fn send_command(&mut self, ctx: &Context<'_>, command: &CompositorCommand) {
+    self.0.send_command(ctx, command);
   }
 }
 

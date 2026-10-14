@@ -70,6 +70,43 @@ impl Compositor for NiriCompositor {
           }
         }
       }
+      crate::CompositorCommand::FocusMonitor(name) => {
+        let socket = self.get_or_connect_cmd_socket()?;
+
+        let reply = socket.send(niri_ipc::Request::Action(niri_ipc::Action::FocusMonitor {
+          output: name,
+        }));
+
+        match reply {
+          Ok(Err(e)) => Err(miette::miette!("niri failed to focus output: {e}")),
+          Ok(Ok(_)) => Ok(Void),
+          Err(e) => {
+            self.cmd_socket = None;
+            Err(e).into_diagnostic()
+          }
+        }
+      }
+      crate::CompositorCommand::Custom(content) => {
+        let socket = self.get_or_connect_cmd_socket()?;
+
+        let reply = socket.send(niri_ipc::Request::Action(
+          content
+            .as_this::<niri_ipc::Action>()
+            .cloned()
+            .ok_or(miette::miette!(
+              "niri failed to send command: unsupported action"
+            ))?,
+        ));
+
+        match reply {
+          Ok(Err(e)) => Err(miette::miette!("niri failed to send command: {e}")),
+          Ok(Ok(_)) => Ok(Void),
+          Err(e) => {
+            self.cmd_socket = None;
+            Err(e).into_diagnostic()
+          }
+        }
+      }
     }
   }
 

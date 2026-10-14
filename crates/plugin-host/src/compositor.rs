@@ -3,17 +3,40 @@ use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::{CompositorEvent, Listeners},
-  types::Void,
+  types::{PayloadBox as CorePayloadBox, Void},
 };
-use slowshell_plugin_abi::{CompositorObjectBox, Context};
+use slowshell_plugin_abi::{
+  Args, CompositorCommand as AbiCompositorCommand, CompositorObjectBox, Context, PayloadBox,
+  RString,
+};
 
 use crate::{
   host::host,
   state::{PluginScope, ScopedCompositorState, ScopedConfig, ScopedListeners, store_scope},
 };
 
-const COMPOSITOR_FOCUS_WORKSPACE: u32 = 0;
-const COMPOSITOR_FOCUS_WINDOW: u32 = 1;
+fn abi_payload(payload: &CorePayloadBox) -> PayloadBox {
+  payload
+    .as_this::<PayloadBox>()
+    .cloned()
+    .or_else(|| {
+      payload
+        .as_this::<String>()
+        .map(|text| PayloadBox::new(RString::from(text.as_str())))
+    })
+    .unwrap_or_else(|| PayloadBox::new(Args::default()))
+}
+
+fn abi_command(cmd: CompositorCommand) -> AbiCompositorCommand {
+  match cmd {
+    CompositorCommand::FocusWorkspace(index) => AbiCompositorCommand::FocusWorkspace(index),
+    CompositorCommand::FocusWindow(id) => AbiCompositorCommand::FocusWindow(id),
+    CompositorCommand::FocusMonitor(name) => {
+      AbiCompositorCommand::FocusMonitor(RString::from(name))
+    }
+    CompositorCommand::Custom(payload) => AbiCompositorCommand::Custom(abi_payload(&payload)),
+  }
+}
 
 pub(crate) struct PluginCompositor {
   plugin_id: String,
@@ -39,15 +62,12 @@ impl Compositor for PluginCompositor {
   }
 
   fn send_cmd(&mut self, cmd: CompositorCommand) -> miette::Result<Void> {
-    let (command, arg) = match cmd {
-      CompositorCommand::FocusWorkspace(index) => (COMPOSITOR_FOCUS_WORKSPACE, index),
-      CompositorCommand::FocusWindow(id) => (COMPOSITOR_FOCUS_WINDOW, id as i32),
-    };
+    let command = abi_command(cmd);
 
     let _plugin_scope = PluginScope::enter(&self.plugin_id);
     let _state_scope = ScopedCompositorState::current(&mut self.state);
     let ctx = Context::new(host());
-    self.inner.send_command(&ctx, command, arg);
+    self.inner.send_command(&ctx, &command);
 
     Ok(Void)
   }

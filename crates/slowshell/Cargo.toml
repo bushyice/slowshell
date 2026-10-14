@@ -24,6 +24,8 @@ base = [
 compositors = [
   "compositor-niri",
   "compositor-sway",
+  "compositor-hyprland",
+  "compositor-fallback",
 ]
 
 components = [
@@ -50,6 +52,8 @@ notifications = ["dep:slowshell-notifications"]
 
 compositor-niri = ["slowshell-compositor/niri"]
 compositor-sway = ["slowshell-compositor/sway"]
+compositor-hyprland = ["slowshell-compositor/hyprland"]
+compositor-fallback = ["slowshell-compositor/fallback"]
 
 components-audio = ["slowshell-components?/audio", "slowshell-background?/audio", "slowshell-plugin-host?/service-audio"]
 components-bluetooth = ["slowshell-components?/bluetooth", "slowshell-plugin-host?/service-bluetooth"]

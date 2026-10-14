@@ -76,11 +76,12 @@ impl Compositor for MyCompositor {
     ctx.set_compositor_state(self.state.clone());
   }
 
-  fn send_command(&mut self, _ctx: &Context<'_>, command: u32, arg: i32) {
+  fn send_command(&mut self, _ctx: &Context<'_>, command: &CompositorCommand) {
     match command {
-      0 => focus_workspace(arg as u8),
-      1 => focus_window(arg as u64),
-      _ => {}
+      CompositorCommand::FocusWorkspace(idx) => focus_workspace(*idx as u8),
+      CompositorCommand::FocusWindow(id) => focus_window(*id),
+      CompositorCommand::FocusMonitor(name) => focus_monitor(name.as_str()),
+      CompositorCommand::Custom(payload) => custom(payload),
     }
   }
 }
