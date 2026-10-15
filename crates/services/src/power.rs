@@ -69,6 +69,28 @@ pub fn run(
   });
 }
 
+async fn properties_stream(
+  conn: &zbus::Connection,
+  path: &str,
+  interface: &str,
+) -> Option<zbus::MessageStream> {
+  let rule = zbus::MatchRule::builder()
+    .msg_type(zbus::message::Type::Signal)
+    .interface("org.freedesktop.DBus.Properties")
+    .ok()?
+    .member("PropertiesChanged")
+    .ok()?
+    .path(path)
+    .ok()?
+    .add_arg(interface)
+    .ok()?
+    .build();
+
+  zbus::MessageStream::for_match_rule(rule, conn, Some(16))
+    .await
+    .ok()
+}
+
 async fn power_loop(
   shared: &SharedPowerState,
   cmd_rx: &mut tokio::sync::mpsc::UnboundedReceiver<PowerCmd>,
@@ -122,16 +144,23 @@ async fn power_loop(
     None
   };
 
-  let mut battery_stream = if let Some(ref bp) = battery_proxy {
-    bp.receive_all_signals().await.ok()
-  } else {
-    None
+  let mut battery_stream = match (system_conn.as_ref(), battery_path.as_ref()) {
+    (Some(conn), Some(path)) => {
+      properties_stream(conn, path.as_str(), "org.freedesktop.UPower.Device").await
+    }
+    _ => None,
   };
 
-  let mut profiles_stream = if let Some(ref pp) = power_profiles_proxy {
-    pp.receive_all_signals().await.ok()
-  } else {
-    None
+  let mut profiles_stream = match system_conn.as_ref() {
+    Some(conn) => {
+      properties_stream(
+        conn,
+        "/net/hadess/PowerProfiles",
+        "net.hadess.PowerProfiles",
+      )
+      .await
+    }
+    None => None,
   };
 
   refresh_all(
@@ -141,6 +170,11 @@ async fn power_loop(
   )
   .await;
   bump(shared, notify);
+
+  let mut poll = tokio::time::interval_at(
+    tokio::time::Instant::now() + Duration::from_secs(60),
+    Duration::from_secs(60),
+  );
 
   loop {
     tokio::select! {
@@ -163,6 +197,12 @@ async fn power_loop(
           futures_util::future::pending().await
         }
       } => {
+        if refresh_all(shared, battery_proxy.as_ref(), power_profiles_proxy.as_ref()).await {
+          bump(shared, notify);
+        }
+      }
+
+      _ = poll.tick() => {
         if refresh_all(shared, battery_proxy.as_ref(), power_profiles_proxy.as_ref()).await {
           bump(shared, notify);
         }

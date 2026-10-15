@@ -8,6 +8,8 @@ edition = "2024"
 [features]
 niri = ["dep:niri-ipc"]
 sway = []
+hyprland = ["dep:hyprland", "dep:futures-lite"]
+fallback = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr"]
 
 [dependencies]
 slowshell-core = { path = "../core" }
@@ -22,4 +24,11 @@ async-trait.workspace = true
 tokio.workspace = true
 
 niri-ipc = { workspace = true, optional = true }
+
+hyprland = { version = "0.4.0-beta.3", optional = true, default-features = false, features = ["listener", "tokio"] }
+futures-lite = { version = "2", optional = true }
+
+wayland-client = { version = "0.31", optional = true }
+wayland-protocols = { version = "0.32", features = ["client", "staging"], optional = true }
+wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
 

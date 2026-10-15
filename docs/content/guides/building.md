@@ -54,6 +54,8 @@ cargo install slowshell --no-default-features \
 | `notifications`            | Desktop notifications.                                                                           |
 | `compositor-niri`          | Niri compositor integration.                                                                     |
 | `compositor-sway`          | Sway compositor integration.                                                                     |
+| `compositor-hyprland`      | Hyprland compositor integration.                                                                 |
+| `compositor-fallback`      | Fallback integration.               |
 | `components-audio`         | Audio controls and information.                                                                  |
 | `components-bluetooth`     | Bluetooth controls and information.                                                              |
 | `components-network`       | Network controls and information.                                                                |

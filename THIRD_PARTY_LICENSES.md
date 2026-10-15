@@ -16,6 +16,10 @@ The following crates are used by this project. For full details, see
 - freedesktop-icons (0.4.x): MIT License
 - freedesktop-desktop-entry (0.8.x): MPL-2.0
 - niri-ipc (26.4.0): GPL-3.0-or-later (see https://github.com/YaLTeR/niri)
+- hyprland (0.4.0-beta.3): GPL-3.0-or-later (see https://github.com/hyprland-community/hyprland-rs)
+- wayland-client (0.31.x): MIT License (see https://github.com/Smithay/wayland-rs)
+- wayland-protocols (0.32.x): MIT License (see https://github.com/Smithay/wayland-rs)
+- wayland-protocols-wlr (0.3.x): MIT License (see https://github.com/Smithay/wayland-rs)
 - iced_exwlshell (git): MIT License
 
 Many other dependencies are available under MIT or Apache-2.0 licenses. Refer

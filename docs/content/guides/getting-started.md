@@ -10,8 +10,8 @@ is pretty much straight-forward.
 ## What do I need?
 
 Slowshell is a wayland **layer-shell** client. Which means that you will need a wayland
-session on a compositor that supports said clients. Currently **niri** and **sway**
-are supported out of the box.
+session on a compositor that supports said clients. Currently **niri**, **sway**
+and **hyprland** are supported out of the box.
 
 **Optional Dependencies**: These are not fatal requirements, but provide inner machinery for
 the various components within:

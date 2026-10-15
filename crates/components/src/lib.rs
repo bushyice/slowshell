@@ -118,7 +118,11 @@ pub struct MenuConfig {
   pub position: PanelEdge,
 }
 
-pub fn popup_open_action(config: &MenuConfig, cursor: iced::Point) -> ListenerAction {
+pub fn popup_open_action(
+  config: &MenuConfig,
+  cursor: iced::Point,
+  monitor: &str,
+) -> ListenerAction {
   ListenerAction::Payload {
     name: "popup.toggle".to_ustr(),
     payload: Some(PayloadBox::new(PopupSettings {
@@ -142,6 +146,7 @@ pub fn popup_open_action(config: &MenuConfig, cursor: iced::Point) -> ListenerAc
         PanelEdge::Right { .. } => (PopupPosition::Fixed(0.0), PopupPosition::Fixed(cursor.y)),
       },
       insets: true,
+      monitor: Some(monitor.to_ustr()),
     })),
   }
 }
@@ -220,6 +225,7 @@ pub fn menu_trigger<'a>(
     return body;
   }
 
+  let monitor = ctx.monitor.to_ustr();
   let action =
     move |event: &Event, layout: iced::advanced::layout::Layout<'_>, cursor: mouse::Cursor| {
       if !cursor.is_over(layout.bounds()) {
@@ -234,7 +240,9 @@ pub fn menu_trigger<'a>(
       let Some(point) = cursor.position() else {
         return None;
       };
-      Some(ItemMessage::Action(popup_open_action(&config, point)))
+      Some(ItemMessage::Action(popup_open_action(
+        &config, point, &monitor,
+      )))
     };
 
   EventWrapper::new(body, action).into()
@@ -355,7 +363,7 @@ mod tests {
       panel_name: None,
       position: PanelEdge::Top { height: 32 },
     };
-    let action = popup_open_action(&menu_config, iced::Point::ORIGIN);
+    let action = popup_open_action(&menu_config, iced::Point::ORIGIN, "DP-1");
     if let ListenerAction::Payload { name, payload } = action {
       assert_eq!(name.as_ref(), "popup.toggle");
       let payload = payload.expect("payload should be Some");
@@ -375,6 +383,7 @@ mod tests {
       let settings = settings.unwrap();
       assert!(settings.insets);
       assert_eq!(settings.content.as_ref(), "menus/sound");
+      assert_eq!(settings.monitor.as_deref(), Some("DP-1"));
     } else {
       panic!("Expected ListenerAction::Payload");
     }

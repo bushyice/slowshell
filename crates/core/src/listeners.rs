@@ -125,6 +125,7 @@ pub enum ListenerAction {
   Frame,
   FocusWorkspace(u8),
   FocusWindow(u64),
+  FocusMonitor(String),
   None,
 }
 

@@ -184,6 +184,10 @@ impl WlrCompositor {
     let command = match cmd {
       CompositorCommand::FocusWorkspace(idx) => format!("workspace number {idx}"),
       CompositorCommand::FocusWindow(id) => format!("[con_id={id}] focus"),
+      CompositorCommand::FocusMonitor(name) => format!("focus output {name}"),
+      CompositorCommand::Custom(content) => {
+        content.as_this::<String>().cloned().unwrap_or_default()
+      }
     };
 
     let stream = self.get_or_connect_cmd_socket()?;

@@ -224,6 +224,7 @@ impl Component for Power {
     };
 
     let menu_suppressed = ctx.menu_suppressed;
+    let monitor = ctx.monitor.to_ustr();
 
     let action =
       move |event: &Event, layout: iced::advanced::layout::Layout<'_>, cursor: mouse::Cursor| {
@@ -246,7 +247,11 @@ impl Component for Power {
           }
           Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if !menu_suppressed => {
             let point = cursor.position()?;
-            Some(ItemMessage::Action(popup_open_action(&menu_config, point)))
+            Some(ItemMessage::Action(popup_open_action(
+              &menu_config,
+              point,
+              &monitor,
+            )))
           }
           _ => None,
         }

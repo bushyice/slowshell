@@ -1,3 +1,7 @@
+#[cfg(feature = "fallback")]
+pub mod fallback;
+#[cfg(feature = "hyprland")]
+pub mod hyprland;
 #[cfg(feature = "niri")]
 pub mod niri;
 #[cfg(feature = "sway")]
@@ -7,7 +11,7 @@ use slowshell_config::Config;
 use slowshell_core::{
   Monitor, Store, Window, Workspace,
   listeners::{CompositorEvent, Listeners},
-  types::{Ustr, Void},
+  types::{PayloadBox, Ustr, Void},
 };
 use std::collections::HashMap;
 
@@ -15,6 +19,8 @@ use std::collections::HashMap;
 pub enum CompositorCommand {
   FocusWorkspace(i32),
   FocusWindow(u64),
+  FocusMonitor(String),
+  Custom(PayloadBox),
 }
 
 #[derive(Debug, Default)]
@@ -78,6 +84,18 @@ impl CompositorStore {
       .inner
       .push(("sway".into(), Box::new(sway::WlrCompositor::new())));
 
+    #[cfg(feature = "hyprland")]
+    comps.inner.push((
+      "hyprland".into(),
+      Box::new(hyprland::HyprlandCompositor::new()),
+    ));
+
+    #[cfg(feature = "fallback")]
+    comps.inner.push((
+      "fallback".into(),
+      Box::new(fallback::FallbackCompositor::new()),
+    ));
+
     comps
   }
 
@@ -108,6 +126,10 @@ impl CompositorStore {
     }
 
     Err(miette::miette!("Compositor was not detected"))
+  }
+
+  pub fn active(&self) -> &Ustr {
+    &self.active
   }
 
   pub fn state(&self) -> miette::Result<&CompositorState> {

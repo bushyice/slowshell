@@ -258,10 +258,11 @@ impl DeployableDesktopItem for PanelDeloyer {
         let position = payload.position;
         let height = payload.height;
 
+        let scope = payload.monitor.clone().unwrap_or(MonitorScope::PerMonitor);
         let panel = Panel::new(&*panel_name, position)
           .with_height(height)
           .with_transparency(payload.enabled)
-          .with_scope(payload.monitor.clone().unwrap_or(MonitorScope::PerMonitor));
+          .with_scope(scope.clone());
 
         if let Some(panels) = store.borrow_mut::<PanelPositions>() {
           panels.set(
@@ -272,6 +273,7 @@ impl DeployableDesktopItem for PanelDeloyer {
               Position::Left => PanelEdge::Left { width: height },
               Position::Right => PanelEdge::Right { width: height },
             },
+            scope_monitors(&scope),
           );
         }
 
@@ -1337,6 +1339,7 @@ impl Panel {
           Position::Left => PanelEdge::Left { width: height },
           Position::Right => PanelEdge::Right { width: height },
         },
+        scope_monitors(&self.scope),
       );
     }
     self.hidden = false;
@@ -1404,7 +1407,11 @@ fn handle_panel_config_reload(panel: &mut Panel, config: &Config, store: &mut St
     if let Some(panels) = store.borrow_mut::<PanelPositions>()
       && old_edge != panel.edge()
     {
-      panels.set(panel.name.clone(), panel.edge());
+      panels.set(
+        panel.name.clone(),
+        panel.edge(),
+        scope_monitors(&panel.scope),
+      );
     }
 
     let left_changed = panel.diff_section(
@@ -1437,6 +1444,17 @@ fn handle_panel_config_reload(panel: &mut Panel, config: &Config, store: &mut St
   }
 }
 
+/// The monitors a panel's scope covers; `None` means every monitor.
+fn scope_monitors(scope: &MonitorScope) -> Option<Vec<Ustr>> {
+  match scope {
+    MonitorScope::PerMonitor => None,
+    // a single but unspecified monitor: approximate as every monitor
+    MonitorScope::Single(None) => None,
+    MonitorScope::Single(Some(name)) => Some(vec![name.clone()]),
+    MonitorScope::OnMonitors(names) => Some(names.clone()),
+  }
+}
+
 impl DesktopItem for Panel {
   fn id(&self) -> &str {
     &self.cached_id
@@ -1445,7 +1463,7 @@ impl DesktopItem for Panel {
   fn layer(&self, _config: &Config, monitor: &str) -> NewLayerShellSettings {
     let (w, h) = self.size();
     NewLayerShellSettings {
-      layer: Layer::Overlay,
+      layer: Layer::Top,
       anchor: self.position.anchor(),
       exclusive_zone: Some(self.exclusive_zone(self.autohide)),
       size: layer_size(w, h),
@@ -1497,6 +1515,7 @@ impl DesktopItem for Panel {
           Position::Left => PanelEdge::Left { width: height },
           Position::Right => PanelEdge::Right { width: height },
         },
+        scope_monitors(&self.scope),
       );
     }
 
@@ -1555,6 +1574,7 @@ impl DesktopItem for Panel {
                 Position::Left => PanelEdge::Left { width: height },
                 Position::Right => PanelEdge::Right { width: height },
               },
+              scope_monitors(&self.scope),
             );
           }
         }

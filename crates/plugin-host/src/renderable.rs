@@ -312,7 +312,7 @@ impl Renderable for PluginRenderable {
       .with_backdrop(Backdrop::transparent().with_close_on_click(true))
       .with_position(popup.position.0.get(store), popup.position.1.get(store))
       .with_panel_edge(popup.panel_edge)
-      .with_panel_insets(store)
+      .with_panel_insets(store, popup.monitor.as_deref())
       .with_on_close(ItemMessage::Effect(id, ItemEffect::Hide));
 
     sized = sized.with_width(if settings.width > 0.0 {

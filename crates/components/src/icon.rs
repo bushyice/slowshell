@@ -16,22 +16,9 @@ pub struct IconComp {
 
 impl Component for IconComp {
   fn watch(&mut self, _store: &mut Store, options: Option<&ComponentOptions>) {
-    self.action = options.and_then(|o| o.str("action")).map(|action| {
-      ItemMessage::Action(
-        options
-          // .and_then(|o| o.table("payload"))
-          // .map(|t| ListenerAction::Payload {
-          //   name: action.into(),
-          //   payload: Some(
-          //     t.iter()
-          //       .filter_map(|(key, value)| Some((key.to_ustr(), value.as_str()?.to_ustr())))
-          //       .collect(),
-          //   ),
-          // })
-          .map(|_| ListenerAction::Named(action.into()))
-          .unwrap_or(ListenerAction::Named(action.into())),
-      )
-    });
+    self.action = options
+      .and_then(|o| o.str("action"))
+      .map(|action| ItemMessage::Action(ListenerAction::Named(action.into())));
 
     self.exec = options
       .and_then(|o| o.strings("exec"))
