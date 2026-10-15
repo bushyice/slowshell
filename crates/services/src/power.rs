@@ -1,7 +1,15 @@
-use std::{fs, os::fd::OwnedFd, sync::Arc, time::Duration};
+// TODO: Use crates
+
+use std::{
+  fs,
+  os::fd::{AsRawFd, OwnedFd},
+  sync::Arc,
+  time::Duration,
+};
 
 use futures_util::StreamExt;
 use slowshell_commons::power::{PowerCmd, PowerData, PowerProfile, SharedPowerState};
+use tokio::io::unix::AsyncFd;
 use zbus::{Connection, Proxy};
 
 use crate::{lifecycle::ServiceSlot, util};
@@ -171,10 +179,17 @@ async fn power_loop(
   .await;
   bump(shared, notify);
 
+  let uevent = uevent_socket();
+
   let mut poll = tokio::time::interval_at(
     tokio::time::Instant::now() + Duration::from_secs(60),
     Duration::from_secs(60),
   );
+
+  // let mut brightness_poll = tokio::time::interval_at(
+  //   tokio::time::Instant::now() + Duration::from_secs(60),
+  //   Duration::from_secs(60),
+  // );
 
   loop {
     tokio::select! {
@@ -202,6 +217,31 @@ async fn power_loop(
         }
       }
 
+      backlight_event = async {
+        match uevent.as_ref() {
+          Some(fd) => {
+            if let Ok(mut guard) = fd.readable().await {
+              guard.clear_ready();
+              drop(guard);
+              drain_uevents(fd)
+            } else {
+              false
+            }
+          }
+          None => futures_util::future::pending::<bool>().await,
+        }
+      } => {
+        if backlight_event && refresh_brightness_shared(shared) {
+          bump(shared, notify);
+        }
+      }
+
+      // _ = brightness_poll.tick() => {
+      //   if sysfs_backlight_dir().is_some() && refresh_brightness_shared(shared) {
+      //     bump(shared, notify);
+      //   }
+      // }
+
       _ = poll.tick() => {
         if refresh_all(shared, battery_proxy.as_ref(), power_profiles_proxy.as_ref()).await {
           bump(shared, notify);
@@ -210,7 +250,7 @@ async fn power_loop(
 
       cmd = cmd_rx.recv() => {
         let Some(cmd) = cmd else { break; };
-        handle_cmd(cmd, shared, power_profiles_proxy.as_ref()).await;
+        handle_cmd(cmd, power_profiles_proxy.as_ref()).await;
         refresh_all(shared, battery_proxy.as_ref(), power_profiles_proxy.as_ref()).await;
         bump(shared, notify);
       }
@@ -225,6 +265,54 @@ fn bump(shared: &SharedPowerState, notify: &Option<OwnedFd>) {
   if let Some(fd) = notify {
     util::notify_signal(fd);
   }
+}
+
+fn uevent_socket() -> Option<AsyncFd<OwnedFd>> {
+  use nix::sys::socket::{AddressFamily, NetlinkAddr, SockFlag, SockProtocol, SockType};
+
+  let fd = nix::sys::socket::socket(
+    AddressFamily::Netlink,
+    SockType::Datagram,
+    SockFlag::SOCK_NONBLOCK | SockFlag::SOCK_CLOEXEC,
+    SockProtocol::NetlinkKObjectUEvent,
+  )
+  .ok()?;
+
+  nix::sys::socket::bind(fd.as_raw_fd(), &NetlinkAddr::new(0, 1)).ok()?;
+  AsyncFd::new(fd).ok()
+}
+
+fn uevent_subsystem(buf: &[u8]) -> Option<&str> {
+  buf
+    .split(|b| *b == 0)
+    .find_map(|field| field.strip_prefix(b"SUBSYSTEM="))
+    .and_then(|value| std::str::from_utf8(value).ok())
+}
+
+fn drain_uevents(fd: &AsyncFd<OwnedFd>) -> bool {
+  use nix::errno::Errno;
+  use nix::sys::socket::NetlinkAddr;
+
+  let mut backlight = false;
+  let mut buf = [0u8; 4096];
+
+  loop {
+    match nix::sys::socket::recvfrom::<NetlinkAddr>(fd.get_ref().as_raw_fd(), &mut buf) {
+      Ok((n, src)) => {
+        if src.map(|a| a.pid()).unwrap_or(1) != 0 {
+          continue;
+        }
+        if uevent_subsystem(&buf[..n]) == Some("backlight") {
+          backlight = true;
+        }
+      }
+      Err(Errno::EINTR) => continue,
+      Err(Errno::EAGAIN) => break,
+      Err(_) => break,
+    }
+  }
+
+  backlight
 }
 
 async fn find_battery_device_path(upower: &Proxy<'_>) -> Option<String> {
@@ -254,7 +342,7 @@ async fn find_battery_device_path(upower: &Proxy<'_>) -> Option<String> {
   Some("/org/freedesktop/UPower/devices/DisplayDevice".to_string())
 }
 
-async fn handle_cmd(cmd: PowerCmd, shared: &SharedPowerState, profiles_proxy: Option<&Proxy<'_>>) {
+async fn handle_cmd(cmd: PowerCmd, profiles_proxy: Option<&Proxy<'_>>) {
   // TODO: don't do commands
   match cmd {
     PowerCmd::SetProfile(profile) => {
@@ -278,11 +366,9 @@ async fn handle_cmd(cmd: PowerCmd, shared: &SharedPowerState, profiles_proxy: Op
         .status();
     }
     PowerCmd::StepBrightness(delta) => {
-      let current = {
-        let d = shared.data.lock().unwrap();
-        d.brightness_percent
-      };
-      let new_pct = (current as i32 + delta).clamp(1, 100) as u8;
+      let mut probe = PowerData::default();
+      refresh_brightness(&mut probe);
+      let new_pct = (probe.brightness_percent as i32 + delta).clamp(1, 100) as u8;
       let _ = std::process::Command::new("brightnessctl")
         .args(["set", &format!("{new_pct}%")])
         .status();
@@ -464,18 +550,38 @@ fn refresh_battery_sysfs(data: &mut PowerData) {
   }
 }
 
-fn refresh_brightness(data: &mut PowerData) {
-  let bl_opt = fs::read_dir("/sys/class/backlight")
+fn sysfs_backlight_dir() -> Option<(String, String)> {
+  fs::read_dir("/sys/class/backlight")
     .ok()
     .and_then(|mut entries| {
       entries.find_map(|e| {
         e.ok()
           .map(|entry| entry.file_name().to_string_lossy().into_owned())
       })
-    });
+    })
+    .map(|bl| {
+      let dir = format!("/sys/class/backlight/{bl}");
+      (bl, dir)
+    })
+}
 
-  if let Some(bl) = bl_opt {
-    let dir = format!("/sys/class/backlight/{bl}");
+fn refresh_brightness_shared(shared: &SharedPowerState) -> bool {
+  let mut new_data = shared.data.lock().unwrap().as_ref().clone();
+  refresh_brightness(&mut new_data);
+
+  let mut lock = shared.data.lock().unwrap();
+  let changed = lock.brightness_percent != new_data.brightness_percent
+    || lock.brightness_current != new_data.brightness_current
+    || lock.brightness_max != new_data.brightness_max
+    || lock.device_name != new_data.device_name;
+  if changed {
+    *lock = Arc::new(new_data);
+  }
+  changed
+}
+
+fn refresh_brightness(data: &mut PowerData) {
+  if let Some((bl, dir)) = sysfs_backlight_dir() {
     data.device_name = bl;
     let cur = fs::read_to_string(format!("{dir}/brightness"))
       .ok()
