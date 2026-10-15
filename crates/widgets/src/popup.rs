@@ -267,12 +267,10 @@ fn resolve_position(
   insets: Padding,
 ) -> (f32, f32, bool) {
   match panel_edge {
-    Some(PanelEdge::Top { .. }) => ((x + insets.left) - size.0, insets.top, false),
-    Some(PanelEdge::Bottom { .. }) => ((x + insets.left) - size.0, insets.bottom, true),
-    Some(PanelEdge::Left { .. }) => (x, (y + insets.top) - size.1, false),
-    Some(PanelEdge::Right { .. }) | None => {
-      ((x + insets.left) - size.0, (y + insets.top) - size.1, false)
-    }
+    Some(PanelEdge::Top { .. }) => (x - size.0, 0.0, false),
+    Some(PanelEdge::Bottom { .. }) => (x - size.0, 0.0, true),
+    Some(PanelEdge::Left { .. }) => (x - insets.left, y - insets.top, false),
+    Some(PanelEdge::Right { .. }) | None => (x - size.0, y - insets.top, false),
   }
 }
 
@@ -327,25 +325,14 @@ impl<'a> SizedPopup<'a> {
     self
   }
 
-  pub fn with_panel_insets(mut self, store: &Store) -> Self {
+  pub fn with_panel_insets(mut self, store: &Store, monitor: Option<&str>) -> Self {
     if let Some(positions) = store.borrow::<PanelPositions>() {
-      let mut top: f32 = 0.0;
-      let mut bottom: f32 = 0.0;
-      let mut left: f32 = 0.0;
-      let mut right: f32 = 0.0;
-
-      positions.for_each(|_name, edge| match edge {
-        PanelEdge::Top { height } => top += *height as f32,
-        PanelEdge::Bottom { height } => bottom += *height as f32,
-        PanelEdge::Left { width } => left += *width as f32,
-        PanelEdge::Right { width } => right += *width as f32,
-      });
-
+      let (top, right, bottom, left) = positions.insets(monitor);
       self.insets = Padding {
-        top,
-        right,
-        bottom,
-        left,
+        top: top as f32,
+        right: right as f32,
+        bottom: bottom as f32,
+        left: left as f32,
       };
     }
     self
@@ -365,18 +352,7 @@ impl<'a> SizedPopup<'a> {
     let (x, y, from_bottom) =
       resolve_position(self.panel_edge, self.x, self.y, self.size, self.insets);
 
-    let content_box = container(self.content).padding(Padding {
-      top: 0.0,
-      left: 0.0,
-      right: self.insets.right.max(0.0),
-      bottom: if from_bottom {
-        0.0
-      } else {
-        self.insets.bottom.max(0.0)
-      },
-    });
-
-    let shielded_content = mouse_area(content_box).on_press(ItemMessage::Noop);
+    let shielded_content = mouse_area(self.content).on_press(ItemMessage::Noop);
 
     let close = self.on_close.clone();
     let actual = EventWrapper::new(
@@ -455,8 +431,8 @@ mod tests {
     );
 
     assert!(!from_bottom);
-    assert_eq!(x, 100.0 - 280.0);
-    assert_eq!(y, 32.0);
+    assert_eq!(x + insets.left, 100.0 - 280.0);
+    assert_eq!(y, 0.0);
   }
 
   #[test]
@@ -477,7 +453,29 @@ mod tests {
     );
 
     assert!(from_bottom);
-    assert_eq!(y, 48.0);
+    assert_eq!(y + insets.bottom, 48.0);
+  }
+
+  #[test]
+  fn left_panel_menu_pins_beside_the_panel() {
+    let insets = Padding {
+      top: 32.0,
+      bottom: 0.0,
+      left: 64.0,
+      right: 0.0,
+    };
+
+    let (x, y, from_bottom) = resolve_position(
+      Some(PanelEdge::Left { width: 64 }),
+      64.0,
+      200.0,
+      (280.0, 100.0),
+      insets,
+    );
+
+    assert!(!from_bottom);
+    assert_eq!(x + insets.left, 64.0);
+    assert_eq!(y + insets.top, 200.0);
   }
 
   #[test]
@@ -485,13 +483,14 @@ mod tests {
     let insets = Padding {
       top: 32.0,
       bottom: 0.0,
-      left: 0.0,
+      left: 16.0,
       right: 0.0,
     };
 
-    let (_, y, from_bottom) = resolve_position(None, 10.0, 20.0, (0.0, 100.0), insets);
+    let (x, y, from_bottom) = resolve_position(None, 10.0, 20.0, (0.0, 100.0), insets);
 
     assert!(!from_bottom);
-    assert_eq!(y, 20.0 + 32.0 - 100.0);
+    assert_eq!(x + insets.left, 10.0 + 16.0);
+    assert_eq!(y + insets.top, 20.0);
   }
 }

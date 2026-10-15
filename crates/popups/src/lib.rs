@@ -5,7 +5,7 @@ use iced_exwlshell::reexport::{
   Anchor, KeyboardInteractivity, Layer, LayerSize, NewLayerShellSettings,
 };
 pub use slowshell_commons::{
-  panels::PanelEdge,
+  panels::{PanelEdge, PanelPositions},
   popups::{PopupPosition, PopupSettings},
 };
 use slowshell_config::Config;
@@ -23,6 +23,7 @@ use slowshell_widgets::Renderables;
 #[derive(Default)]
 pub struct Popup {
   current: Option<PopupSettings>,
+  insets: (i32, i32, i32, i32),
 }
 
 impl Popup {
@@ -99,6 +100,17 @@ impl Popup {
       }
 
       self.current = Some(settings.clone());
+      self.insets = if settings.insets {
+        store
+          .borrow::<PanelPositions>()
+          .map(|positions| {
+            let (top, right, bottom, left) = positions.insets(settings.monitor.as_deref());
+            (top as i32, right as i32, bottom as i32, left as i32)
+          })
+          .unwrap_or((0, 0, 0, 0))
+      } else {
+        (0, 0, 0, 0)
+      };
 
       self.with_renderable(store, |renderable, store| {
         renderable.initialize(config, store);
@@ -131,7 +143,7 @@ impl DesktopItem for Popup {
       anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
       exclusive_zone: Some(-1),
       size: LayerSize::FILL,
-      margin: Some((0, 0, 0, 0)),
+      margin: Some(self.insets),
       keyboard_interactivity: KeyboardInteractivity::OnDemand,
       events_transparent: false,
       namespace: Some(format!("slowshell-popup",)),
@@ -311,6 +323,7 @@ fn settings_from_payload(payload: &HashMap<&str, &str>) -> Option<PopupSettings>
     content: payload.get("content").map(|s| (*s).to_ustr())?,
     panel_edge,
     insets: payload.get("insets").is_some(),
+    monitor: payload.get("monitor").map(|m| (*m).to_ustr()),
   })
 }
 

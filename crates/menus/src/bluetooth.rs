@@ -182,7 +182,7 @@ impl Renderable for BluetoothRenderable {
     .with_backdrop(Backdrop::transparent().with_close_on_click(true))
     .with_position(data.position.0.get(store), data.position.1.get(store))
     .with_panel_edge(data.panel_edge)
-    .with_panel_insets(store)
+    .with_panel_insets(store, data.monitor.as_deref())
     .with_on_close(ItemMessage::Effect(id, ItemEffect::Hide))
     .into()
   }

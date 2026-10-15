@@ -49,6 +49,8 @@ pub mod popups {
     pub content: Ustr,
     pub panel_edge: Option<PanelEdge>,
     pub insets: bool,
+    /// The monitor the popup belongs to, used to scope panel insets.
+    pub monitor: Option<Ustr>,
   }
 
   impl PopupPosition {
@@ -93,9 +95,16 @@ pub mod panels {
     }
   }
 
+  #[derive(Debug, Clone)]
+  struct PanelEntry {
+    edge: PanelEdge,
+    /// The monitors the panel appears on; `None` means every monitor.
+    monitors: Option<Vec<Ustr>>,
+  }
+
   #[derive(Debug, Clone, Default)]
   pub struct PanelPositions {
-    entries: HashMap<Ustr, PanelEdge>,
+    entries: HashMap<Ustr, PanelEntry>,
   }
 
   impl PanelPositions {
@@ -103,8 +112,12 @@ pub mod panels {
       Self::default()
     }
 
-    pub fn set(&mut self, name: impl Into<Ustr>, edge: PanelEdge) {
-      self.entries.insert(name.into(), edge);
+    /// Registers a panel and the monitors it appears on; `monitors: None`
+    /// means the panel is on every monitor.
+    pub fn set(&mut self, name: impl Into<Ustr>, edge: PanelEdge, monitors: Option<Vec<Ustr>>) {
+      self
+        .entries
+        .insert(name.into(), PanelEntry { edge, monitors });
     }
 
     pub fn remove(&mut self, name: &str) {
@@ -112,7 +125,7 @@ pub mod panels {
     }
 
     pub fn get(&self, name: &str) -> Option<&PanelEdge> {
-      self.entries.get(name)
+      self.entries.get(name).map(|entry| &entry.edge)
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &Ustr> + Debug {
@@ -120,13 +133,84 @@ pub mod panels {
     }
 
     pub fn for_each(&self, mut f: impl FnMut(&Ustr, &PanelEdge)) {
-      for (name, edge) in &self.entries {
-        f(name, edge);
+      for (name, entry) in &self.entries {
+        f(name, &entry.edge);
       }
     }
 
+    /// Total size of the panel strips per screen edge on `monitor`, as
+    /// `(top, right, bottom, left)`. With `monitor: None` every panel counts.
+    pub fn insets(&self, monitor: Option<&str>) -> (u32, u32, u32, u32) {
+      let mut insets = (0, 0, 0, 0);
+
+      for entry in self.entries.values() {
+        if !entry.covers(monitor) {
+          continue;
+        }
+
+        match entry.edge {
+          PanelEdge::Top { height } => insets.0 += height,
+          PanelEdge::Right { width } => insets.1 += width,
+          PanelEdge::Bottom { height } => insets.2 += height,
+          PanelEdge::Left { width } => insets.3 += width,
+        }
+      }
+
+      insets
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (&Ustr, &PanelEdge)> {
-      self.entries.iter()
+      self.entries.iter().map(|(name, entry)| (name, &entry.edge))
+    }
+  }
+
+  impl PanelEntry {
+    fn covers(&self, monitor: Option<&str>) -> bool {
+      let Some(monitor) = monitor else {
+        return true;
+      };
+
+      self
+        .monitors
+        .as_ref()
+        .is_none_or(|monitors| monitors.iter().any(|m| m.as_ref() == monitor))
+    }
+  }
+
+  #[cfg(test)]
+  mod tests {
+    use super::*;
+
+    #[test]
+    fn insets_sum_the_panel_strips_per_edge() {
+      let mut positions = PanelPositions::new();
+      assert_eq!(positions.insets(None), (0, 0, 0, 0));
+
+      positions.set("bar", PanelEdge::Top { height: 32 }, None);
+      positions.set("dock", PanelEdge::Bottom { height: 48 }, None);
+      positions.set("rail", PanelEdge::Left { width: 64 }, None);
+
+      assert_eq!(positions.insets(None), (32, 0, 48, 64));
+
+      positions.remove("bar");
+      assert_eq!(positions.insets(None), (0, 0, 48, 64));
+    }
+
+    #[test]
+    fn insets_only_count_panels_on_the_monitor() {
+      let mut positions = PanelPositions::new();
+      positions.set("bar", PanelEdge::Top { height: 32 }, None);
+      positions.set(
+        "rail",
+        PanelEdge::Left { width: 64 },
+        Some(vec!["DP-2".into()]),
+      );
+
+      // per-monitor panels count everywhere, scoped ones only on their monitor
+      assert_eq!(positions.insets(Some("DP-1")), (32, 0, 0, 0));
+      assert_eq!(positions.insets(Some("DP-2")), (32, 0, 0, 64));
+      assert_eq!(positions.insets(Some("HDMI-A-1")), (32, 0, 0, 0));
+      assert_eq!(positions.insets(None), (32, 0, 0, 64));
     }
   }
 }
