@@ -24,8 +24,14 @@ run:
 test:
   cargo nextest r
 
-docs:
+rustdoc:
+  #RUSTDOCFLAGS="--html-before-content docs/rustdoc-nav.html" cargo doc --no-deps -p slowshell-plugin-abi -p slowshell-commons -p slowshell-core
+  cargo doc --no-deps -p slowshell-plugin-abi -p slowshell-commons -p slowshell-core
+  mkdir -p docs/static/plugins/api-reference
+  cp -r target/doc/* docs/static/plugins/api-reference/
+
+docs: rustdoc
   zola --root docs build
 
-docs-serve:
+docs-serve: rustdoc
   zola --root docs serve

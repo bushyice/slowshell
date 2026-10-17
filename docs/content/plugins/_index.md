@@ -37,6 +37,9 @@ are very extensible, and additive with plugins.
 Here's what a simple plugin could look like:
 
 ```rust
+// You can get this crate from 
+// the git:
+// slowshell-plugin-abi = { git = "https://tangled.org/bushyice.com/slowshell" }
 use slowshell_plugin_abi::prelude::*;
 
 struct Hello;
@@ -86,5 +89,6 @@ panels {
 - [[Host and Context]]
 - [[Surfaces]]
 - [[Styling]]
+- [[API Reference]]
 
 ---
