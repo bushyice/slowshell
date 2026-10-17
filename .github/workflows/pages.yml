@@ -20,14 +20,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
       - uses: taiki-e/install-action@v2
         with:
-          tool: zola@0.23.6
+          tool: zola@0.23.6,just
 
       - name: Build documentation
         run: |
           set -euo pipefail
-          zola --root docs build
+          just docs
 
       - uses: actions/configure-pages@v6
 
