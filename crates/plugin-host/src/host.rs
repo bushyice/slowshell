@@ -7,7 +7,7 @@ use abi_stable::{
   sabi_trait::TD_Opaque,
   std_types::{RBox, ROption, RStr, RString, RVec},
 };
-use slowshell_commons::notifications::{NotificationCmd, NotificationImage, NotificationItem};
+use slowshell_commons::notifications::{NotificationImage, NotificationItem};
 use slowshell_config::style::new_default_style;
 use slowshell_core::{
   ErasedEntry, StoreKey,
@@ -359,30 +359,12 @@ impl Host for HostImpl {
       plugin: plugin_id,
     };
 
-    let is_dnd = shared.dnd.load(Ordering::Relaxed);
-    {
-      let mut guard = shared.state.lock().unwrap();
-      let state = Arc::make_mut(&mut guard);
-      state.history.retain(|n| n.id != id);
-      state.history.insert(0, item.clone());
-      state.unread_count += 1;
-      if !is_dnd {
-        state.popups.retain(|n| n.id != id);
-        state.popups.push(item);
-      }
-    }
-    shared.bump();
-
     let timeout = if notification.timeout_ms < 0 {
       5000
     } else {
       notification.timeout_ms as u64
     };
-    if timeout > 0 {
-      let _ = shared
-        .cmd_tx
-        .send(NotificationCmd::ExpireAfter(id, timeout));
-    }
+    shared.push(item, timeout);
 
     ROption::RSome(id)
   }

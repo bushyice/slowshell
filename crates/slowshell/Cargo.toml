@@ -48,7 +48,11 @@ background = ["dep:slowshell-background"]
 widgets = ["dep:slowshell-background"]
 plugins = ["dep:slowshell-plugin-host"]
 spotlight = ["dep:slowshell-spotlight", "slowshell-plugin-host?/spotlight"]
-notifications = ["dep:slowshell-notifications"]
+notifications = [
+  "dep:slowshell-notifications",
+  "dep:slowshell-services",
+  "slowshell-services/notifications",
+]
 
 compositor-niri = ["slowshell-compositor/niri"]
 compositor-sway = ["slowshell-compositor/sway"]
@@ -78,6 +82,7 @@ slowshell-widgets = { path = "../widgets" }
 slowshell-components = { path = "../components", optional = true, default-features = false }
 slowshell-menus = { path = "../menus" }
 slowshell-popups = { path = "../popups", optional = true }
+slowshell-services = { path = "../services", default-features = false, optional = true }
 slowshell-background = { path = "../background", optional = true }
 slowshell-plugin-host = { path = "../plugin-host", optional = true, default-features = false }
 

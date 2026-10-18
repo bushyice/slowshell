@@ -1,5 +1,7 @@
 use std::f64::consts::{E, PI};
 
+const MAX_DEPTH: u8 = 64;
+
 #[derive(Debug, PartialEq, Clone)]
 enum Token {
   Num(f64),
@@ -106,11 +108,26 @@ impl<'a> Lexer<'a> {
 struct Parser {
   tokens: Vec<Token>,
   pos: usize,
+  depth: u8,
 }
 
 impl Parser {
   fn new(tokens: Vec<Token>) -> Self {
-    Self { tokens, pos: 0 }
+    Self {
+      tokens,
+      pos: 0,
+      depth: 0,
+    }
+  }
+
+  fn nested(&mut self, f: impl FnOnce(&mut Self) -> Result<f64, ()>) -> Result<f64, ()> {
+    if self.depth >= MAX_DEPTH {
+      return Err(());
+    }
+    self.depth += 1;
+    let result = f(self);
+    self.depth -= 1;
+    result
   }
 
   fn peek(&self) -> Option<&Token> {
@@ -191,7 +208,7 @@ impl Parser {
 
     if let Some(Token::Caret) = self.peek() {
       self.next();
-      let exponent = self.parse_power()?;
+      let exponent = self.nested(|parser| parser.parse_power())?;
       Ok(base.powf(exponent))
     } else {
       Ok(base)
@@ -202,11 +219,11 @@ impl Parser {
     match self.peek() {
       Some(Token::Plus) => {
         self.next();
-        self.parse_unary()
+        self.nested(|parser| parser.parse_unary())
       }
       Some(Token::Minus) => {
         self.next();
-        Ok(-self.parse_unary()?)
+        Ok(-self.nested(|parser| parser.parse_unary())?)
       }
       _ => self.parse_primary(),
     }
@@ -221,7 +238,7 @@ impl Parser {
         func @ ("sqrt" | "cbrt" | "abs" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan"
         | "log" | "ln" | "log2" | "round" | "floor" | "ceil") => {
           if let Some(Token::LParen) = self.next() {
-            let arg = self.parse_expr()?;
+            let arg = self.nested(|parser| parser.parse_expr())?;
             if let Some(Token::RParen) = self.next() {
               match func {
                 "sqrt" => {
@@ -287,7 +304,7 @@ impl Parser {
         _ => Err(()),
       },
       Some(Token::LParen) => {
-        let val = self.parse_expr()?;
+        let val = self.nested(|parser| parser.parse_expr())?;
         if let Some(Token::RParen) = self.next() {
           Ok(val)
         } else {
@@ -393,5 +410,23 @@ mod tests {
     assert!(try_eval("firefox").is_none());
     assert!(try_eval("2").is_none());
     assert!(try_eval("2 +").is_none());
+  }
+
+  #[test]
+  fn rejects_deep_nesting() {
+    let parens = format!("{}1{}", "(".repeat(100), ")".repeat(100));
+    assert!(eval(&parens).is_err());
+
+    let unary = format!("{}1", "-".repeat(100));
+    assert!(eval(&unary).is_err());
+
+    let power = format!("2{}", "^2".repeat(100));
+    assert!(eval(&power).is_err());
+
+    let call = format!("{}1{}", "abs(".repeat(100), ")".repeat(100));
+    assert!(eval(&call).is_err());
+
+    let shallow = format!("{}1{}", "abs(".repeat(20), ")".repeat(20));
+    assert_eq!(eval(&shallow), Ok(1.0));
   }
 }
