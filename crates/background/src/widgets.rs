@@ -678,9 +678,10 @@ impl Renderable for DesktopIconWidget {
   }
 
   fn events(&self, _store: &Store) -> Vec<EventFilter> {
-    vec![EventFilter::Named(
-      slowshell_commons::desktop::DESKTOP_ENTRIES_CHANGED.into(),
-    )]
+    vec![
+      EventFilter::Named(slowshell_commons::desktop::DESKTOP_ENTRIES_CHANGED.into()),
+      EventFilter::Named("apps.reload".into()),
+    ]
   }
 
   fn on_event(
@@ -694,11 +695,20 @@ impl Renderable for DesktopIconWidget {
         if &**name == slowshell_commons::desktop::DESKTOP_ENTRIES_CHANGED =>
       {
         slowshell_services::util::drain_signal_fd(*fd);
+        if let Ok(mut entries) = self.entries.lock() {
+          entries.clear();
+        }
         Some(ItemEffect::Redraw)
       }
       ListenerAction::Named(name)
         if &**name == slowshell_commons::desktop::DESKTOP_ENTRIES_CHANGED =>
       {
+        Some(ItemEffect::Redraw)
+      }
+      ListenerAction::Named(name) if &**name == "apps.reload" => {
+        if let Ok(mut entries) = self.entries.lock() {
+          entries.clear();
+        }
         Some(ItemEffect::Redraw)
       }
       _ => None,

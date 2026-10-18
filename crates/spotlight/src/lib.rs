@@ -23,6 +23,7 @@ use slowshell_commons::desktop::DesktopEntries;
 use slowshell_config::{Config, ConfigParser};
 use slowshell_core::{
   ActionDispatcher, Store,
+  commands::CommandEntry,
   listeners::ListenerAction,
   types::{OptionalPayloadBox, PayloadBox, PayloadBuilder, PayloadBuilderRegistry, Ustr},
 };
@@ -554,6 +555,7 @@ impl DesktopItem for Spotlight {
       EventFilter::Named("spotlight.close".into()),
       EventFilter::Payload("spotlight.open".into()),
       EventFilter::Payload("spotlight.toggle".into()),
+      EventFilter::Named("apps.reload".into()),
       EventFilter::Named("config.reload".into()),
     ]
   }
@@ -574,6 +576,15 @@ impl DesktopItem for Spotlight {
           modes.configure(config);
         }
         Ok(ItemEffect::Redraw)
+      }
+      ListenerAction::Named(name) if name.as_ref() == "apps.reload" => {
+        let Some(entries) = store.borrow::<DesktopEntries>() else {
+          return Ok(ItemEffect::None);
+        };
+
+        DesktopEntries::initialize(store, &entries);
+
+        Ok(ItemEffect::None)
       }
       ListenerAction::Payload { name, payload } if name.as_ref() == "spotlight.toggle" => {
         self.toggle(payload.transform::<SpotlightRequest>())
@@ -1396,6 +1407,7 @@ pub struct SpotlightConfig {
 }
 
 slowshell_registry::register_resources!(
+  command: Command(CommandEntry::named("apps.reload").title("Reload Applications")),
   payload: Unknown(PayloadBuilder {
     commands: &["spotlight.open", "spotlight.toggle"],
     build: |_, args| {

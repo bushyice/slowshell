@@ -64,8 +64,17 @@ pub fn remove(name: impl AsRef<str>) -> miette::Result<()> {
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> miette::Result<()> {
-  let tmp = path.with_extension("tmp");
-  fs::write(&tmp, content).into_diagnostic()?;
-  fs::rename(&tmp, path).into_diagnostic()?;
-  Ok(())
+  let mut tmp = path.as_os_str().to_owned();
+  tmp.push(format!(".{}.tmp", std::process::id()));
+  let tmp = PathBuf::from(tmp);
+
+  let result = fs::write(&tmp, content)
+    .into_diagnostic()
+    .and_then(|()| fs::rename(&tmp, path).into_diagnostic());
+
+  if result.is_err() {
+    let _ = fs::remove_file(&tmp);
+  }
+
+  result
 }

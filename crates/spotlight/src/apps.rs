@@ -21,6 +21,8 @@ static USAGE_VERSION: AtomicU64 = AtomicU64::new(0);
 static EXEC_INDEX: LazyLock<RwLock<HashMap<String, String>>> =
   LazyLock::new(|| RwLock::new(HashMap::new()));
 
+static EXEC_INDEX_VERSION: AtomicU64 = AtomicU64::new(u64::MAX);
+
 pub fn applications_version() -> u64 {
   DesktopEntries::global_version().wrapping_add(USAGE_VERSION.load(Ordering::Relaxed))
 }
@@ -60,7 +62,13 @@ pub fn search_applications(query: &str, store: &Store) -> Vec<SpotlightItem> {
 }
 
 fn refresh_index(apps: &[AppEntry]) {
+  let version = DesktopEntries::global_version();
   let mut index = EXEC_INDEX.write().unwrap();
+
+  if EXEC_INDEX_VERSION.load(Ordering::Relaxed) == version && !index.is_empty() {
+    return;
+  }
+
   index.clear();
   for app in apps {
     index.insert(app.exec.clone(), app.id_lower.clone());
@@ -68,6 +76,8 @@ fn refresh_index(apps: &[AppEntry]) {
       index.insert(action.exec.clone(), app.id_lower.clone());
     }
   }
+
+  EXEC_INDEX_VERSION.store(version, Ordering::Relaxed);
 }
 
 fn search(apps: &[AppEntry], query: &str, usage: &HashMap<String, u64>) -> Vec<SpotlightItem> {
