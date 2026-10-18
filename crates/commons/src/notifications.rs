@@ -92,6 +92,32 @@ pub struct NotificationState {
 }
 
 impl NotificationState {
+  pub fn push(&self, item: NotificationItem, timeout_ms: u64) {
+    let id = item.id;
+    let is_dnd = self.dnd.load(Ordering::Relaxed);
+
+    {
+      let mut guard = self.state.lock().unwrap();
+      let state = Arc::make_mut(&mut guard);
+      state.history.retain(|n| n.id != id);
+      state.history.insert(0, item.clone());
+      state.unread_count += 1;
+
+      if !is_dnd {
+        state.popups.retain(|n| n.id != id);
+        state.popups.push(item);
+      }
+    }
+
+    self.bump();
+
+    if timeout_ms > 0 {
+      let _ = self
+        .cmd_tx
+        .send(NotificationCmd::ExpireAfter(id, timeout_ms));
+    }
+  }
+
   pub fn bump(&self) {
     self.revision.fetch_add(1, Ordering::SeqCst);
 

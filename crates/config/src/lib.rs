@@ -94,6 +94,7 @@ pub struct Config {
   pub wgpu_backend: Option<String>,
   pub icon_theme: Option<String>,
   config_parsers: Vec<ConfigParser>,
+  errors: Vec<String>,
 }
 
 #[derive(Default)]
@@ -569,19 +570,36 @@ impl Config {
       ..Default::default()
     };
 
-    if let Err(e) = config.reload() {
-      eprintln!("{e:?}");
-    }
+    let _ = config.reload();
     config
   }
 
-  pub fn reload(&mut self) -> miette::Result<()> {
-    use miette::IntoDiagnostic;
+  pub fn errors(&self) -> &[String] {
+    &self.errors
+  }
 
+  fn report(&mut self, message: impl Into<String>) {
+    let message = message.into();
+    eprintln!("[config] {message}");
+    self.errors.push(message);
+  }
+
+  fn report_diagnostic(&mut self, report: &miette::Report) {
+    eprintln!("[config] {report:?}");
+    let message = report
+      .chain()
+      .map(|cause| cause.to_string())
+      .collect::<Vec<_>>()
+      .join(": ");
+    self.errors.push(message);
+  }
+
+  pub fn reload(&mut self) -> miette::Result<()> {
     self.default_css = crate::style::default_css();
     self.user_css.clear();
     self.palette = Theme::default();
     self.parsed = HashMap::new();
+    self.errors.clear();
 
     let current_path = self.current_path.clone();
 
@@ -591,19 +609,28 @@ impl Config {
         return Ok(());
       }
 
-      let content = fs::read_to_string(path).into_diagnostic()?;
+      let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(e) => {
+          let report = miette::miette!("failed to read config file {}: {e}", path.display());
+          self.report_diagnostic(&report);
+          return Err(report);
+        }
+      };
       let doc: KdlDocument = match content.parse() {
         Ok(doc) => doc,
         Err(e) => {
           let report = miette::Report::new(e)
             .wrap_err(format!("failed to parse config file {}", path.display()));
+          self.report_diagnostic(&report);
           return Err(report);
         }
       };
 
       let nodes = doc.nodes();
 
-      for deser in &self.config_parsers {
+      let parsers = self.config_parsers.clone();
+      for deser in &parsers {
         match (deser.de)(nodes) {
           Ok(Some(parsed)) => {
             self.parsed.insert(deser.type_id, parsed);
@@ -613,7 +640,7 @@ impl Config {
               path.display().to_string(),
               content.clone(),
             ));
-            eprintln!("{report:?}");
+            self.report_diagnostic(&report);
           }
           _ => {}
         }
@@ -635,7 +662,7 @@ impl Config {
         self.engine = engine.with_default_font(self.font);
         self.style_cache.clear();
       }
-      Err(error) => eprintln!("failed to load generated style css: {error}"),
+      Err(error) => self.report(format!("failed to load generated style css: {error}")),
     }
   }
 
@@ -655,7 +682,7 @@ impl Config {
             Err(e) => {
               let report = miette::Report::new(e)
                 .wrap_err(format!("failed to parse theme file {}", theme.display()));
-              eprintln!("{report:?}");
+              self.report_diagnostic(&report);
               return;
             }
           };
@@ -690,7 +717,7 @@ impl Config {
                 }
               }
               Err(e) => {
-                eprintln!("failed to read css file {}: {e}", file.display());
+                self.report(format!("failed to read css file {}: {e}", file.display()));
               }
             }
           }
@@ -1020,6 +1047,7 @@ impl Default for Config {
       icon_theme: None,
       current_path: None,
       config_parsers: Vec::new(),
+      errors: Vec::new(),
     }
   }
 }

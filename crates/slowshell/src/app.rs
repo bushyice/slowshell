@@ -50,6 +50,21 @@ fn register_plugin_compositors(registry: &mut GlobalRegistry, compositors: &mut 
   }
 }
 
+#[cfg(feature = "notifications")]
+fn notify_config_errors(store: &mut Store, errors: &[String]) {
+  if errors.is_empty() {
+    return;
+  }
+
+  let summary = if errors.len() == 1 {
+    "Config error".to_string()
+  } else {
+    format!("Config errors ({})", errors.len())
+  };
+
+  slowshell_services::notifications::notify_local(store, summary, errors.join("\n"));
+}
+
 pub struct App {
   config: Box<Config>, // box: maybe?
   store: Store,
@@ -363,9 +378,12 @@ impl App {
               println!("[config] Reloaded configuration");
             }
             Err(e) => {
-              eprintln!("[config] Failed to reload configuration:\n{e:?}");
+              eprintln!("[config] Failed to reload configuration: {e}");
             }
           }
+
+          #[cfg(feature = "notifications")]
+          notify_config_errors(&mut self.store, self.config.errors());
         }
 
         other

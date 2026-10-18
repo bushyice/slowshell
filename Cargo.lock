@@ -4734,6 +4734,7 @@ dependencies = [
  "slowshell-plugin-host",
  "slowshell-popups",
  "slowshell-registry",
+ "slowshell-services",
  "slowshell-spotlight",
  "slowshell-widgets",
 ]

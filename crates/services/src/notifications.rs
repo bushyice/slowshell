@@ -10,7 +10,8 @@ use std::{
 };
 
 use slowshell_commons::notifications::{
-  NotificationCmd, NotificationImage, NotificationItem, SharedNotificationState, close_reason,
+  NotificationCmd, NotificationImage, NotificationItem, NotificationSettings,
+  SharedNotificationState, close_reason,
 };
 use zbus::{Connection, zvariant::Value};
 
@@ -78,6 +79,40 @@ pub fn ensure(store: &mut slowshell_core::Store) -> SharedNotificationState {
 
 pub fn running() -> bool {
   global().slot.running()
+}
+
+static NEXT_LOCAL_ID: AtomicU32 = AtomicU32::new(2_000_000);
+
+const LOCAL_TIMEOUT_MS: u64 = 15_000;
+
+pub fn notify_local(
+  store: &mut slowshell_core::Store,
+  summary: impl Into<String>,
+  body: impl Into<String>,
+) -> Option<u32> {
+  if !NotificationSettings::from_store(store) {
+    return None;
+  }
+
+  let shared = ensure(store);
+  let id = NEXT_LOCAL_ID.fetch_add(1, Ordering::Relaxed);
+  shared.push(
+    NotificationItem {
+      id,
+      app_name: "Slowshell".to_string(),
+      app_icon: None,
+      image: None,
+      summary: summary.into(),
+      body: body.into(),
+      actions: Vec::new(),
+      urgency: 2,
+      created_at: Instant::now(),
+      plugin: None,
+    },
+    LOCAL_TIMEOUT_MS,
+  );
+
+  Some(id)
 }
 
 pub struct NotificationServer {
@@ -162,34 +197,13 @@ impl NotificationServer {
       plugin: None,
     };
 
-    let is_dnd = self.shared.dnd.load(Ordering::Relaxed);
-
-    {
-      let mut guard = self.shared.state.lock().unwrap();
-      let state = Arc::make_mut(&mut guard);
-      state.history.retain(|n| n.id != id);
-      state.history.insert(0, item.clone());
-      state.unread_count += 1;
-
-      if !is_dnd {
-        state.popups.retain(|n| n.id != id);
-        state.popups.push(item);
-      }
-    }
-
-    self.shared.bump();
-
     let timeout_ms = if expire_timeout > 0 {
       expire_timeout as u64
     } else {
       5000
     };
 
-    let cmd_tx = self.shared.cmd_tx.clone();
-    tokio::spawn(async move {
-      tokio::time::sleep(Duration::from_millis(timeout_ms)).await;
-      let _ = cmd_tx.send(NotificationCmd::ExpirePopup(id));
-    });
+    self.shared.push(item, timeout_ms);
 
     Ok(id)
   }
