@@ -8,8 +8,6 @@ pub use abi_stable::export_root_module;
 pub use abi_stable::prefix_type::PrefixTypeTrait;
 pub use abi_stable::std_types::{RBox, ROption, RResult, RSlice, RStr, RString, RVec};
 
-pub use kdl;
-
 pub mod event;
 pub mod host;
 pub mod payload;
@@ -44,4 +42,11 @@ pub mod prelude {
   };
   pub use crate::types::*;
   pub use abi_stable::std_types::{RBox, ROption, RResult, RSlice, RStr, RString, RVec};
+}
+
+pub mod reexport {
+  pub use abi_stable;
+  pub use kdl;
+  pub use ron;
+  pub use serde;
 }
