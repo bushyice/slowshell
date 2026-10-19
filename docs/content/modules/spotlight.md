@@ -18,6 +18,7 @@ spotlight {
 |---|---|---|---|---|
 | `cache` | bool | `#false` | Yes | Cache = faster open. |
 | `cliphist` | bool | `#false` | Yes | Uses `cliphist`. |
+| `spawn-prefix` | string array | empty | Yes | Prefixes spawning applications. (e.g "systemd-run" "--user" "--scope" "--collect" or "sh -c $ARGS") |
 
 ### Modes
 

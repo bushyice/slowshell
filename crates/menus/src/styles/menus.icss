@@ -89,7 +89,7 @@
 .menu.border { color: var(--overlay); }
 
 .menu.qs { width: 340px; }
-.menu.qs.avatar { avatar-size: 42px; }
+.menu.qs.avatar { size: 42px; border-radius: 42px; }
 .menu.qs.tile {
   background-color: var(--mantle);
   hover-background: var(--overlay-a15);

@@ -31,6 +31,8 @@ fn abi_command(cmd: CompositorCommand) -> AbiCompositorCommand {
   match cmd {
     CompositorCommand::FocusWorkspace(index) => AbiCompositorCommand::FocusWorkspace(index),
     CompositorCommand::FocusWindow(id) => AbiCompositorCommand::FocusWindow(id),
+    CompositorCommand::CloseWindow(id) => AbiCompositorCommand::CloseWindow(id),
+    CompositorCommand::KillWindow(id) => AbiCompositorCommand::KillWindow(id),
     CompositorCommand::FocusMonitor(name) => {
       AbiCompositorCommand::FocusMonitor(RString::from(name))
     }

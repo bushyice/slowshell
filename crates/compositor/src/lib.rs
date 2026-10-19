@@ -19,6 +19,8 @@ use std::collections::HashMap;
 pub enum CompositorCommand {
   FocusWorkspace(i32),
   FocusWindow(u64),
+  CloseWindow(u64),
+  KillWindow(u64),
   FocusMonitor(String),
   Custom(PayloadBox),
 }
@@ -36,10 +38,10 @@ pub trait Compositor: Send + Sync {
   fn state(&self) -> &CompositorState;
   fn send_cmd(&mut self, cmd: CompositorCommand) -> miette::Result<Void>;
 
-  /// Please make the `CompositorState` here
   fn initialize(&mut self, _config: &Config, _listeners: &mut Listeners) -> miette::Result<Void> {
     Ok(Void)
   }
+
   fn is_active(&self, config: &Config) -> bool;
 
   fn update_state(&mut self, _store: Option<&Store>) -> miette::Result<CompositorEvent> {

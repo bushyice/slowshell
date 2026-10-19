@@ -101,6 +101,23 @@ pub struct Window {
   pub metadata: HashMap<String, String>,
 }
 
+impl Window {
+  pub const META_PID: &'static str = "pid";
+  pub const META_WIDTH: &'static str = "width";
+  pub const META_HEIGHT: &'static str = "height";
+
+  pub fn pid(&self) -> Option<i32> {
+    self.metadata.get(Self::META_PID)?.parse().ok()
+  }
+
+  pub fn size(&self) -> Option<(u32, u32)> {
+    let width = self.metadata.get(Self::META_WIDTH)?.parse().ok()?;
+    let height = self.metadata.get(Self::META_HEIGHT)?.parse().ok()?;
+
+    Some((width, height))
+  }
+}
+
 #[doc(hidden)]
 trait HandleStateTuple: Sized {
   fn run<R>(

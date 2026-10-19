@@ -108,7 +108,7 @@ fn sample(
         .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    procs.truncate(10);
+    // procs.truncate(10);
     procs
   } else {
     Vec::new()

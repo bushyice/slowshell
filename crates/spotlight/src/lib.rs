@@ -19,7 +19,7 @@ use iced::{
 use iced_exwlshell::reexport::{
   Anchor, IcedId, KeyboardInteractivity, Layer, LayerSize, NewLayerShellSettings,
 };
-use slowshell_commons::desktop::DesktopEntries;
+use slowshell_commons::desktop::{DesktopEntries, spawn_prefix};
 use slowshell_config::{Config, ConfigParser};
 use slowshell_core::{
   ActionDispatcher, Store,
@@ -1428,10 +1428,27 @@ slowshell_registry::register_resources!(
   config: Unknown(Box::new(ConfigParser {
     type_id: TypeId::of::<SpotlightConfig>(),
     de: |nodes| match slowshell_config::find_node(nodes, "spotlight") {
-      Some(node) => Ok(Some(Box::new(SpotlightConfig {
-        cache: slowshell_config::child_bool(node, "cache").unwrap_or(false),
-        cliphist: slowshell_config::child_bool(node, "cliphist").unwrap_or(false),
-      }))),
+      Some(node) => {
+        if let Some(node) = slowshell_config::child(node, "spawn-prefix") {
+          let args: Vec<String> = (0..)
+              .map_while(|i| slowshell_config::str_arg(node, i))
+              .map(str::to_owned)
+              .collect();
+
+          if args.is_empty() {
+            spawn_prefix(None);
+          } else {
+            spawn_prefix(Some(args));
+          }
+        } else {
+          spawn_prefix(None);
+        }
+
+        Ok(Some(Box::new(SpotlightConfig {
+          cache: slowshell_config::child_bool(node, "cache").unwrap_or(false),
+          cliphist: slowshell_config::child_bool(node, "cliphist").unwrap_or(false),
+        })))
+      },
       None => Ok(None),
     },
   })),

@@ -68,13 +68,28 @@ fn event_mask(event: &Event) -> CompositorEvent {
 }
 
 fn to_window(client: &Client) -> Window {
+  let mut metadata = HashMap::new();
+
+  if client.pid > 0 {
+    metadata.insert(Window::META_PID.to_string(), client.pid.to_string());
+  }
+
+  if client.size.0 > 0 && client.size.1 > 0 {
+    metadata.insert(Window::META_WIDTH.to_string(), client.size.0.to_string());
+    metadata.insert(Window::META_HEIGHT.to_string(), client.size.1.to_string());
+  }
+
   Window {
     id: address_id(&client.address),
     title: client.title.clone(),
     class: client.class.clone(),
     is_active: false,
-    metadata: Default::default(),
+    metadata,
   }
+}
+
+fn window_identifier(id: u64) -> WindowIdentifier<'static> {
+  WindowIdentifier::Address(Address::new(format!("0x{id:x}")))
 }
 
 fn spawn_event_bridge() -> Result<(UnixStream, Receiver<Event>)> {
@@ -292,12 +307,18 @@ impl Compositor for HyprlandCompositor {
       }
 
       CompositorCommand::FocusWindow(id) => {
-        Dispatch::call(DispatchType::FocusWindow(WindowIdentifier::Address(
-          Address::new(format!("0x{id:x}")),
-        )))
-        .into_diagnostic()?;
+        Dispatch::call(DispatchType::FocusWindow(window_identifier(id))).into_diagnostic()?;
         Ok(Void)
       }
+
+      CompositorCommand::CloseWindow(id) => {
+        Dispatch::call(DispatchType::CloseWindow(window_identifier(id))).into_diagnostic()?;
+        Ok(Void)
+      }
+
+      CompositorCommand::KillWindow(_) => Err(miette::miette!(
+        "hyprland does not support killing windows; use CloseWindow instead"
+      )),
 
       CompositorCommand::FocusMonitor(name) => {
         Dispatch::call(DispatchType::FocusMonitor(MonitorIdentifier::Name(&name)))

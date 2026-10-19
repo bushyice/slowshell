@@ -8,6 +8,7 @@ pub mod quicksettings;
 pub mod sound;
 pub mod systemmon;
 pub mod tray;
+pub mod window;
 
 slowshell_registry::register_resources!(
   menu: Style(include_str!("./styles/menus.icss").into()),
@@ -54,6 +55,10 @@ slowshell_registry::register_resources!(
   renderables: Renderable {
     name: "menus/tray".into(),
     create: |_, _| Some(Box::new(tray::TrayRenderable))
+  },
+  renderables: Renderable {
+    name: "menus/window".into(),
+    create: |_, _| Some(Box::new(window::WindowRenderable::default()))
   },
   app: Custom(|store| {
     quicksettings::register_builtin_providers(store);

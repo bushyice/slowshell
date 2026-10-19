@@ -2,12 +2,11 @@ use std::{
   cell::RefCell,
   collections::HashMap,
   io::Write,
-  os::fd::OwnedFd,
-  os::unix::process::CommandExt,
+  os::{fd::OwnedFd, unix::process::CommandExt},
   path::{Path, PathBuf},
   process::{Command, Stdio},
   sync::{
-    Arc, RwLock,
+    Arc, LazyLock, Mutex, RwLock,
     atomic::{AtomicU64, Ordering},
   },
 };
@@ -20,6 +19,7 @@ use slowshell_core::{
 };
 
 static GLOBAL_VERSION: AtomicU64 = AtomicU64::new(0);
+static SPAWN_PREFIX: LazyLock<Mutex<Option<Vec<String>>>> = LazyLock::new(|| Mutex::new(None));
 
 pub const DESKTOP_ENTRIES_CHANGED: &str = "desktop-entries.changed";
 
@@ -374,12 +374,45 @@ impl DesktopEntries {
 }
 
 pub fn spawn_exec(exec_line: &str) {
+  let override_args = {
+    let guard = SPAWN_PREFIX.lock().unwrap();
+    guard.clone()
+  };
+
   let clean_cmd = clean_exec(exec_line);
   if clean_cmd.is_empty() {
     return;
   }
 
-  let mut parts = shlex_split(&clean_cmd);
+  let mut parts = if let Some(args) = override_args
+    && !args.is_empty()
+  {
+    let mut final_parts = Vec::new();
+    let cmd_parts = shlex_split(&clean_cmd);
+    let mut replaced = false;
+
+    for part in args {
+      if part == "$ARGS" {
+        final_parts.extend(cmd_parts.clone());
+        replaced = true;
+      } else {
+        final_parts.push(part);
+      }
+    }
+
+    if !replaced {
+      final_parts.extend(cmd_parts);
+    }
+
+    final_parts
+  } else {
+    let parts = shlex_split(&clean_cmd);
+    if parts.is_empty() {
+      return;
+    }
+    parts
+  };
+
   if parts.is_empty() {
     return;
   }
@@ -447,6 +480,10 @@ fn shlex_split(cmd: &str) -> Vec<String> {
   }
 
   args
+}
+
+pub fn spawn_prefix(inner: Option<Vec<String>>) {
+  *SPAWN_PREFIX.lock().unwrap() = inner;
 }
 
 #[cfg(test)]

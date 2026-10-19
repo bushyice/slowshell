@@ -13,7 +13,7 @@ use slowshell_core::{
 };
 use slowshell_widgets::{Icon, separator};
 
-use crate::{Component, ComponentContext, ComponentOptions, spaced_component};
+use crate::{Component, ComponentContext, ComponentOptions, MenuConfig, menu_trigger};
 
 #[derive(Default)]
 pub struct Window;
@@ -64,6 +64,11 @@ impl Component for Window {
     let title_width = options
       .and_then(|o| o.number("title-width"))
       .unwrap_or(320.0);
+    let menu = MenuConfig {
+      content: "menus/window".into(),
+      panel_name: None,
+      position: ctx.position,
+    };
 
     if ctx.orientation == PanelOrientation::Vertical {
       let icon_elem: Element<'_, ItemMessage> = if show_icon {
@@ -71,7 +76,7 @@ impl Component for Window {
       } else {
         row![].into()
       };
-      return spaced_component(config, ctx, icon_elem, false);
+      return menu_trigger(icon_elem, menu, config, ctx, true);
     }
 
     let show_name = options.and_then(|o| o.bool("name")).unwrap_or(true);
@@ -119,7 +124,7 @@ impl Component for Window {
       ));
     }
 
-    spaced_component(config, ctx, content.into(), false)
+    menu_trigger(content.into(), menu, config, ctx, true)
   }
 }
 
