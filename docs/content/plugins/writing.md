@@ -20,7 +20,7 @@ cargo new --lib my-plugin
 crate-type = ["cdylib"]
 
 [dependencies]
-slowshell-plugin-abi = { path = "../slowshell/crates/plugin-abi" }
+slowshell-plugin-abi = { git = "https://tangled.org/bushyice.com/slowshell" }
 ```
 
 > **Note**: The package name and package version will be the name and version of the plugin as well.
