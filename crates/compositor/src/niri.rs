@@ -70,6 +70,39 @@ impl Compositor for NiriCompositor {
           }
         }
       }
+      crate::CompositorCommand::CloseWindow(id) => {
+        let socket = self.get_or_connect_cmd_socket()?;
+
+        let reply = socket.send(niri_ipc::Request::Action(niri_ipc::Action::CloseWindow {
+          id: Some(id),
+        }));
+
+        match reply {
+          Ok(Err(e)) => Err(miette::miette!("niri failed to close window: {e}")),
+          Ok(Ok(_)) => Ok(Void),
+          Err(e) => {
+            self.cmd_socket = None;
+            Err(e).into_diagnostic()
+          }
+        }
+      }
+      crate::CompositorCommand::KillWindow(id) => {
+        let pid = self
+          ._state
+          .windows
+          .windows
+          .get(&id)
+          .and_then(|window| window.pid)
+          .ok_or_else(|| miette::miette!("niri does not know the pid of window {id}"))?;
+
+        nix::sys::signal::kill(
+          nix::unistd::Pid::from_raw(pid),
+          nix::sys::signal::Signal::SIGKILL,
+        )
+        .into_diagnostic()?;
+
+        Ok(Void)
+      }
       crate::CompositorCommand::FocusMonitor(name) => {
         let socket = self.get_or_connect_cmd_socket()?;
 
@@ -298,7 +331,7 @@ impl NiriCompositor {
           title: win.title.clone()?,
           class: win.app_id.clone()?,
           is_active: win.is_focused,
-          metadata: Default::default(),
+          metadata: window_metadata(win.pid, win.layout.window_size),
         })
       })
       .collect();
@@ -319,7 +352,7 @@ impl NiriCompositor {
         title: w.title.clone().unwrap_or_default(),
         class: w.app_id.clone().unwrap_or_default(),
         is_active: true,
-        metadata: Default::default(),
+        metadata: window_metadata(w.pid, w.layout.window_size),
       });
 
     let focused_id = focused.as_ref().map(|window| window.id);
@@ -413,6 +446,21 @@ impl NiriCompositor {
   }
 }
 
+fn window_metadata(pid: Option<i32>, size: (i32, i32)) -> HashMap<String, String> {
+  let mut metadata = HashMap::new();
+
+  if let Some(pid) = pid {
+    metadata.insert(Window::META_PID.to_string(), pid.to_string());
+  }
+
+  if size.0 > 0 && size.1 > 0 {
+    metadata.insert(Window::META_WIDTH.to_string(), size.0.to_string());
+    metadata.insert(Window::META_HEIGHT.to_string(), size.1.to_string());
+  }
+
+  metadata
+}
+
 fn accepts(state: &EventStreamState, event: &niri_ipc::Event) -> bool {
   match event {
     niri_ipc::Event::WorkspaceActivated { id, .. }
@@ -437,6 +485,7 @@ fn event_mask(event: &niri_ipc::Event) -> CompositorEvent {
     | Event::WindowClosed { .. }
     | Event::WindowFocusChanged { .. } => CompositorEvent::WINDOWS | CompositorEvent::FOCUS,
     Event::OverviewOpenedOrClosed { .. } => CompositorEvent::OVERVIEW,
+    Event::WindowLayoutsChanged { .. } => CompositorEvent::WINDOWS | CompositorEvent::FOCUS,
     _ => CompositorEvent::NONE,
   }
 }

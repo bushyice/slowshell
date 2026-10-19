@@ -240,60 +240,25 @@ impl App {
           .collect::<Vec<_>>(),
       ),
       Message::Item(msg) => match msg {
-        slowshell_core::message::ItemMessage::Action(
-          slowshell_core::listeners::ListenerAction::FocusWorkspace(idx),
-        ) => {
-          let task = {
-            let Some(compositor) = self.store.borrow_mut::<CompositorStore>() else {
-              return Task::none();
-            };
-            match compositor.send_cmd(slowshell_compositor::CompositorCommand::FocusWorkspace(
-              idx as i32,
-            )) {
-              Err(e) => {
-                eprintln!("Failed to focus workspace: {e}");
-                Task::none()
-              }
-              Ok(_) => Task::none(),
-            }
-          };
-          task
-        }
-        slowshell_core::message::ItemMessage::Action(
-          slowshell_core::listeners::ListenerAction::FocusWindow(id),
-        ) => {
-          let Some(compositor) = self.store.borrow_mut::<CompositorStore>() else {
+        slowshell_core::message::ItemMessage::Action(action) => {
+          if self.compositor_command(&action) {
             return Task::none();
-          };
-          if let Err(e) =
-            compositor.send_cmd(slowshell_compositor::CompositorCommand::FocusWindow(id))
-          {
-            eprintln!("Failed to focus window: {e}");
           }
-          Task::none()
+          self.update_items(&action)
         }
-        slowshell_core::message::ItemMessage::Action(
-          slowshell_core::listeners::ListenerAction::FocusMonitor(name),
-        ) => {
-          let Some(compositor) = self.store.borrow_mut::<CompositorStore>() else {
-            return Task::none();
-          };
-          if let Err(e) =
-            compositor.send_cmd(slowshell_compositor::CompositorCommand::FocusMonitor(name))
-          {
-            eprintln!("Failed to focus monitor: {e}");
-          }
-          Task::none()
-        }
-        slowshell_core::message::ItemMessage::Action(action) => self.update_items(&action),
-        slowshell_core::message::ItemMessage::EffectAction(id, effect, action) => Task::batch([
-          self.items.handle_message(
+        slowshell_core::message::ItemMessage::EffectAction(id, effect, action) => {
+          let effect_task = self.items.handle_message(
             &*self.config,
             &slowshell_core::message::ItemMessage::Effect(id, effect),
             Some(&mut self.store),
-          ),
-          self.update_items(&action),
-        ]),
+          );
+
+          if self.compositor_command(&action) {
+            return effect_task;
+          }
+
+          Task::batch([effect_task, self.update_items(&action)])
+        }
         slowshell_core::message::ItemMessage::Task(task) => (task)(),
         other => self
           .items
@@ -415,6 +380,33 @@ impl App {
     }
   }
 
+  /// Runs the compositor navigation commands straight from item messages.
+  /// Returns `true` when the action was a compositor command.
+  fn compositor_command(&mut self, action: &ListenerAction) -> bool {
+    let command = match action {
+      ListenerAction::FocusWorkspace(idx) => {
+        slowshell_compositor::CompositorCommand::FocusWorkspace(*idx as i32)
+      }
+      ListenerAction::FocusWindow(id) => slowshell_compositor::CompositorCommand::FocusWindow(*id),
+      ListenerAction::CloseWindow(id) => slowshell_compositor::CompositorCommand::CloseWindow(*id),
+      ListenerAction::KillWindow(id) => slowshell_compositor::CompositorCommand::KillWindow(*id),
+      ListenerAction::FocusMonitor(name) => {
+        slowshell_compositor::CompositorCommand::FocusMonitor(name.clone())
+      }
+      _ => return false,
+    };
+
+    let Some(compositor) = self.store.borrow_mut::<CompositorStore>() else {
+      return true;
+    };
+
+    if let Err(e) = compositor.send_cmd(command) {
+      eprintln!("Failed to run compositor command: {e}");
+    }
+
+    true
+  }
+
   fn update_items(&mut self, action: &ListenerAction) -> Task<Message> {
     let mut tasks = vec![
       self
@@ -437,6 +429,9 @@ pub fn redraw_scope(message: &Message) -> Scope {
     Message::Item(ItemMessage::Effect(_, ItemEffect::None)) => Scope::None,
     Message::Item(ItemMessage::Action(
       ListenerAction::FocusWorkspace(_) | ListenerAction::FocusWindow(_),
+    )) => Scope::None,
+    Message::Item(ItemMessage::Action(
+      ListenerAction::CloseWindow(_) | ListenerAction::KillWindow(_),
     )) => Scope::None,
     Message::LayoutChange { id, .. }
     | Message::LayerChange { id, .. }

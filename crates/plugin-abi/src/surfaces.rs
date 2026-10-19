@@ -382,6 +382,8 @@ pub fn deployable_desktop_item_factory<T: DeployableDesktopItem>() -> Deployable
 pub enum CompositorCommand {
   FocusWorkspace(i32),
   FocusWindow(u64),
+  CloseWindow(u64),
+  KillWindow(u64),
   FocusMonitor(RString),
   Custom(PayloadBox),
 }

@@ -179,17 +179,16 @@ impl Renderable for QuickSettingsRenderable {
 
 fn render_user_header<'a>(config: &'a Config) -> Element<'a, ItemMessage> {
   let faded = config.palette().subtext;
-  let avatar_size = config
-    .computed(&["menu", "qs", "avatar"])
-    .length("avatar-size")
-    .unwrap_or(42.0);
+  let avatar = config.computed(&["menu", "qs", "avatar"]);
+  let avatar_size = avatar.length("size").unwrap_or(42.0);
+  let avatar_radius = avatar.length("border-radius").unwrap_or(42.0);
 
-  let picture = user_picture();
-  let avatar: Element<'a, ItemMessage> = if let Some(path) = picture {
-    iced::widget::image(iced::widget::image::Handle::from_path(path))
+  let avatar: Element<'a, ItemMessage> = if let Some(handle) = user_picture() {
+    iced::widget::image(handle)
       .width(Length::Fixed(avatar_size))
       .height(Length::Fixed(avatar_size))
       .content_fit(iced::ContentFit::Cover)
+      .border_radius(avatar_radius)
       .into()
   } else {
     Icon::new("avatar-default-symbolic")
@@ -432,23 +431,32 @@ fn host_name() -> &'static str {
     .as_str()
 }
 
-fn user_picture() -> Option<&'static std::path::PathBuf> {
-  static PICTURE: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+fn user_picture() -> Option<&'static iced::widget::image::Handle> {
+  static PICTURE: std::sync::OnceLock<Option<iced::widget::image::Handle>> =
+    std::sync::OnceLock::new();
+
   PICTURE
     .get_or_init(|| {
       let home = std::env::var("HOME").ok()?;
       let home = std::path::PathBuf::from(home);
 
+      let mut candidates = Vec::new();
+
       for candidate in [".face", ".face.icon", ".config/avatar"] {
-        let path = home.join(candidate);
-        if path.is_file() {
-          return Some(path);
-        }
+        candidates.push(home.join(candidate));
       }
 
-      let user = std::env::var("USER").ok()?;
-      let path = std::path::PathBuf::from(format!("/var/lib/AccountsService/icons/{user}"));
-      path.is_file().then_some(path)
+      if let Ok(user) = std::env::var("USER") {
+        candidates.push(std::path::PathBuf::from(format!(
+          "/var/lib/AccountsService/icons/{user}"
+        )));
+      }
+
+      let path = candidates.into_iter().find(|path| path.is_file())?;
+
+      let bytes = std::fs::read(path).ok()?;
+
+      Some(iced::widget::image::Handle::from_bytes(bytes))
     })
     .as_ref()
 }

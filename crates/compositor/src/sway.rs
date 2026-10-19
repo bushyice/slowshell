@@ -1,4 +1,5 @@
 use std::{
+  collections::HashMap,
   fmt::Debug,
   io::{Read, Write},
   os::{fd::AsRawFd, unix::net::UnixStream},
@@ -59,6 +60,10 @@ struct SwayRect {
   height: i64,
 }
 
+fn logical_length(value: i64, scale: f64) -> u64 {
+  (value.max(0) as f64 / scale.max(1.0).round()).round() as u64
+}
+
 #[derive(Debug, Deserialize)]
 struct SwayOutput {
   #[serde(default)]
@@ -85,6 +90,10 @@ struct SwayNode {
   #[serde(default)]
   focused: bool,
   #[serde(default)]
+  rect: Option<SwayRect>,
+  #[serde(default)]
+  pid: Option<i64>,
+  #[serde(default)]
   window_properties: Option<SwayWindowProps>,
   #[serde(default)]
   nodes: Vec<SwayNode>,
@@ -106,13 +115,29 @@ impl SwayNode {
     self.app_id.is_some() || self.window_properties.is_some()
   }
 
-  fn to_window(&self) -> Window {
+  fn to_window(&self, scale: f64) -> Window {
+    let mut metadata = HashMap::new();
+
+    if let Some(pid) = self.pid.filter(|pid| *pid > 0) {
+      metadata.insert(Window::META_PID.to_string(), pid.to_string());
+    }
+
+    if let Some(rect) = &self.rect {
+      let width = logical_length(rect.width, scale);
+      let height = logical_length(rect.height, scale);
+
+      if width > 0 && height > 0 {
+        metadata.insert(Window::META_WIDTH.to_string(), width.to_string());
+        metadata.insert(Window::META_HEIGHT.to_string(), height.to_string());
+      }
+    }
+
     Window {
       id: self.id.max(0) as u64,
       title: self.name.clone().unwrap_or_default(),
       class: self.class().unwrap_or_default(),
       is_active: self.focused,
-      metadata: Default::default(),
+      metadata,
     }
   }
 }
@@ -153,6 +178,15 @@ impl WlrCompositor {
     Self::default()
   }
 
+  fn window_scale(&self) -> f64 {
+    self
+      .state
+      .monitors
+      .values()
+      .map(|monitor| monitor.scale)
+      .fold(1.0, f64::max)
+  }
+
   fn get_or_connect_cmd_socket(&mut self) -> Result<&mut UnixStream> {
     if self.cmd_socket.is_none() {
       let path = socket_path().ok_or_else(|| miette::miette!("SWAYSOCK is not set"))?;
@@ -184,6 +218,8 @@ impl WlrCompositor {
     let command = match cmd {
       CompositorCommand::FocusWorkspace(idx) => format!("workspace number {idx}"),
       CompositorCommand::FocusWindow(id) => format!("[con_id={id}] focus"),
+      CompositorCommand::CloseWindow(id) => format!("[con_id={id}] kill"),
+      CompositorCommand::KillWindow(id) => format!("[con_id={id}] kill"),
       CompositorCommand::FocusMonitor(name) => format!("focus output {name}"),
       CompositorCommand::Custom(content) => {
         content.as_this::<String>().cloned().unwrap_or_default()
@@ -220,23 +256,28 @@ impl WlrCompositor {
   }
 
   fn apply_compositor_state(&mut self) -> Result<Void> {
-    self.refresh_windows()?;
-    self.refresh_workspaces()
+    self.refresh_workspaces()?;
+    self.refresh_windows()
   }
 
   fn refresh_windows(&mut self) -> Result<Void> {
     let tree: SwayNode = self.query(GET_TREE)?;
 
-    self.state.active_window = focused_window(&tree).map(|node| {
-      let mut window = node.to_window();
+    let active_window = focused_window(&tree).map(|node| {
+      let mut window = node.to_window(self.window_scale());
       window.is_active = true;
       window
     });
 
+    self.state.active_window = active_window;
+
     let mut windows = Vec::new();
     collect_windows(&tree, &mut windows);
 
-    self.state.active_windows = windows.into_iter().map(SwayNode::to_window).collect();
+    self.state.active_windows = windows
+      .into_iter()
+      .map(|node| node.to_window(self.window_scale()))
+      .collect();
 
     self.state.overview_active = false;
 
@@ -264,7 +305,7 @@ impl WlrCompositor {
           window.is_active = window.id == id;
         }
 
-        let mut active = event.container.to_window();
+        let mut active = event.container.to_window(self.window_scale());
         active.is_active = true;
         self.state.active_window = Some(active);
 

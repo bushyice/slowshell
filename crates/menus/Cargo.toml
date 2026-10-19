@@ -11,9 +11,11 @@ slowshell-widgets = { path = "../widgets" }
 slowshell-popups = { path = "../popups" }
 slowshell-registry = { path = "../registry" }
 slowshell-commons = { path = "../commons" }
+slowshell-compositor = { path = "../compositor", default-features = false }
 
 iced.workspace = true
 icss.workspace = true
+libc.workspace = true
 iced_exwlshell.workspace = true
 system-tray.workspace = true
 chrono.workspace = true

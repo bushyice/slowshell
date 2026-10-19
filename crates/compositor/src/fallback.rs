@@ -648,6 +648,22 @@ impl Compositor for FallbackCompositor {
         self.flush()
       }
 
+      CompositorCommand::CloseWindow(id) => {
+        let entry = self
+          .inner
+          .toplevels
+          .iter()
+          .find(|toplevel| toplevel.id == id)
+          .ok_or_else(|| miette::miette!("window {id} was not found"))?;
+
+        entry.proxy.close();
+        self.flush()
+      }
+
+      CompositorCommand::KillWindow(_) => Err(miette::miette!(
+        "fallback compositor cannot kill windows, the pid is unknown and foreign-toplevel has no such request"
+      )),
+
       CompositorCommand::FocusMonitor(name) => {
         let entry =
           self

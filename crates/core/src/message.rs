@@ -130,6 +130,8 @@ impl Into<EventFilter> for &ListenerAction {
       ListenerAction::StartUp => EventFilter::StartUp,
       ListenerAction::FocusWorkspace(_) => EventFilter::Tick,
       ListenerAction::FocusWindow(_) => EventFilter::Tick,
+      ListenerAction::CloseWindow(_) => EventFilter::Tick,
+      ListenerAction::KillWindow(_) => EventFilter::Tick,
       ListenerAction::FocusMonitor(_) => EventFilter::Tick,
       ListenerAction::Ipc(cmd) => EventFilter::Ipc(cmd.clone()),
       ListenerAction::Payload { name, .. } => EventFilter::Payload(name.clone()),
@@ -145,7 +147,6 @@ pub struct WindowSettings {
   pub anchor: Option<Anchor>,
 }
 
-/// pretty cool
 pub fn layer_size(width: u32, height: u32) -> LayerSize {
   match (width, height) {
     (0, 0) => LayerSize::FILL,
