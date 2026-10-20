@@ -62,6 +62,23 @@ You can add slowshell as a flake input:
 }
 ```
 
+=== Home Manager
+The flake also ships a Home Manager module for declarative configuration:
+
+```nix
+{
+  imports = [ inputs.slowshell.homeManagerModules.default ];
+
+  programs.slowshell = {
+    enable = true;
+    package = inputs.slowshell.packages.${pkgs.system}.default;
+    systemd.enable = true;
+  };
+}
+```
+
+See [[Home Manager]] for the full option set.
+
 === Build from source
 For a detailed guide on building, check [[Building from source]].
 

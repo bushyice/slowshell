@@ -7,7 +7,12 @@
   };
 
   outputs =
-    { nixpkgs, crane, ... }:
+    {
+      self,
+      nixpkgs,
+      crane,
+      ...
+    }:
     let
       inherit (nixpkgs) lib;
 
@@ -50,7 +55,15 @@
         fi
       '';
     in
-    eachSystem (
+    {
+      # The Home Manager module is system independent: it takes `pkgs` from the
+      # Home Manager evaluation, so one file serves every platform.
+      homeManagerModules = {
+        slowshell = import ./nix/hm-module.nix;
+        default = self.homeManagerModules.slowshell;
+      };
+    }
+    // eachSystem (
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -121,6 +134,14 @@
 
         checks = {
           inherit slowshell;
+
+          # The Home Manager module is evaluated against a stub of the Home
+          # Manager options it uses, so the generated config is built (and
+          # validated) as part of `nix flake check` without adding
+          # home-manager as a dependency of this flake.
+          home-manager-module = import ./nix/hm-check.nix {
+            inherit lib pkgs slowshell;
+          };
         };
 
         devShells.default = craneLib.devShell {
