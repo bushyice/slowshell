@@ -8,7 +8,7 @@
   gap: 5px;
   padding-v: 5px;
   padding-h: 9px;
-  hover-background: var(--crust-a18);
+  hover-background: var(--crust);
   hover-radius: 4px;
 }
 
@@ -63,15 +63,20 @@
 .windows.closed { color: var(--subtext); }
 
 .notch {
-  background: var(--mantle-a90);
-  border-radius: 14px;
-  border-width: 1.0;
+  background: var(--mantle-a60);
+  border-radius: 4px;
+  border-width: 0.0;
   border-color: var(--overlay-a10);
   padding-v: 3px;
   padding-h: 10px;
   gap: 8px;
   color: var(--text);
   font-size: 12px;
+}
+
+
+.notch.separator {
+  height: 7px
 }
 
 .notch.workspaces.dot {
@@ -126,5 +131,14 @@
 
 .notch.status {
   color: var(--text);
+  icon-size: 13px;
+}
+
+.notch.battery {
+  color: var(--subtext);
+  color-charging: var(--primary);
+  color-danger: var(--red);
+  color-warning: var(--yellow);
+  font-size: 12px;
   icon-size: 13px;
 }

@@ -47,7 +47,11 @@ pub mod prelude {
 
 pub mod reexport {
   pub use abi_stable;
+  pub use iced;
+  pub use iced_anim;
+  pub use icss;
   pub use kdl;
   pub use ron;
   pub use serde;
+  pub use slowshell_core as core;
 }
