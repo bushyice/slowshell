@@ -27,6 +27,22 @@ impl PopupPosition {
       }
     }
   }
+
+  pub fn set_offset(&self, offset: f32) -> Self {
+    match self {
+      Self::Fixed(_) => Self::Fixed(offset),
+      Self::FollowMouse(_) => Self::FollowMouse(offset),
+      _ => self.clone(),
+    }
+  }
+
+  pub fn offset_map(&self, o: impl FnOnce(&f32) -> f32) -> Self {
+    match self {
+      Self::Fixed(f) => Self::Fixed(o(f)),
+      Self::FollowMouse(f) => Self::FollowMouse(o(f)),
+      _ => self.clone(),
+    }
+  }
 }
 
 #[derive(Clone)]

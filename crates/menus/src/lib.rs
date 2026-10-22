@@ -5,6 +5,7 @@ pub mod network;
 pub mod notifications;
 pub mod power;
 pub mod quicksettings;
+pub mod shade;
 pub mod sound;
 pub mod systemmon;
 pub mod tray;
@@ -59,6 +60,10 @@ slowshell_registry::register_resources!(
   renderables: Renderable {
     name: "menus/window".into(),
     create: |_, _| Some(Box::new(window::WindowRenderable::default()))
+  },
+  renderables: Renderable {
+    name: "menus/shade".into(),
+    create: |_, _| Some(Box::new(shade::ShadeRenderable::default()))
   },
   app: Custom(|store| {
     quicksettings::register_builtin_providers(store);

@@ -6,6 +6,8 @@ pub mod clock;
 pub mod icon;
 #[cfg(feature = "network")]
 pub mod network;
+#[cfg(feature = "notch")]
+pub mod notch;
 #[cfg(feature = "notifications")]
 pub mod notifications;
 #[cfg(feature = "audio")]
@@ -86,6 +88,8 @@ pub struct ComponentContext<'a> {
   pub menu_suppressed: bool,
 }
 
+pub use slowshell_commons::notch::{NotchStatus, NotchStatusStore};
+
 impl<'a> ComponentContext<'a> {
   pub fn classes(&self) -> &'static [&'static str] {
     if self.orientation == PanelOrientation::Horizontal {
@@ -93,6 +97,14 @@ impl<'a> ComponentContext<'a> {
     } else {
       &["component", "vertical"]
     }
+  }
+
+  pub fn update_status(&self, name: impl Into<String>, status: NotchStatus) {
+    slowshell_commons::notch::shared().update_status(name, status);
+  }
+
+  pub fn remove_status(&self, name: &str) {
+    slowshell_commons::notch::shared().remove_status(name);
   }
 }
 
@@ -330,6 +342,11 @@ pub fn register_all(components: &mut Components) {
   components.insert(
     "core/nowplaying".into(),
     Box::new(|| Box::new(nowplaying::NowPlaying::new())),
+  );
+  #[cfg(feature = "notch")]
+  components.insert(
+    "core/notch".into(),
+    Box::new(|| Box::new(notch::Notch::new())),
   );
 }
 

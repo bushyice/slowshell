@@ -62,8 +62,89 @@ impl Default for QuickSettingsRenderable {
 }
 
 impl QuickSettingsRenderable {
-  const EXPAND: usize = 0;
-  const COLLAPSE: usize = 1;
+  pub const EXPAND: usize = 0;
+  pub const COLLAPSE: usize = 1;
+}
+
+pub fn handle_tile_expand(
+  expanded: &Arc<Mutex<Option<String>>>,
+  slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
+  message: &ItemMessage,
+) -> Option<ItemEffect> {
+  let ItemMessage::Effect(_, ItemEffect::Custom([42, kind, slot, _])) = message else {
+    return None;
+  };
+
+  let id = slots
+    .lock()
+    .ok()
+    .and_then(|slots| slots.get(slot).cloned())?;
+
+  if let Ok(mut expanded) = expanded.lock() {
+    match *kind {
+      QuickSettingsRenderable::EXPAND => *expanded = Some(id),
+      QuickSettingsRenderable::COLLAPSE if expanded.as_deref() == Some(id.as_str()) => {
+        *expanded = None
+      }
+      _ => {}
+    }
+  }
+
+  Some(ItemEffect::Redraw)
+}
+
+pub fn render_quicksettings_content<'a>(
+  config: &'a Config,
+  store: &'a Store,
+  id: IcedId,
+  expanded: Option<&str>,
+  slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
+  settings: Option<&PopupSettings>,
+) -> Vec<Element<'a, ItemMessage>> {
+  let registry = store.borrow::<QuickSettingsRegistry>();
+  let tiles = registry
+    .as_ref()
+    .map(|registry| registry.tiles(config, store))
+    .unwrap_or_default();
+
+  let mut allocator = SlotAllocator::default();
+  if let Ok(mut s) = slots.lock() {
+    s.clear();
+  }
+
+  let mut children: Vec<Element<'a, ItemMessage>> = Vec::new();
+  children.push(render_user_header(config));
+
+  if let Some(registry) = registry.as_ref() {
+    children.extend(registry.sections(config, store));
+  }
+
+  let grid = render_tile_grid(
+    config,
+    &tiles,
+    expanded,
+    id,
+    &mut allocator,
+    slots,
+    settings,
+  );
+  children.push(grid);
+
+  if let (Some(expanded), Some(registry)) = (expanded, registry.as_ref()) {
+    let sub_tiles = registry.children(config, store, expanded);
+    if !sub_tiles.is_empty() {
+      children.push(render_expanded(
+        config,
+        &sub_tiles,
+        id,
+        &mut allocator,
+        slots,
+        settings,
+      ));
+    }
+  }
+
+  children
 }
 
 impl Renderable for QuickSettingsRenderable {
@@ -75,25 +156,7 @@ impl Renderable for QuickSettingsRenderable {
   }
 
   fn handle_message(&mut self, message: &ItemMessage) -> Option<ItemEffect> {
-    let ItemMessage::Effect(_, ItemEffect::Custom([42, kind, slot, _])) = message else {
-      return None;
-    };
-
-    let id = self
-      .slots
-      .lock()
-      .ok()
-      .and_then(|slots| slots.get(slot).cloned())?;
-
-    if let Ok(mut expanded) = self.expanded.lock() {
-      match *kind {
-        Self::EXPAND => *expanded = Some(id),
-        Self::COLLAPSE if expanded.as_deref() == Some(id.as_str()) => *expanded = None,
-        _ => {}
-      }
-    }
-
-    Some(ItemEffect::Redraw)
+    handle_tile_expand(&self.expanded, &self.slots, message)
   }
 
   fn view<'a>(
@@ -106,51 +169,14 @@ impl Renderable for QuickSettingsRenderable {
     let data = data.downcast_ref::<PopupSettings>().unwrap();
 
     let expanded = self.expanded.lock().ok().and_then(|slot| slot.clone());
-
-    let registry = store.borrow::<QuickSettingsRegistry>();
-    let tiles = registry
-      .as_ref()
-      .map(|registry| registry.tiles(config, store))
-      .unwrap_or_default();
-
-    let mut allocator = SlotAllocator::default();
-    if let Ok(mut slots) = self.slots.lock() {
-      slots.clear();
-    }
-
-    let mut children: Vec<Element<'a, ItemMessage>> = Vec::new();
-    children.push(render_user_header(config));
-
-    if let Some(registry) = registry.as_ref() {
-      children.extend(registry.sections(config, store));
-    }
-
-    let grid = render_tile_grid(
+    let children = render_quicksettings_content(
       config,
-      &tiles,
-      expanded.as_deref(),
+      store,
       id,
-      &mut allocator,
+      expanded.as_deref(),
       &self.slots,
       Some(data),
     );
-    children.push(grid);
-
-    if let (Some(expanded), Some(registry)) = (expanded.as_deref(), registry.as_ref()) {
-      let sub_tiles = registry.children(config, store, expanded);
-      if !sub_tiles.is_empty() {
-        children.push(render_expanded(
-          config,
-          &sub_tiles,
-          id,
-          &mut allocator,
-          &self.slots,
-          Some(data),
-        ));
-      }
-    }
-
-    // children.push(render_footer(config));
 
     let list_spacing = config.sizing(&["menu", "list"]).gap;
     let list_width = config
@@ -160,6 +186,7 @@ impl Renderable for QuickSettingsRenderable {
     let list = column(children)
       .spacing(list_spacing)
       .width(Length::Fixed(list_width));
+
 
     let inner_padding = config.sizing(&["menu", "inner"]).padding();
     let popup_style = config.container_cached(&["menu"]);
@@ -177,7 +204,8 @@ impl Renderable for QuickSettingsRenderable {
   }
 }
 
-fn render_user_header<'a>(config: &'a Config) -> Element<'a, ItemMessage> {
+pub fn render_user_header<'a>(config: &'a Config) -> Element<'a, ItemMessage> {
+
   let faded = config.palette().subtext;
   let avatar = config.computed(&["menu", "qs", "avatar"]);
   let avatar_size = avatar.length("size").unwrap_or(42.0);
@@ -227,12 +255,12 @@ fn render_user_header<'a>(config: &'a Config) -> Element<'a, ItemMessage> {
 }
 
 #[derive(Default)]
-struct SlotAllocator {
-  next: usize,
+pub struct SlotAllocator {
+  pub next: usize,
 }
 
 impl SlotAllocator {
-  fn allocate(
+  pub fn allocate(
     &mut self,
     tile_id: &str,
     slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
@@ -246,7 +274,7 @@ impl SlotAllocator {
   }
 }
 
-fn render_tile_grid<'a>(
+pub fn render_tile_grid<'a>(
   config: &'a Config,
   tiles: &[QuickSettingsTile],
   expanded: Option<&str>,
@@ -255,6 +283,7 @@ fn render_tile_grid<'a>(
   slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
   settings: Option<&PopupSettings>,
 ) -> Element<'a, ItemMessage> {
+
   let mut rows: Vec<Element<'a, ItemMessage>> = Vec::new();
   let mut current: Vec<Element<'a, ItemMessage>> = Vec::new();
 
@@ -364,7 +393,7 @@ fn render_action_tile<'a>(
   clickable(base, move |_, _, _| Some(message.clone()))
 }
 
-fn render_expanded<'a>(
+pub fn render_expanded<'a>(
   config: &'a Config,
   tiles: &[QuickSettingsTile],
   id: IcedId,
@@ -407,7 +436,7 @@ fn render_expanded<'a>(
 //   .into()
 // }
 
-fn user_name() -> &'static str {
+pub fn user_name() -> &'static str {
   static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
   NAME
     .get_or_init(|| {
@@ -418,7 +447,7 @@ fn user_name() -> &'static str {
     .as_str()
 }
 
-fn host_name() -> &'static str {
+pub fn host_name() -> &'static str {
   static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
   HOST
     .get_or_init(|| {
@@ -431,7 +460,8 @@ fn host_name() -> &'static str {
     .as_str()
 }
 
-fn user_picture() -> Option<&'static iced::widget::image::Handle> {
+pub fn user_picture() -> Option<&'static iced::widget::image::Handle> {
+
   static PICTURE: std::sync::OnceLock<Option<iced::widget::image::Handle>> =
     std::sync::OnceLock::new();
 

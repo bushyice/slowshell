@@ -8,6 +8,7 @@ pub mod audio;
 pub mod bluetooth;
 pub mod desktop;
 pub mod network;
+pub mod notch;
 pub mod notifications;
 pub mod panels;
 pub mod popups;
@@ -15,3 +16,7 @@ pub mod power;
 pub mod quicksettings;
 pub mod system;
 pub mod tray;
+pub mod window;
+
+pub use notch::{NotchStatus, NotchStatusStore, SharedNotchStatus};
+pub use window::{LastActiveWindowStore, last_active_window};

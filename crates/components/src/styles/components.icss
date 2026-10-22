@@ -8,7 +8,7 @@
   gap: 5px;
   padding-v: 5px;
   padding-h: 9px;
-  hover-background: var(--primary-a18);
+  hover-background: var(--crust-a18);
   hover-radius: 4px;
 }
 
@@ -61,3 +61,70 @@
 .windows.active { color: var(--primary); }
 .windows.open { color: var(--text); }
 .windows.closed { color: var(--subtext); }
+
+.notch {
+  background: var(--mantle-a90);
+  border-radius: 14px;
+  border-width: 1.0;
+  border-color: var(--overlay-a10);
+  padding-v: 3px;
+  padding-h: 10px;
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.notch.workspaces.dot {
+  background-color: var(--subtext-a35);
+  border-radius: 3px;
+  width-active: 12px;
+  width-inactive: 6px;
+  height: 6px;
+  gap: 4px;
+}
+
+.notch.workspaces.dot.active {
+  background-color: var(--primary);
+  border-radius: 3px;
+}
+
+.notch.window {
+  color: var(--text);
+  font-size: 12px;
+  icon-size: 13px;
+}
+
+.notch.nowplaying {
+  color: var(--text);
+  color-primary: var(--primary);
+  font-size: 12px;
+  icon-size: 12px;
+}
+
+.notch.system {
+  gauge-size: 20px;
+  color-cpu: var(--green);
+  color-mem: var(--blue);
+  color-track: var(--overlay-a25);
+  gap: 6px;
+}
+
+.notch.network {
+  color: var(--subtext);
+  icon-size: 13px;
+}
+
+.notch.clock {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.notch.notification-title {
+  color: var(--primary);
+  font-size: 12px;
+}
+
+.notch.status {
+  color: var(--text);
+  icon-size: 13px;
+}

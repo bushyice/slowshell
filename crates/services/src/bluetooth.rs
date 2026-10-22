@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use slowshell_commons::bluetooth::{BluetoothCmd, BluetoothDevice, SharedBluetoothState};
 use zbus::zvariant::{ObjectPath, Value};
 
-use crate::{lifecycle::ServiceSlot, util};
+use crate::lifecycle::ServiceSlot;
 
 pub(crate) struct GlobalBluetooth {
   shared: SharedBluetoothState,
@@ -116,24 +116,36 @@ async fn bt_loop(
     .await
     .into_diagnostic()?;
 
-  let mut adapter_props_stream = if let Some(ref path) = adapter_path {
-    let p = zbus::Proxy::new_owned(conn.clone(), BLUEZ_DEST, path.clone(), PROPS_IFACE)
-      .await
-      .into_diagnostic()?;
-    Some(
-      p.receive_signal("PropertiesChanged")
-        .await
-        .into_diagnostic()?,
-    )
-  } else {
-    None
-  };
+  let props_rule = zbus::MatchRule::builder()
+    .msg_type(zbus::message::Type::Signal)
+    .interface(PROPS_IFACE)
+    .into_diagnostic()?
+    .member("PropertiesChanged")
+    .into_diagnostic()?
+    .path_namespace("/org/bluez")
+    .into_diagnostic()?
+    .build();
+
+  let mut props_stream = zbus::MessageStream::for_match_rule(props_rule, &conn, Some(64))
+    .await
+    .into_diagnostic()?;
+
+  let mut ticker = tokio::time::interval(Duration::from_secs(5));
 
   loop {
     tokio::select! {
       Some(cmd) = cmd_rx.recv() => {
-        handle_cmd(&conn, shared, &adapter_path, cmd).await;
-        bump(shared, notify);
+        use std::os::fd::AsRawFd;
+        let conn = conn.clone();
+        let shared = shared.clone();
+        let adapter_path = adapter_path.clone();
+        let raw_notify = notify.as_ref().map(|f| f.as_raw_fd());
+        crate::shared_runtime().spawn(async move {
+          handle_cmd(&conn, &shared, &adapter_path, cmd).await;
+          let mut ap = adapter_path.clone();
+          refresh_all(&conn, &shared, &mut ap).await.ok();
+          bump_raw(&shared, raw_notify);
+        });
       }
 
       Some(_) = added_stream.next() => {
@@ -146,13 +158,12 @@ async fn bt_loop(
         bump(shared, notify);
       }
 
-      Some(_) = async {
-        if let Some(stream) = adapter_props_stream.as_mut() {
-          stream.next().await
-        } else {
-          futures_util::future::pending().await
-        }
-      } => {
+      Some(_) = props_stream.next() => {
+        refresh_all(&conn, shared, &mut adapter_path).await.ok();
+        bump(shared, notify);
+      }
+
+      _ = ticker.tick() => {
         refresh_all(&conn, shared, &mut adapter_path).await.ok();
         bump(shared, notify);
       }
@@ -183,8 +194,10 @@ async fn refresh_all(
     body.deserialize().into_diagnostic()?;
 
   let mut found_adapter = None;
+  let mut adapter_alias = None;
   let mut adapter_powered = false;
   let mut adapter_discovering = false;
+  let mut adapter_discoverable = false;
   let mut devices = Vec::new();
 
   for (path, ifaces) in &objects {
@@ -198,6 +211,12 @@ async fn refresh_all(
         }
         if let Some(Value::Bool(d)) = props.get("Discovering") {
           adapter_discovering = *d;
+        }
+        if let Some(Value::Bool(disc)) = props.get("Discoverable") {
+          adapter_discoverable = *disc;
+        }
+        if let Some(Value::Str(alias)) = props.get("Alias").or_else(|| props.get("Name")) {
+          adapter_alias = Some(alias.to_string());
         }
       }
     }
@@ -225,12 +244,16 @@ async fn refresh_all(
       let paired = matches!(props.get("Paired"), Some(Value::Bool(true)));
       let connected = matches!(props.get("Connected"), Some(Value::Bool(true)));
       let trusted = matches!(props.get("Trusted"), Some(Value::Bool(true)));
+      let blocked = matches!(props.get("Blocked"), Some(Value::Bool(true)));
 
       let battery = ifaces
         .get("org.bluez.Battery1")
         .and_then(|b_props| b_props.get("Percentage"))
         .and_then(|v| match v {
           Value::U8(b) => Some(*b),
+          Value::U16(b) => Some(*b as u8),
+          Value::U32(b) => Some(*b as u8),
+          Value::I32(b) => Some(*b as u8),
           _ => None,
         });
 
@@ -246,8 +269,10 @@ async fn refresh_all(
         paired,
         connected,
         trusted,
+        blocked,
         battery,
         rssi,
+        path: Some(path_str.to_string()),
       });
     }
   }
@@ -271,9 +296,28 @@ async fn refresh_all(
   let mut guard = shared.state.lock().unwrap();
   let state = Arc::make_mut(&mut guard);
   state.adapter_name = found_adapter;
+  state.adapter_alias = adapter_alias;
+  state.discoverable = adapter_discoverable;
   state.devices = devices;
 
   Ok(())
+}
+
+fn resolve_dev_path(shared: &SharedBluetoothState, adapter: &str, addr: &str) -> String {
+  if addr.starts_with('/') {
+    return addr.to_string();
+  }
+  if let Ok(guard) = shared.state.lock() {
+    for dev in &guard.devices {
+      if dev.address.eq_ignore_ascii_case(addr) {
+        if let Some(ref path) = dev.path {
+          return path.clone();
+        }
+      }
+    }
+  }
+  let formatted = addr.to_uppercase().replace(':', "_");
+  format!("{adapter}/dev_{formatted}")
 }
 
 async fn handle_cmd(
@@ -334,9 +378,39 @@ async fn handle_cmd(
         )
         .await;
     }
-    BluetoothCmd::Connect(addr) => {
-      let dev_path = addr_to_path(adapter, &addr);
+    BluetoothCmd::ToggleDiscoverable => {
+      let current = shared.state.lock().map(|s| s.discoverable).unwrap_or(false);
+      let target = Value::from(!current);
       let _ = conn
+        .call_method(
+          Some(BLUEZ_DEST),
+          adapter,
+          Some(PROPS_IFACE),
+          "Set",
+          &(ADAPTER_IFACE, "Discoverable", target),
+        )
+        .await;
+    }
+    BluetoothCmd::SetDiscoverable(val) => {
+      let target = Value::from(val);
+      let _ = conn
+        .call_method(
+          Some(BLUEZ_DEST),
+          adapter,
+          Some(PROPS_IFACE),
+          "Set",
+          &(ADAPTER_IFACE, "Discoverable", target),
+        )
+        .await;
+    }
+    BluetoothCmd::Connect(addr) => {
+      let dev_path = resolve_dev_path(shared, adapter, &addr);
+      {
+        let mut menu = shared.menu.lock().unwrap();
+        menu.connecting_device = Some(addr.clone());
+      }
+      eprintln!("[bluetooth] Connecting to {addr} at {dev_path}");
+      let res = conn
         .call_method(
           Some(BLUEZ_DEST),
           dev_path.as_str(),
@@ -345,10 +419,56 @@ async fn handle_cmd(
           &(),
         )
         .await;
+      if let Err(e) = res {
+        eprintln!("[bluetooth] Connect returned: {e}");
+        let is_unpaired = shared
+          .state
+          .lock()
+          .map(|s| {
+            s.devices
+              .iter()
+              .any(|d| d.address.eq_ignore_ascii_case(&addr) && !d.paired)
+          })
+          .unwrap_or(false);
+        if is_unpaired {
+          let _ = conn
+            .call_method(
+              Some(BLUEZ_DEST),
+              dev_path.as_str(),
+              Some(DEVICE_IFACE),
+              "Pair",
+              &(),
+            )
+            .await;
+          let _ = conn
+            .call_method(
+              Some(BLUEZ_DEST),
+              dev_path.as_str(),
+              Some(PROPS_IFACE),
+              "Set",
+              &(DEVICE_IFACE, "Trusted", Value::from(true)),
+            )
+            .await;
+          let _ = conn
+            .call_method(
+              Some(BLUEZ_DEST),
+              dev_path.as_str(),
+              Some(DEVICE_IFACE),
+              "Connect",
+              &(),
+            )
+            .await;
+        }
+      }
+      {
+        let mut menu = shared.menu.lock().unwrap();
+        menu.connecting_device = None;
+      }
     }
     BluetoothCmd::Disconnect(addr) => {
-      let dev_path = addr_to_path(adapter, &addr);
-      let _ = conn
+      let dev_path = resolve_dev_path(shared, adapter, &addr);
+      eprintln!("[bluetooth] Disconnecting from {addr} at {dev_path}");
+      let res = conn
         .call_method(
           Some(BLUEZ_DEST),
           dev_path.as_str(),
@@ -357,10 +477,14 @@ async fn handle_cmd(
           &(),
         )
         .await;
+      if let Err(e) = res {
+        eprintln!("[bluetooth] Disconnect returned: {e}");
+      }
     }
     BluetoothCmd::Pair(addr) => {
-      let dev_path = addr_to_path(adapter, &addr);
-      let _ = conn
+      let dev_path = resolve_dev_path(shared, adapter, &addr);
+      eprintln!("[bluetooth] Pairing with {addr} at {dev_path}");
+      let res = conn
         .call_method(
           Some(BLUEZ_DEST),
           dev_path.as_str(),
@@ -369,11 +493,24 @@ async fn handle_cmd(
           &(),
         )
         .await;
+      if let Err(e) = res {
+        eprintln!("[bluetooth] Pair returned: {e}");
+      } else {
+        let _ = conn
+          .call_method(
+            Some(BLUEZ_DEST),
+            dev_path.as_str(),
+            Some(PROPS_IFACE),
+            "Set",
+            &(DEVICE_IFACE, "Trusted", Value::from(true)),
+          )
+          .await;
+      }
     }
     BluetoothCmd::Trust(addr, trust) => {
-      let dev_path = addr_to_path(adapter, &addr);
+      let dev_path = resolve_dev_path(shared, adapter, &addr);
       let target = Value::from(trust);
-      let _ = conn
+      let res = conn
         .call_method(
           Some(BLUEZ_DEST),
           dev_path.as_str(),
@@ -382,11 +519,14 @@ async fn handle_cmd(
           &(DEVICE_IFACE, "Trusted", target),
         )
         .await;
+      if let Err(e) = res {
+        eprintln!("[bluetooth] Set Trusted returned: {e}");
+      }
     }
     BluetoothCmd::Remove(addr) => {
-      let dev_path = addr_to_path(adapter, &addr);
+      let dev_path = resolve_dev_path(shared, adapter, &addr);
       if let Ok(obj_path) = ObjectPath::try_from(dev_path.as_str()) {
-        let _ = conn
+        let res = conn
           .call_method(
             Some(BLUEZ_DEST),
             adapter,
@@ -395,19 +535,25 @@ async fn handle_cmd(
             &(obj_path,),
           )
           .await;
+        if let Err(e) = res {
+          eprintln!("[bluetooth] RemoveDevice returned: {e}");
+        }
       }
     }
   }
 }
 
-fn addr_to_path(adapter: &str, addr: &str) -> String {
-  let formatted = addr.replace(':', "_");
-  format!("{adapter}/dev_{formatted}")
+fn bump_raw(shared: &SharedBluetoothState, notify_fd: Option<i32>) {
+  shared.revision.fetch_add(1, Ordering::SeqCst);
+  if let Some(fd) = notify_fd {
+    let buf = 1u64.to_ne_bytes();
+    unsafe {
+      libc::write(fd, buf.as_ptr() as *const libc::c_void, 8);
+    }
+  }
 }
 
 fn bump(shared: &SharedBluetoothState, notify: &Option<OwnedFd>) {
-  shared.revision.fetch_add(1, Ordering::SeqCst);
-  if let Some(fd) = notify {
-    util::notify_signal(fd);
-  }
+  use std::os::fd::AsRawFd;
+  bump_raw(shared, notify.as_ref().map(|f| f.as_raw_fd()));
 }

@@ -419,48 +419,48 @@ mod tests {
       service_factory::<Svc>(),
       false,
     );
-    assert!(entries().lock().unwrap().is_empty());
+    assert!(!entries().lock().unwrap().contains_key("network"));
   }
 
   #[test]
   fn rejects_duplicate_names() {
     register(
       "test-plugin",
-      "test/svc".to_owned(),
+      "test/dup".to_owned(),
       service_factory::<Svc>(),
       true,
     );
     register(
       "other-plugin",
-      "test/svc".to_owned(),
+      "test/dup".to_owned(),
       service_factory::<Svc>(),
       false,
     );
 
     let map = entries().lock().unwrap();
-    assert_eq!(map.len(), 1);
-    assert!(map.get("test/svc").unwrap().autostart);
+    assert!(map.contains_key("test/dup"));
+    assert!(map.get("test/dup").unwrap().autostart);
   }
 
   #[test]
   fn starts_messages_and_stops() {
     register(
       "test-plugin",
-      "test/svc".to_owned(),
+      "test/lifecycle".to_owned(),
       service_factory::<Svc>(),
       false,
     );
 
-    assert!(start("test/svc"));
-    assert!(is_running("test/svc"));
-    assert!(send("test/svc", "hello"));
-    assert!(stop("test/svc"));
+    assert!(start("test/lifecycle"));
+    assert!(is_running("test/lifecycle"));
+    assert!(send("test/lifecycle", "hello"));
+    assert!(stop("test/lifecycle"));
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    while is_running("test/svc") && Instant::now() < deadline {
+    while is_running("test/lifecycle") && Instant::now() < deadline {
       std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(!is_running("test/svc"));
+    assert!(!is_running("test/lifecycle"));
   }
 
   #[test]

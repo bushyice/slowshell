@@ -2,6 +2,7 @@
 
 #![allow(non_local_definitions)]
 #![allow(non_camel_case_types)]
+#![allow(improper_ctypes_definitions)]
 
 pub use abi_stable::StableAbi;
 pub use abi_stable::export_root_module;
