@@ -32,20 +32,32 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 
 echo "==> building slowshell $version"
-cargo build --release --locked -p slowshell --bin slowshell
+if command -v cargo-zigbuild >/dev/null 2>&1; then
+  echo "    using cargo-zigbuild (target: x86_64-unknown-linux-gnu.2.39)"
+  cargo zigbuild --target x86_64-unknown-linux-gnu.2.39 --release --locked -p slowshell --bin slowshell
+  bin="target/x86_64-unknown-linux-gnu/release/slowshell"
+else
+  echo "    warning: cargo-zigbuild not found, falling back to standard cargo build"
+  cargo build --release --locked -p slowshell --bin slowshell
+  bin="target/release/slowshell"
+fi
 
 echo "==> packaging"
 pkg="slowshell-${version}"
 dist="$root/dist"
 rm -rf "$dist/$pkg"
 mkdir -p "$dist/$pkg"
-cp target/release/slowshell "$dist/$pkg/slowshell"
+cp "$bin" "$dist/$pkg/slowshell"
+chmod 0755 "$dist/$pkg/slowshell"
 # for extra in themes example.kdl; do
 #   [ -e "$extra" ] && cp -r "$extra" "$dist/$pkg/"
 # done
 tar -czf "$dist/$pkg.tar.gz" -C "$dist" "$pkg"
-sha256sum "$dist/$pkg.tar.gz" > "$dist/$pkg.tar.gz.sha256"
+(cd "$dist" && sha256sum "$pkg.tar.gz" > "$pkg.tar.gz.sha256")
+cp "$dist/$pkg.tar.gz" "$dist/${pkg}-glibc2.39.tar.gz"
+(cd "$dist" && sha256sum "${pkg}-glibc2.39.tar.gz" > "${pkg}-glibc2.39.tar.gz.sha256")
 echo "    dist/$pkg.tar.gz"
+echo "    dist/${pkg}-glibc2.39.tar.gz"
 
 echo "==> tagging $tag"
 if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
@@ -54,7 +66,12 @@ fi
 git push "$remote" "refs/tags/$tag"
 
 echo "==> publishing to GitHub ($repo)"
-assets=("$dist/$pkg.tar.gz" "$dist/$pkg.tar.gz.sha256")
+assets=(
+  "$dist/$pkg.tar.gz"
+  "$dist/$pkg.tar.gz.sha256"
+  "$dist/${pkg}-glibc2.39.tar.gz"
+  "$dist/${pkg}-glibc2.39.tar.gz.sha256"
+)
 if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
   gh release upload "$tag" "${assets[@]}" --repo "$repo" --clobber
 else

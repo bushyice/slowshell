@@ -1,0 +1,23 @@
+pkgbase = slowshell-bin
+	pkgdesc = A customizable Wayland desktop shell written in Rust (precompiled binary)
+	pkgver = 0.1.6.alpha
+	pkgrel = 1
+	url = https://github.com/bushyice/slowshell
+	arch = x86_64
+	license = GPL-3.0-or-later
+	depends = gcc-libs
+	depends = glibc
+	depends = libglvnd
+	depends = libxkbcommon
+	depends = vulkan-icd-loader
+	depends = wayland
+	optdepends = mesa: Open-source Vulkan/OpenGL drivers
+	optdepends = socat: For sending IPC commands via UNIX socket
+	provides = slowshell
+	conflicts = slowshell
+	source = slowshell-0.1.6-alpha.tar.gz::https://github.com/bushyice/slowshell/releases/download/v0.1.6-alpha/slowshell-0.1.6-alpha.tar.gz
+	source = LICENSE-0.1.6-alpha::https://raw.githubusercontent.com/bushyice/slowshell/v0.1.6-alpha/LICENSE
+	sha256sums = ac5562a8339908ce7470b3553fde238a25b05d4799e286e90603f1f08978a539
+	sha256sums = 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986
+
+pkgname = slowshell-bin

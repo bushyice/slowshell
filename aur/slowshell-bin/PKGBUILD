@@ -1,0 +1,37 @@
+# Maintainer: bushyice <https://github.com/bushyice>
+
+pkgname=slowshell-bin
+pkgver=0.1.6.alpha
+_pkgver=0.1.6-alpha
+pkgrel=1
+pkgdesc="A customizable Wayland desktop shell written in Rust (precompiled binary)"
+arch=('x86_64')
+url="https://github.com/bushyice/slowshell"
+license=('GPL-3.0-or-later')
+depends=(
+  'gcc-libs'
+  'glibc'
+  'libglvnd'
+  'libxkbcommon'
+  'vulkan-icd-loader'
+  'wayland'
+)
+optdepends=(
+  'mesa: Open-source Vulkan/OpenGL drivers'
+  'socat: For sending IPC commands via UNIX socket'
+)
+provides=('slowshell')
+conflicts=('slowshell')
+source=(
+  "slowshell-${_pkgver}.tar.gz::https://github.com/bushyice/slowshell/releases/download/v${_pkgver}/slowshell-${_pkgver}.tar.gz"
+  "LICENSE-${_pkgver}::https://raw.githubusercontent.com/bushyice/slowshell/v${_pkgver}/LICENSE"
+)
+sha256sums=(
+  'ac5562a8339908ce7470b3553fde238a25b05d4799e286e90603f1f08978a539'
+  '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986'
+)
+
+package() {
+  install -Dm755 "${srcdir}/slowshell-${_pkgver}/slowshell" "${pkgdir}/usr/bin/slowshell"
+  install -Dm644 "${srcdir}/LICENSE-${_pkgver}" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

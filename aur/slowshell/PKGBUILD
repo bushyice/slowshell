@@ -1,0 +1,56 @@
+# Maintainer: bushyice <https://github.com/bushyice>
+
+pkgname=slowshell
+pkgver=0.1.6.alpha
+_pkgver=0.1.6-alpha
+pkgrel=1
+pkgdesc="A customizable Wayland desktop shell written in Rust"
+arch=('x86_64')
+url="https://github.com/bushyice/slowshell"
+license=('GPL-3.0-or-later')
+depends=(
+  'gcc-libs'
+  'glibc'
+  'libglvnd'
+  'libxkbcommon'
+  'vulkan-icd-loader'
+  'wayland'
+)
+makedepends=(
+  'cargo'
+  'pkgconf'
+)
+optdepends=(
+  'mesa: Open-source Vulkan/OpenGL drivers'
+  'socat: For sending IPC commands via UNIX socket'
+)
+provides=('slowshell')
+conflicts=('slowshell')
+source=("${pkgname}-${_pkgver}.tar.gz::https://github.com/bushyice/slowshell/archive/refs/tags/v${_pkgver}.tar.gz")
+sha256sums=('ed8f1e3ffd7ef78d31d7d7014ad58b2f4ac59897f8ae845db1e94bf2fc584fff')
+
+prepare() {
+  cd "${pkgname}-${_pkgver}"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "${pkgname}-${_pkgver}"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p slowshell --bin slowshell
+}
+
+package() {
+  cd "${pkgname}-${_pkgver}"
+  install -Dm755 "target/release/slowshell" "${pkgdir}/usr/bin/slowshell"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 example.kdl "${pkgdir}/usr/share/doc/${pkgname}/example.kdl"
+  install -Dm644 example.toml "${pkgdir}/usr/share/doc/${pkgname}/example.toml"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  if [ -d themes ]; then
+    install -dm755 "${pkgdir}/usr/share/${pkgname}/themes"
+    cp -r themes/* "${pkgdir}/usr/share/${pkgname}/themes/"
+  fi
+}
