@@ -7,6 +7,9 @@ use iced::{
   Alignment, Color, Element, Length,
   widget::{Space, column, container, row, svg},
 };
+use slowshell_commons::power::POWER_CHANGED;
+#[cfg(feature = "power")]
+use slowshell_commons::power::{SharedPowerState, battery_icon};
 #[cfg(feature = "tray")]
 use slowshell_commons::tray::{SharedTrayState, TrayCmd, TrayItem, TrayPayload};
 use slowshell_commons::{
@@ -35,7 +38,7 @@ use slowshell_services::notifications::ensure as ensure_notifications;
 #[cfg(feature = "tray")]
 use slowshell_services::tray::TRAY_TICK;
 use slowshell_services::util::drain_signal_fd;
-use slowshell_widgets::{ComponentOptions, EventWrapper, Icon, clickable};
+use slowshell_widgets::{ComponentOptions, EventWrapper, Icon, clickable, separator};
 
 use crate::{Component, ComponentContext};
 #[cfg(feature = "tray")]
@@ -110,6 +113,12 @@ impl Component for Notch {
       EventFilter::Named("config.reload".into()),
       EventFilter::Tick,
     ];
+    #[cfg(feature = "power")]
+    {
+      events.push(EventFilter::Named(
+        slowshell_commons::power::POWER_CHANGED.into(),
+      ));
+    }
     #[cfg(feature = "tray")]
     {
       events.push(EventFilter::Named(TRAY_TICK.into()));
@@ -139,6 +148,10 @@ impl Component for Notch {
     {
       ensure_notifications(store);
     }
+    #[cfg(feature = "power")]
+    {
+      slowshell_services::power::ensure(store);
+    }
     let _ = store;
   }
 
@@ -161,7 +174,8 @@ impl Component for Notch {
         if &**name == AUDIO_CHANGED
           || &**name == NET_CHANGED
           || &**name == BT_CHANGED
-          || &**name == NOTCH_STATUS_CHANGED =>
+          || &**name == NOTCH_STATUS_CHANGED
+          || &**name == POWER_CHANGED =>
       {
         drain_signal_fd(*fd);
         return Ok(ItemEffect::Redraw);
@@ -171,6 +185,7 @@ impl Component for Notch {
           || &**n == NET_CHANGED
           || &**n == BT_CHANGED
           || &**n == NOTCH_STATUS_CHANGED
+          || &**n == POWER_CHANGED
           || &**n == "compositor.focus"
           || &**n == "config.reload" =>
       {
@@ -228,7 +243,13 @@ impl Component for Notch {
     let priority_list = parse_priority(options);
     let shade_on_hover = options
       .and_then(|o| o.bool("shade-on-hover"))
-      .unwrap_or(true);
+      .unwrap_or(false);
+    let battery_status = parse_battery_status(options);
+
+    let sep_height = config
+      .computed(&["notch", "separator"])
+      .length("height")
+      .unwrap_or(7.0);
 
     let (nowplaying_info, is_nowplaying_active) = query_nowplaying(store);
 
@@ -287,6 +308,44 @@ impl Component for Notch {
               rendered_elements.push(workspaces_elem);
             }
           }
+          "sep" => {
+            rendered_elements.push(
+              container(Space::new().height(sep_height).width(2.0))
+                .padding([5, 0])
+                .style(move |_t: &iced::Theme| container::Style {
+                  background: Some(
+                    Color {
+                      a: 0.1,
+                      ..config
+                        .color(&["component"], "color-faded")
+                        .unwrap_or(Color::from_rgb(0., 0., 0.))
+                    }
+                    .into(),
+                  ),
+                  border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                  },
+                  ..container::Style::default()
+                })
+                .into(),
+            );
+          }
+          "sep-circle" => {
+            rendered_elements.push(
+              separator()
+                .circle(true)
+                .padding([0, 0])
+                .size(5.0)
+                .opacity(0.5)
+                .color(
+                  config
+                    .color(&["component"], "color-faded")
+                    .unwrap_or(Color::from_rgb(0., 0., 0.)),
+                )
+                .into(),
+            );
+          }
           "window" => {
             if let Some(window_elem) =
               render_window(config, store, window_stat_key, condense_window)
@@ -306,6 +365,11 @@ impl Component for Notch {
           }
           "network" => {
             rendered_elements.push(render_network(config, store));
+          }
+          "battery" => {
+            if let Some(battery_elem) = render_battery(config, store, battery_status) {
+              rendered_elements.push(battery_elem);
+            }
           }
           "clock" => {
             rendered_elements.push(render_clock(config, clock_format));
@@ -475,6 +539,7 @@ pub fn parse_notch_elements(options: Option<&ComponentOptions>) -> Vec<String> {
     "nowplaying".to_string(),
     "tray".to_string(),
     "network".to_string(),
+    "battery".to_string(),
     "workspaces".to_string(),
     "window".to_string(),
     "system".to_string(),
@@ -521,6 +586,17 @@ pub fn parse_priority(options: Option<&ComponentOptions>) -> Vec<String> {
     }
   }
   vec!["nowplaying".to_string(), "window".to_string()]
+}
+
+pub fn parse_battery_status(options: Option<&ComponentOptions>) -> bool {
+  options
+    .and_then(|o| {
+      o.bool("battery-status").or_else(|| {
+        o.str("battery-status")
+          .map(|s| s.eq_ignore_ascii_case("true") || s == "1")
+      })
+    })
+    .unwrap_or(false)
 }
 
 fn query_nowplaying(store: &Store) -> (Option<(String, String)>, bool) {
@@ -737,9 +813,15 @@ fn render_system<'a>(config: &'a Config, displays: &[String]) -> Option<Element<
         let cpu_pct = snapshot.cpu_usage.clamp(0.0, 100.0);
         gauges.push(render_circular_gauge(
           cpu_pct,
-          cpu_color,
+          if cpu_pct > 70. {
+            palette.red
+          } else if cpu_pct > 50. {
+            palette.yellow
+          } else {
+            cpu_color
+          },
           track_color,
-          "system-run-symbolic",
+          "cpu-symbolic",
           gauge_size,
         ));
       }
@@ -747,9 +829,15 @@ fn render_system<'a>(config: &'a Config, displays: &[String]) -> Option<Element<
         let mem_pct = snapshot.mem_usage.clamp(0.0, 100.0);
         gauges.push(render_circular_gauge(
           mem_pct,
-          mem_color,
+          if mem_pct > 70. {
+            palette.red
+          } else if mem_pct > 50. {
+            palette.yellow
+          } else {
+            mem_color
+          },
           track_color,
-          "drive-harddisk-symbolic",
+          "memory-symbolic",
           gauge_size,
         ));
       }
@@ -799,11 +887,15 @@ pub fn render_circular_gauge<'a>(
     .width(Length::Fixed(size))
     .height(Length::Fixed(size));
 
-  let icon_center = container(Icon::new(icon_name).size(9).color(fg))
-    .width(Length::Fixed(size))
-    .height(Length::Fixed(size))
-    .align_x(Alignment::Center)
-    .align_y(Alignment::Center);
+  let icon_center = container(
+    Icon::any([icon_name, "applications-system-symbolic"])
+      .size(9)
+      .color(fg),
+  )
+  .width(Length::Fixed(size))
+  .height(Length::Fixed(size))
+  .align_x(Alignment::Center)
+  .align_y(Alignment::Center);
 
   iced::widget::stack([gauge_svg.into(), icon_center.into()]).into()
 }
@@ -864,6 +956,95 @@ fn render_network<'a>(config: &'a Config, store: &'a Store) -> Element<'a, ItemM
 fn render_clock<'a>(config: &'a Config, fmt: &str) -> Element<'a, ItemMessage> {
   let time_str = chrono::Local::now().format(fmt).to_string();
   config.text(time_str, &["notch", "clock"]).into()
+}
+
+#[cfg(feature = "power")]
+fn render_battery<'a>(
+  config: &'a Config,
+  store: &'a Store,
+  battery_status: bool,
+) -> Option<Element<'a, ItemMessage>> {
+  let shared = store
+    .borrow::<SharedPowerState>()
+    .cloned()
+    .unwrap_or_else(slowshell_services::power::shared);
+  let Ok(data) = shared.data.lock() else {
+    return None;
+  };
+
+  let percent = data.percent;
+  let charging = data.charging;
+
+  if percent.is_none() && !charging {
+    return None;
+  }
+
+  let palette = config.palette();
+  let bat_computed = config.computed(&["notch", "battery"]);
+  let icon_size = bat_computed.length("icon-size").unwrap_or(13.0) as u16;
+  let text_color = bat_computed
+    .color("color")
+    .map(|c| c.to_iced())
+    .unwrap_or(palette.subtext);
+  let charging_color = bat_computed
+    .color("color-charging")
+    .or_else(|| bat_computed.color("color-primary"))
+    .map(|c| c.to_iced())
+    .unwrap_or(palette.primary);
+  let danger_color = bat_computed
+    .color("color-danger")
+    .map(|c| c.to_iced())
+    .unwrap_or(palette.red);
+  let warning_color = bat_computed
+    .color("color-warning")
+    .map(|c| c.to_iced())
+    .unwrap_or(palette.yellow);
+
+  let icon_name = battery_icon(charging, percent);
+  let icon_color = if charging {
+    charging_color
+  } else if let Some(p) = percent {
+    if p <= 20 {
+      danger_color
+    } else if p <= 40 {
+      warning_color
+    } else {
+      text_color
+    }
+  } else {
+    text_color
+  };
+
+  let icon_elem = Icon::new(icon_name).size(icon_size).color(icon_color);
+
+  let elem: Element<'a, ItemMessage> = if battery_status {
+    let status_str = match (percent, charging) {
+      (Some(p), _) => Some(format!("{p}%")),
+      (None, true) => Some("AC".to_string()),
+      (None, false) => None,
+    };
+    if let Some(txt) = status_str {
+      let label = config.text(txt, &["notch", "battery"]);
+      row![icon_elem, Space::new().width(4), label]
+        .align_y(Alignment::Center)
+        .into()
+    } else {
+      icon_elem.into()
+    }
+  } else {
+    icon_elem.into()
+  };
+
+  Some(elem)
+}
+
+#[cfg(not(feature = "power"))]
+fn render_battery<'a>(
+  _config: &'a Config,
+  _store: &'a Store,
+  _battery_status: bool,
+) -> Option<Element<'a, ItemMessage>> {
+  None
 }
 
 #[cfg(feature = "tray")]
@@ -1185,6 +1366,69 @@ mod tests {
       let mut store = Store::new();
       store.insert(bt_state.clone());
       let _net_with_connected_bt = render_network(&config, &store);
+    }
+  }
+
+  #[test]
+  fn test_parse_notch_elements_contains_battery() {
+    let elements = parse_notch_elements(None);
+    assert!(elements.contains(&"battery".to_string()));
+  }
+
+  #[test]
+  fn test_parse_battery_status() {
+    assert!(!parse_battery_status(None));
+
+    let mut opts_map = std::collections::HashMap::new();
+    opts_map.insert("battery-status".into(), slowshell_config::Value::Bool(true));
+    let opts = ComponentOptions::from(opts_map);
+    assert!(parse_battery_status(Some(&opts)));
+
+    let mut opts_map_false = std::collections::HashMap::new();
+    opts_map_false.insert("battery-status".into(), slowshell_config::Value::Bool(false));
+    let opts_false = ComponentOptions::from(opts_map_false);
+    assert!(!parse_battery_status(Some(&opts_false)));
+
+    let mut opts_map_str = std::collections::HashMap::new();
+    opts_map_str.insert("battery-status".into(), slowshell_config::Value::Str("true".into()));
+    let opts_str = ComponentOptions::from(opts_map_str);
+    assert!(parse_battery_status(Some(&opts_str)));
+  }
+
+  #[test]
+  fn test_render_battery_charging_and_discharging() {
+    let config = Config::default();
+
+    #[cfg(feature = "power")]
+    {
+      let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+      let power_state = Arc::new(slowshell_commons::power::PowerState {
+        data: Mutex::new(Arc::new(slowshell_commons::power::PowerData {
+          percent: Some(85),
+          charging: true,
+          ..Default::default()
+        })),
+        revision: std::sync::atomic::AtomicU64::new(0),
+        cmd_tx: cmd_tx.clone(),
+      });
+
+      let mut store = Store::new();
+      store.insert(power_state.clone());
+
+      let bat_el_icon_only = render_battery(&config, &store, false);
+      assert!(bat_el_icon_only.is_some());
+
+      let bat_el_with_status = render_battery(&config, &store, true);
+      assert!(bat_el_with_status.is_some());
+
+      // When there is no battery and not charging, returns None
+      *power_state.data.lock().unwrap() = Arc::new(slowshell_commons::power::PowerData {
+        percent: None,
+        charging: false,
+        ..Default::default()
+      });
+      let no_bat_el = render_battery(&config, &store, false);
+      assert!(no_bat_el.is_none());
     }
   }
 }

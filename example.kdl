@@ -265,7 +265,7 @@ panels {
       center {
         // core/notch - a somewhat dynamic compact status bar
         component "core/notch" {
-          notch "workspaces" "window" "nowplaying" "system" "network" "clock"
+          notch "workspaces" "window" "sep" "nowplaying" "system" "network" "battery" "clock"
           clock-format "%H:%M"
           window-stat "pid"
           system-display "cpu" "mem"
