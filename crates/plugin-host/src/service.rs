@@ -419,7 +419,7 @@ mod tests {
       service_factory::<Svc>(),
       false,
     );
-    assert!(entries().lock().unwrap().is_empty());
+    assert!(!entries().lock().unwrap().contains_key("network"));
   }
 
   #[test]

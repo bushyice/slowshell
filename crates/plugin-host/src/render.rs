@@ -255,6 +255,15 @@ fn render_plain(node: &Node, ctx: &RenderCtx) -> iced::Element<'static, ItemMess
       wrap_plain(body, classes)
     }
 
+    Node::UnstableElement(unstable) => {
+      let body = unstable.build();
+      if unstable.classes.is_empty() {
+        body
+      } else {
+        wrap_plain(body, &unstable.classes)
+      }
+    }
+
     Node::Animated { child, animation } => render_animated(child, animation, ctx),
   }
 }
@@ -1332,5 +1341,21 @@ fn inline_container_style(style: AbiStyle) -> iced::widget::container::Style {
     border,
     text_color,
     ..Default::default()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_render_unstable_element() {
+    let elem: iced::Element<'static, ItemMessage> = iced::widget::text("hello world").into();
+    let node = Node::unstable_element(elem);
+    let ctx = RenderCtx {
+      id: None,
+      widget_event: None,
+    };
+    let _element = render_nodes(&node, ctx);
   }
 }

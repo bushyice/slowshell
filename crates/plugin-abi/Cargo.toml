@@ -5,9 +5,12 @@ license.workspace = true
 edition = "2024"
 
 [dependencies]
+slowshell-core = { path = "../core" }
+
 abi_stable = "0.11.3"
 kdl.workspace = true
 serde.workspace = true
 ron.workspace = true
 iced_anim.workspace = true
 icss.workspace = true
+iced.workspace = true

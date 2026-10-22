@@ -4921,11 +4921,13 @@ name = "slowshell-plugin-abi"
 version = "0.1.5-alpha"
 dependencies = [
  "abi_stable",
+ "iced",
  "iced_anim",
  "icss",
  "kdl",
  "ron",
  "serde",
+ "slowshell-core",
 ]
 
 [[package]]
