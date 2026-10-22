@@ -150,12 +150,10 @@ impl WindowMessage {
 
 fn active_window_id(store: &Store) -> Option<u64> {
   store
-    .borrow::<CompositorStore>()?
-    .state()
-    .ok()?
-    .active_window
-    .as_ref()
-    .map(|window| window.id)
+    .borrow::<CompositorStore>()
+    .and_then(|c| c.state().ok())
+    .and_then(|s| s.active_window.as_ref().map(|window| window.id))
+    .or_else(|| slowshell_commons::window::last_active_window().get().map(|window| window.id))
 }
 
 fn window_by_id(store: &Store, window_id: u64) -> Option<Window> {

@@ -8,7 +8,7 @@ use iced_anim::{Animated as AnimatedValue, Easing};
 
 use iced::{
   Alignment, Element, Length,
-  widget::{Space, column, container, mouse_area, row, space},
+  widget::{Space, column, container, mouse_area, row},
 };
 use iced_exwlshell::reexport::{
   Anchor, BlurOption, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption,
@@ -19,6 +19,7 @@ use slowshell_components::{
   Component, ComponentContext, ComponentOptions, Components, MenuConfig, hover_background,
   menu_trigger, spaced_component,
 };
+
 use slowshell_config::{
   Config, ConfigParser, Value, child, child_str_owned, find_node, node_children, node_name,
   node_options_map, prop_bool, prop_i64, prop_str, str_arg,
@@ -66,6 +67,15 @@ impl Position {
 
   fn is_horizontal(self) -> bool {
     matches!(self, Position::Top | Position::Bottom)
+  }
+}
+
+fn scope_monitors(scope: &MonitorScope) -> Option<Vec<Ustr>> {
+  match scope {
+    MonitorScope::PerMonitor => None,
+    MonitorScope::Single(None) => None,
+    MonitorScope::Single(Some(name)) => Some(vec![name.clone()]),
+    MonitorScope::OnMonitors(names) => Some(names.clone()),
   }
 }
 
@@ -335,10 +345,10 @@ impl DeployableDesktopItem for PanelDeloyer {
 }
 
 pub struct PanelItem {
-  label: String,
-  component: Option<Box<dyn Component>>,
-  options: Option<ComponentOptions>,
-  events: Option<Vec<EventFilter>>,
+  pub label: String,
+  pub component: Option<Box<dyn Component>>,
+  pub options: Option<ComponentOptions>,
+  pub events: Option<Vec<EventFilter>>,
 }
 
 impl PanelItem {
@@ -444,6 +454,23 @@ impl PanelItemCell {
       PanelItemCell::Group { .. } => None,
     }
   }
+
+  pub fn should_hide_when_unhovered(&self) -> bool {
+    match self {
+      PanelItemCell::Item(item) => {
+        item.options.as_ref().and_then(|o| o.str("render")) == Some("hover")
+      }
+      PanelItemCell::Group { items, prefix, .. } => {
+        let prefix_hides = prefix.as_ref().map_or(true, |p| {
+          p.options.as_ref().and_then(|o| o.str("render")) == Some("hover")
+        });
+        prefix_hides
+          && items
+            .iter()
+            .all(|it| it.options.as_ref().and_then(|o| o.str("render")) == Some("hover"))
+      }
+    }
+  }
 }
 
 #[derive(Default)]
@@ -470,6 +497,7 @@ pub struct Panel {
   hidden: bool,
   transparent: bool,
   overlay: bool,
+  pub(crate) hovered: bool,
   autohide: bool,
   trigger: i32,
   autohide_anim: Option<AnimatedValue<f32>>,
@@ -506,6 +534,7 @@ impl Panel {
       hidden: false,
       transparent: false,
       overlay: false,
+      hovered: false,
       autohide: false,
       trigger: 4,
       autohide_anim: None,
@@ -1066,7 +1095,7 @@ impl Panel {
       .chain(self.sections.right.iter_mut())
   }
 
-  fn create_item<'a>(
+  pub(crate) fn create_item<'a>(
     config: &'a Config,
     store: &'a Store,
     ctx: &ComponentContext,
@@ -1083,12 +1112,13 @@ impl Panel {
     }
   }
 
-  fn render_item<'a>(
+  pub(crate) fn render_item<'a>(
     config: &'a Config,
     store: &'a Store,
     ctx: &ComponentContext,
     item: &'a PanelItemCell,
     horizontal: bool,
+    hovered: bool,
   ) -> Element<'a, ItemMessage> {
     let item_size = config.sizing(&["item"]);
     let margin = config.computed(&["item"]).length("margin").unwrap_or(4.0);
@@ -1096,11 +1126,23 @@ impl Panel {
     let mut has_prefix: Option<Element<'a, ItemMessage>> = None;
     let mut has_menu = None;
 
+    let is_bare = match item {
+      PanelItemCell::Item(item) => item
+        .options
+        .as_ref()
+        .and_then(|o| o.bool("bare"))
+        .unwrap_or(false),
+      _ => false,
+    };
+
     let content: Element<'a, ItemMessage> = match item {
       PanelItemCell::Item(item) => {
+        if !hovered && item.options.as_ref().and_then(|o| o.str("render")) == Some("hover") {
+          return Space::new().into();
+        }
         if let Some(comp) = &item.component {
           if !comp.check_view(store, item.options.as_ref()) {
-            return space().into();
+            return Space::new().into();
           }
         }
         Self::create_item(config, store, ctx, item)
@@ -1122,9 +1164,24 @@ impl Panel {
           menu_suppressed: has_menu.is_some(),
         };
 
+        let visible_items: Vec<&PanelItem> = items
+          .iter()
+          .filter(|it| {
+            hovered || it.options.as_ref().and_then(|o| o.str("render")) != Some("hover")
+          })
+          .collect();
+
+        let prefix_visible = prefix.as_ref().is_some_and(|p| {
+          hovered || p.options.as_ref().and_then(|o| o.str("render")) != Some("hover")
+        });
+
+        if visible_items.is_empty() && !prefix_visible {
+          return Space::new().into();
+        }
+
         let main = if horizontal {
           row(
-            items
+            visible_items
               .iter()
               .map(|item| Self::create_item(config, store, &child_ctx, item)),
           )
@@ -1143,7 +1200,7 @@ impl Panel {
           .into()
         } else {
           column(
-            items
+            visible_items
               .iter()
               .map(|item| Self::create_item(config, store, &child_ctx, item)),
           )
@@ -1162,7 +1219,7 @@ impl Panel {
           .into()
         };
 
-        if let Some(prefix) = prefix {
+        if prefix_visible && let Some(prefix) = prefix {
           let highlight = prefix
             .options
             .as_ref()
@@ -1211,8 +1268,22 @@ impl Panel {
         main
       }
 
-      _ => space().into(),
+      _ => Space::new().into(),
     };
+
+    if is_bare {
+      return if horizontal {
+        container(content)
+          .height(Length::Fill)
+          .align_y(Alignment::Center)
+          .into()
+      } else {
+        container(content)
+          .width(Length::Fill)
+          .align_x(Alignment::Center)
+          .into()
+      };
+    }
 
     let inner: Element<'_, _> = if let Some(prefix) = has_prefix {
       if horizontal {
@@ -1280,12 +1351,13 @@ impl Panel {
     }
   }
 
-  fn render_section<'a>(
+  pub(crate) fn render_section<'a>(
     config: &'a Config,
     store: &'a Store,
     ctx: &ComponentContext,
     items: &'a [PanelItemCell],
     horizontal: bool,
+    hovered: bool,
   ) -> Element<'a, ItemMessage> {
     if items.is_empty() {
       return Space::new().into();
@@ -1295,8 +1367,13 @@ impl Panel {
 
     let children: Vec<Element<'a, ItemMessage>> = items
       .iter()
-      .map(|i| Self::render_item(config, store, ctx, i, horizontal))
+      .filter(|i| hovered || !i.should_hide_when_unhovered())
+      .map(|i| Self::render_item(config, store, ctx, i, horizontal, hovered))
       .collect();
+
+    if children.is_empty() {
+      return Space::new().into();
+    }
 
     if horizontal {
       row(children).spacing(item_spacing).into()
@@ -1444,17 +1521,6 @@ fn handle_panel_config_reload(panel: &mut Panel, config: &Config, store: &mut St
   }
 }
 
-/// The monitors a panel's scope covers; `None` means every monitor.
-fn scope_monitors(scope: &MonitorScope) -> Option<Vec<Ustr>> {
-  match scope {
-    MonitorScope::PerMonitor => None,
-    // a single but unspecified monitor: approximate as every monitor
-    MonitorScope::Single(None) => None,
-    MonitorScope::Single(Some(name)) => Some(vec![name.clone()]),
-    MonitorScope::OnMonitors(names) => Some(names.clone()),
-  }
-}
-
 impl DesktopItem for Panel {
   fn id(&self) -> &str {
     &self.cached_id
@@ -1463,7 +1529,11 @@ impl DesktopItem for Panel {
   fn layer(&self, _config: &Config, monitor: &str) -> NewLayerShellSettings {
     let (w, h) = self.size();
     NewLayerShellSettings {
-      layer: Layer::Top,
+      layer: if self.overlay {
+        Layer::Overlay
+      } else {
+        Layer::Top
+      },
       anchor: self.position.anchor(),
       exclusive_zone: Some(self.exclusive_zone(self.autohide)),
       size: layer_size(w, h),
@@ -1670,6 +1740,7 @@ impl DesktopItem for Panel {
       &ctx,
       &self.sections.left,
       self.position.is_horizontal(),
+      self.hovered,
     );
     let center = Self::render_section(
       config,
@@ -1677,6 +1748,7 @@ impl DesktopItem for Panel {
       &ctx,
       &self.sections.center,
       self.position.is_horizontal(),
+      self.hovered,
     );
     let right = Self::render_section(
       config,
@@ -1684,6 +1756,7 @@ impl DesktopItem for Panel {
       &ctx,
       &self.sections.right,
       self.position.is_horizontal(),
+      self.hovered,
     );
 
     let bar_content: Element<'_, ItemMessage> = if self.position.is_horizontal() {
@@ -1747,6 +1820,8 @@ impl DesktopItem for Panel {
         .on_exit(ItemMessage::Effect(id, ItemEffect::UpdateWindow(collapsed)))
     } else {
       bar
+        .on_enter(ItemMessage::Effect(id, ItemEffect::Custom([55, 1, 0, 0])))
+        .on_exit(ItemMessage::Effect(id, ItemEffect::Custom([55, 0, 0, 0])))
     };
 
     bar.into()
@@ -1756,6 +1831,7 @@ impl DesktopItem for Panel {
     match message {
       ItemMessage::Effect(_, ItemEffect::UpdateWindow(settings)) if self.autohide => {
         let collapsed = settings.margin != Some((0, 0, 0, 0));
+        self.hovered = !collapsed;
         let target = if collapsed { 1.0 } else { 0.0 };
 
         if !slowshell_core::animations::enabled() {
@@ -1780,13 +1856,22 @@ impl DesktopItem for Panel {
           ItemEffect::None
         }
       }
+      ItemMessage::Effect(_, ItemEffect::Custom([55, state, 0, 0])) => {
+        let new_hover = *state == 1;
+        if self.hovered != new_hover {
+          self.hovered = new_hover;
+          ItemEffect::Redraw
+        } else {
+          ItemEffect::None
+        }
+      }
       ItemMessage::Effect(_, effect @ ItemEffect::UpdateWindow(_)) => effect.clone(),
       _ => ItemEffect::None,
     }
   }
 }
 
-fn parse_component_item(node: &kdl::KdlNode) -> Option<PanelConfigComponentItem> {
+pub(crate) fn parse_component_item(node: &kdl::KdlNode) -> Option<PanelConfigComponentItem> {
   let component = str_arg(node, 0)?.to_string();
   let label = child_str_owned(node, "label").unwrap_or_default();
   let mut options = node_options_map(node);
@@ -1802,7 +1887,7 @@ fn parse_component_item(node: &kdl::KdlNode) -> Option<PanelConfigComponentItem>
   })
 }
 
-fn parse_panel_component(node: &kdl::KdlNode) -> Option<PanelConfigComponent> {
+pub(crate) fn parse_panel_component(node: &kdl::KdlNode) -> Option<PanelConfigComponent> {
   match node_name(node) {
     "component" => {
       if node_children(node).is_empty() {
@@ -1986,3 +2071,54 @@ slowshell_registry::register_resources!(
     CommandEntry::payload("panel.create").title("Create Panel")
   ),
 );
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use iced_exwlshell::reexport::Layer;
+  use slowshell_config::Value;
+  use std::collections::HashMap;
+
+  #[test]
+  fn test_panel_overlay_layer() {
+    let top_panel = Panel::new("top_bar", Position::Top).with_overlay(false);
+    let top_config = Config::default();
+    let top_settings = top_panel.layer(&top_config, "DP-1");
+    assert_eq!(top_settings.layer, Layer::Top);
+
+    let overlay_panel = Panel::new("overlay_bar", Position::Top).with_overlay(true);
+    let overlay_settings = overlay_panel.layer(&top_config, "DP-1");
+    assert_eq!(overlay_settings.layer, Layer::Overlay);
+  }
+
+  #[test]
+  fn test_panel_item_should_hide_when_unhovered() {
+    let mut map = HashMap::new();
+    map.insert("render".into(), Value::Str("hover".into()));
+    let hover_item = PanelItem {
+      label: "hover_comp".into(),
+      component: None,
+      options: Some(ComponentOptions::from(map)),
+      events: None,
+    };
+    let cell = PanelItemCell::Item(hover_item);
+    assert!(cell.should_hide_when_unhovered());
+
+    let normal_item = PanelItem {
+      label: "normal_comp".into(),
+      component: None,
+      options: None,
+      events: None,
+    };
+    let normal_cell = PanelItemCell::Item(normal_item);
+    assert!(!normal_cell.should_hide_when_unhovered());
+  }
+
+  #[test]
+  fn test_bare_option_parsing() {
+    let mut map = HashMap::new();
+    map.insert("bare".into(), Value::Bool(true));
+    let opts = ComponentOptions::from(map);
+    assert_eq!(opts.bool("bare"), Some(true));
+  }
+}

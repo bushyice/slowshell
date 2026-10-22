@@ -12,6 +12,7 @@ bluetooth = ["slowshell-services/bluetooth"]
 network = ["slowshell-services/network"]
 power = ["slowshell-services/power"]
 tray = ["slowshell-services/tray"]
+notch = []
 
 [dependencies]
 slowshell-core = { path = "../core" }

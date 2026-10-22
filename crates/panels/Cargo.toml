@@ -14,6 +14,8 @@ slowshell-commons = { path = "../commons" }
 slowshell-config = { path = "../config" }
 slowshell-desktop = { path = "../desktop" }
 slowshell-components = { path = "../components", default-features = false }
+slowshell-widgets = { path = "../widgets" }
 slowshell-registry = { path = "../registry" }
 miette.workspace = true
 kdl.workspace = true
+

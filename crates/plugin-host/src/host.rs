@@ -604,4 +604,30 @@ impl Host for HostImpl {
     };
     dispatcher.dispatch_payload(name.as_str(), Some(payload))
   }
+
+  fn notch_set_status(
+    &self,
+    name: RString,
+    status: abi_stable::std_types::ROption<slowshell_plugin_abi::NotchStatus>,
+  ) {
+    match status {
+      abi_stable::std_types::ROption::RSome(status) => {
+        let status = match status {
+          slowshell_plugin_abi::NotchStatus::Icon(icon) => {
+            slowshell_commons::notch::NotchStatus::Icon(icon.to_string())
+          }
+          slowshell_plugin_abi::NotchStatus::Text(text) => {
+            slowshell_commons::notch::NotchStatus::Text(text.to_string())
+          }
+          slowshell_plugin_abi::NotchStatus::IconText(icon, text) => {
+            slowshell_commons::notch::NotchStatus::IconText(icon.to_string(), text.to_string())
+          }
+        };
+        slowshell_commons::notch::shared().update_status(name.to_string(), status);
+      }
+      abi_stable::std_types::ROption::RNone => {
+        slowshell_commons::notch::shared().remove_status(name.as_str());
+      }
+    }
+  }
 }

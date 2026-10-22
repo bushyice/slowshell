@@ -47,6 +47,7 @@ impl Component for Window {
     let Some(window) = state.active_window.as_ref() else {
       return row![].into();
     };
+    slowshell_commons::window::last_active_window().set(window.clone());
 
     let show_icon = options.and_then(|o| o.bool("icon")).unwrap_or(true);
 

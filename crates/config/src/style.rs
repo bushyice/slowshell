@@ -166,10 +166,24 @@ pub fn container_style(
 ) -> Option<iced::widget::container::Style> {
   let background = computed
     .color("background-color")
+    .or_else(|| computed.color("background"))
     .map(|color| iced::Background::Color(color.to_iced()));
   let text_color = computed.color("color").map(|color| color.to_iced());
   let border_width = computed.length("border-width").unwrap_or(0.0);
-  let border_radius = computed.length("border-radius").unwrap_or(0.0);
+  let mut border_radius =
+    iced::border::Radius::from(computed.length("border-radius").unwrap_or(0.0));
+  if let Some(tl) = computed.length("border-top-left-radius") {
+    border_radius.top_left = tl;
+  }
+  if let Some(tr) = computed.length("border-top-right-radius") {
+    border_radius.top_right = tr;
+  }
+  if let Some(br) = computed.length("border-bottom-right-radius") {
+    border_radius.bottom_right = br;
+  }
+  if let Some(bl) = computed.length("border-bottom-left-radius") {
+    border_radius.bottom_left = bl;
+  }
   let border_color = computed
     .color("border-color")
     .map(|color| color.to_iced())
@@ -183,7 +197,11 @@ pub fn container_style(
     })
     .unwrap_or_default();
 
-  if background.is_none() && text_color.is_none() && border_width == 0.0 {
+  if background.is_none()
+    && text_color.is_none()
+    && border_width == 0.0
+    && border_radius == 0.0.into()
+  {
     return None;
   }
 
@@ -193,7 +211,7 @@ pub fn container_style(
     border: iced::Border {
       color: border_color,
       width: border_width,
-      radius: border_radius.into(),
+      radius: border_radius,
     },
     shadow,
     snap: false,

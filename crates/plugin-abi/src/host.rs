@@ -15,7 +15,7 @@ use crate::{
   },
   types::{
     AudioState, BluetoothState, CanvasRef, Color, CompositorState, Length, NetworkState, Node,
-    Notification, PowerState, SystemState, Theme, TrayState,
+    NotchStatus, Notification, PowerState, SystemState, Theme, TrayState,
   },
 };
 
@@ -99,6 +99,8 @@ pub trait Host: Send + Sync + 'static {
   fn service_sleep(&self, millis: u64) -> bool;
   fn service_stopping(&self) -> bool;
   fn service_recv(&self, timeout_millis: u32) -> ROption<RString>;
+
+  fn notch_set_status(&self, name: RString, status: ROption<NotchStatus>);
 }
 
 pub type HostRef<'a> = &'a Host_TO<RBox<()>>;
@@ -140,6 +142,14 @@ impl<'a> Context<'a> {
 
   pub fn options(&self) -> Options<'a> {
     Options { ctx: *self }
+  }
+
+  pub fn update_status(&self, name: impl Into<RString>, status: NotchStatus) {
+    self.host.notch_set_status(name.into(), ROption::RSome(status));
+  }
+
+  pub fn remove_status(&self, name: impl Into<RString>) {
+    self.host.notch_set_status(name.into(), ROption::RNone);
   }
 
   pub fn config_str(&self, key: &str) -> Option<RString> {

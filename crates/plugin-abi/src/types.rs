@@ -3,6 +3,14 @@ use abi_stable::{
   std_types::{RBox, ROption, RString, RVec},
 };
 
+#[repr(u8)]
+#[derive(StableAbi, Clone, Debug, PartialEq)]
+pub enum NotchStatus {
+  Icon(RString),
+  Text(RString),
+  IconText(RString, RString),
+}
+
 #[repr(C)]
 #[derive(StableAbi, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Color {

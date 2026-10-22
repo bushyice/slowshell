@@ -248,6 +248,11 @@ panels {
         //                launch it when a pinned app has no open window
         //   shift+click  cycle to the previous instance
         //   right click  pin / unpin the app (persisted between sessions)
+        // components can have render "hover" so they only display when the panel is hovered:
+        // component "core/windows" {
+        //   render "hover"
+        //   ...
+        // }
         component "core/windows" {
           label "Windows"
           "icon-size" 22.0
@@ -258,6 +263,17 @@ panels {
       }
 
       center {
+        // core/notch - a somewhat dynamic compact status bar
+        component "core/notch" {
+          notch "workspaces" "window" "nowplaying" "system" "network" "clock"
+          clock-format "%H:%M"
+          window-stat "pid"
+          system-display "cpu" "mem"
+          priority "nowplaying" "window"
+          shade-on-hover #true
+          bare #true // render without default panel item container wrapping
+        }
+
         // core/nowplaying - now-playing
         //   show-artist  (default: #true)
         //   controls     transport buttons (default: #false)

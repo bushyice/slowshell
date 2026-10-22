@@ -137,3 +137,59 @@
   rect: false;
   slider-size: 7px;
 }
+
+.menu.shade {
+  background-color: var(--mantle-a95);
+  border-radius: 18px;
+  border-width: 1px;
+  border-color: var(--overlay-a30);
+  width: 440px;
+  height: 620px;
+  padding-v: 10px;
+  padding-h: 14px;
+  gap: 10px;
+}
+
+.menu.shade.popup {
+  /*border-top-left-radius: 0px;*/
+  /*border-top-right-radius: 0px;*/
+}
+
+.menu.shade.card {
+  background-color: var(--base-a40);
+  border-radius: 10px;
+  border-width: 1px;
+  border-color: var(--overlay-a15);
+  padding-v: 8px;
+  padding-h: 10px;
+}
+
+.menu.shade.card.calendar {
+  padding-v: 5px;
+  padding-h: 8px;
+}
+
+.menu.shade.nav-tile {
+  background-color: var(--base-a35);
+  border-radius: 8px;
+  border-width: 1px;
+  border-color: var(--overlay-a15);
+  padding-v: 6px;
+  padding-h: 8px;
+}
+
+.menu.shade.media-btn {
+  background-color: var(--base-a30);
+  border-radius: 6px;
+  border-width: 0px;
+  padding-v: 4px;
+  padding-h: 6px;
+}
+
+.menu.shade.more-btn {
+  background-color: var(--overlay-a15);
+  border-radius: 4px;
+  border-width: 0px;
+  padding-v: 2px;
+  padding-h: 4px;
+}
