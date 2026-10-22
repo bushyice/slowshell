@@ -1,7 +1,10 @@
+use std::sync::{Arc, Mutex};
+
 use abi_stable::{
   StableAbi,
   std_types::{RBox, ROption, RString, RVec},
 };
+use slowshell_core::message::ItemMessage;
 
 #[repr(u8)]
 #[derive(StableAbi, Clone, Debug, PartialEq)]
@@ -944,6 +947,68 @@ impl Image {
 }
 
 #[repr(C)]
+#[derive(StableAbi, Clone)]
+#[sabi(unsafe_opaque_fields)]
+pub struct UnstableElement {
+  pub(crate) builder: Arc<dyn Fn() -> iced::Element<'static, ItemMessage> + Send + Sync>,
+  pub classes: RVec<RString>,
+}
+
+impl std::fmt::Debug for UnstableElement {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("UnstableElement")
+      .field("classes", &self.classes)
+      .finish()
+  }
+}
+
+struct SendCell(Mutex<Option<iced::Element<'static, ItemMessage>>>);
+unsafe impl Send for SendCell {}
+unsafe impl Sync for SendCell {}
+
+impl UnstableElement {
+  pub fn new<F>(builder: F) -> Self
+  where
+    F: Fn() -> iced::Element<'static, ItemMessage> + Send + Sync + 'static,
+  {
+    Self {
+      builder: Arc::new(builder),
+      classes: RVec::new(),
+    }
+  }
+
+  pub fn from_element(element: iced::Element<'static, ItemMessage>) -> Self {
+    let cell = Arc::new(SendCell(Mutex::new(Some(element))));
+    Self {
+      builder: Arc::new(move || {
+        cell
+          .0
+          .lock()
+          .ok()
+          .and_then(|mut guard| guard.take())
+          .unwrap_or_else(|| iced::widget::Space::new().into())
+      }),
+      classes: RVec::new(),
+    }
+  }
+
+  pub fn build(&self) -> iced::Element<'static, ItemMessage> {
+    (self.builder)()
+  }
+
+  pub fn classes(mut self, classes: &[&str]) -> Self {
+    self.classes = classes.iter().map(|c| RString::from(*c)).collect();
+    self
+  }
+}
+
+impl From<iced::Element<'static, ItemMessage>> for UnstableElement {
+  fn from(element: iced::Element<'static, ItemMessage>) -> Self {
+    Self::from_element(element)
+  }
+}
+
+#[repr(C)]
 #[derive(StableAbi, Clone, Debug)]
 pub enum Node {
   Row {
@@ -1052,6 +1117,19 @@ pub enum Node {
     child: RBox<Node>,
     animation: Animation,
   },
+  UnstableElement(UnstableElement),
+}
+
+impl From<UnstableElement> for Node {
+  fn from(element: UnstableElement) -> Self {
+    Node::UnstableElement(element)
+  }
+}
+
+impl From<iced::Element<'static, ItemMessage>> for Node {
+  fn from(element: iced::Element<'static, ItemMessage>) -> Self {
+    Node::UnstableElement(UnstableElement::from_element(element))
+  }
 }
 
 impl Node {
@@ -1290,6 +1368,16 @@ impl Node {
     self
   }
 
+  pub fn unstable_element(element: impl Into<UnstableElement>) -> Node {
+    Node::UnstableElement(element.into())
+  }
+
+  pub fn unstable(
+    builder: impl Fn() -> iced::Element<'static, ItemMessage> + Send + Sync + 'static,
+  ) -> Node {
+    Node::UnstableElement(UnstableElement::new(builder))
+  }
+
   pub fn placeholder(mut self, placeholder: impl Into<RString>) -> Node {
     let placeholder = placeholder.into();
     if let Node::TextInput {
@@ -1334,6 +1422,7 @@ impl Node {
       | Node::Canvas { classes: c, .. }
       | Node::TextInput { classes: c, .. }
       | Node::EventWrapper { classes: c, .. } => *c = owned,
+      Node::UnstableElement(unstable) => unstable.classes = owned,
       Node::Animated { child, .. } => {
         let child = std::mem::replace(child, RBox::new(Node::text(RString::new())));
         return RBox::into_inner(child).classes(classes);
@@ -1358,6 +1447,7 @@ impl Node {
       | Node::Canvas { classes, .. }
       | Node::TextInput { classes, .. }
       | Node::EventWrapper { classes, .. } => classes.clone(),
+      Node::UnstableElement(unstable) => unstable.classes.clone(),
       Node::Animated { child, .. } => child.own_classes(),
     }
   }
@@ -2232,5 +2322,46 @@ mod tests {
       },
       _ => panic!("Expected animated node"),
     }
+  }
+
+  #[test]
+  fn test_unstable_element_from_element() {
+    let elem: iced::Element<'static, ItemMessage> = iced::widget::text("hello").into();
+    let node = Node::unstable_element(elem).classes(&["test-class"]);
+
+    match &node {
+      Node::UnstableElement(unstable) => {
+        assert_eq!(unstable.classes.len(), 1);
+        assert_eq!(unstable.classes[0].as_str(), "test-class");
+        let built = unstable.build();
+        let _ = built;
+      }
+      _ => panic!("Expected UnstableElement variant"),
+    }
+    assert_eq!(node.own_classes().len(), 1);
+  }
+
+  #[test]
+  fn test_unstable_element_builder() {
+    let node = Node::unstable(|| iced::widget::text("builder").into());
+    match &node {
+      Node::UnstableElement(unstable) => {
+        let first = unstable.build();
+        let second = unstable.build();
+        let _ = (first, second);
+      }
+      _ => panic!("Expected UnstableElement variant"),
+    }
+  }
+
+  #[test]
+  fn test_unstable_element_conversions() {
+    let elem: iced::Element<'static, ItemMessage> = iced::widget::text("conversion").into();
+    let from_elem: Node = elem.into();
+    assert!(matches!(from_elem, Node::UnstableElement(_)));
+
+    let unstable_elem = UnstableElement::new(|| iced::widget::text("closure").into());
+    let from_unstable: Node = unstable_elem.into();
+    assert!(matches!(from_unstable, Node::UnstableElement(_)));
   }
 }

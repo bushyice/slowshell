@@ -10,13 +10,17 @@ pub struct BluetoothDevice {
   pub paired: bool,
   pub connected: bool,
   pub trusted: bool,
+  pub blocked: bool,
   pub battery: Option<u8>,
   pub rssi: Option<i16>,
+  pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct BluetoothInner {
   pub adapter_name: Option<String>,
+  pub adapter_alias: Option<String>,
+  pub discoverable: bool,
   pub devices: Vec<BluetoothDevice>,
 }
 
@@ -26,6 +30,8 @@ pub enum BluetoothCmd {
   SetPower(bool),
   StartDiscovery,
   StopDiscovery,
+  ToggleDiscoverable,
+  SetDiscoverable(bool),
   Connect(String),
   Disconnect(String),
   Pair(String),
@@ -37,6 +43,7 @@ pub enum BluetoothCmd {
 pub struct BluetoothMenuUi {
   pub selected_device: Option<String>,
   pub confirming_remove: Option<String>,
+  pub connecting_device: Option<String>,
 }
 
 pub struct BluetoothState {

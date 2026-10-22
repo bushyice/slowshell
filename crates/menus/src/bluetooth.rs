@@ -1,64 +1,30 @@
+use std::sync::atomic::Ordering;
+
 use iced::{
   Alignment, Color, Element, Length,
   widget::{Space, column, container, row, space},
 };
 use iced_exwlshell::reexport::IcedId;
-use slowshell_commons::bluetooth::{BT_CHANGED, BluetoothDevice, SharedBluetoothState};
+use slowshell_commons::bluetooth::{
+  BT_CHANGED, BluetoothCmd, BluetoothDevice, SharedBluetoothState,
+};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
-  listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
-  types::{PayloadBox, ToUstr},
 };
 use slowshell_popups::PopupSettings;
 use slowshell_widgets::{Backdrop, Icon, Renderable, SizedPopup, clickable, hover_row};
 
 pub struct BluetoothRenderable;
 
-#[derive(Debug, Clone)]
-enum BtAction {
-  Toggle,
-  Scan,
-  Connect(String),
-  Disconnect(String),
-  Pair(String),
-  Remove(String),
-  ConfirmRemove(String),
-}
-
-impl BtAction {
-  fn message(self, id: IcedId) -> ItemMessage {
-    let (name, payload) = match self {
-      BtAction::Toggle => ("bluetooth.toggle", None),
-      BtAction::Scan => ("bluetooth.scan", None),
-      BtAction::Connect(addr) => ("bluetooth.connect", Some(PayloadBox::new(addr.to_ustr()))),
-      BtAction::Disconnect(addr) => (
-        "bluetooth.disconnect",
-        Some(PayloadBox::new(addr.to_ustr())),
-      ),
-      BtAction::Pair(addr) => ("bluetooth.pair", Some(PayloadBox::new(addr.to_ustr()))),
-      BtAction::Remove(addr) => ("bluetooth.remove", Some(PayloadBox::new(addr.to_ustr()))),
-      BtAction::ConfirmRemove(addr) => (
-        "bluetooth.confirm_remove",
-        Some(PayloadBox::new(addr.to_ustr())),
-      ),
-    };
-
-    ItemMessage::EffectAction(
-      id,
-      ItemEffect::Redraw,
-      ListenerAction::Payload {
-        name: name.to_ustr(),
-        payload,
-      },
-    )
-  }
-}
-
 impl Renderable for BluetoothRenderable {
   fn events(&self, _store: &Store) -> Vec<EventFilter> {
     vec![EventFilter::Named(BT_CHANGED.into())]
+  }
+
+  fn initialize(&self, _config: &Config, _store: &mut Store) -> Box<dyn std::any::Any + Send> {
+    Box::new(())
   }
 
   fn view<'a>(
@@ -74,85 +40,126 @@ impl Renderable for BluetoothRenderable {
     let mut children: Vec<Element<'a, ItemMessage>> = Vec::new();
 
     if let Some(shared) = store.borrow::<SharedBluetoothState>() {
-      let powered = shared.powered.load(std::sync::atomic::Ordering::Relaxed);
-      let discovering = shared
-        .discovering
-        .load(std::sync::atomic::Ordering::Relaxed);
+      let powered = shared.powered.load(Ordering::Relaxed);
+      let discovering = shared.discovering.load(Ordering::Relaxed);
       let inner = shared.state.lock().unwrap().clone();
-      let confirming_remove = {
+      let (confirming_remove, connecting_device) = {
         let menu = shared.menu.lock().unwrap();
-        menu.confirming_remove.clone()
+        (
+          menu.confirming_remove.clone(),
+          menu.connecting_device.clone(),
+        )
       };
 
-      children.push(render_toggle_row(config, id, powered));
+      children.push(render_toggle_row(config, shared, id, powered));
 
       if !powered {
         children.push(
           container(
             column![
               Icon::new("bluetooth-disabled-symbolic")
-                .size(22)
+                .size(24)
                 .color(theme.subtext),
               space().height(6),
               config.text("Bluetooth is off", &["menu", "text-name", "text-faded"]),
             ]
             .align_x(Alignment::Center),
           )
-          .padding(16)
-          .align_x(Alignment::Center)
-          .width(Length::Fill)
-          .into(),
-        );
-      } else if inner.devices.is_empty() {
-        children.push(
-          container(
-            column![
-              Icon::new(if discovering {
-                "view-refresh-symbolic"
-              } else {
-                "bluetooth-symbolic"
-              })
-              .size(22)
-              .color(theme.subtext),
-              space().height(6),
-              config.text(
-                if discovering {
-                  "Scanning for devices…"
-                } else {
-                  "No devices found"
-                },
-                &["menu", "text-name", "text-faded"],
-              ),
-            ]
-            .align_x(Alignment::Center),
-          )
-          .padding(16)
+          .padding(20)
           .align_x(Alignment::Center)
           .width(Length::Fill)
           .into(),
         );
       } else {
-        let mut has_connected = false;
-        for dev in inner.devices.iter().filter(|d| d.connected) {
-          if !has_connected {
-            children.push(section_header(config, "Connected"));
-            has_connected = true;
-          }
-          children.push(render_device(config, dev, id, confirming_remove.as_deref()));
-        }
+        children.push(render_discoverable_row(
+          config,
+          shared,
+          id,
+          inner.discoverable,
+        ));
 
-        let mut has_other = false;
-        for dev in inner.devices.iter().filter(|d| !d.connected) {
-          if !has_other {
-            children.push(section_header(config, "Devices"));
-            has_other = true;
-          }
-          children.push(render_device(config, dev, id, confirming_remove.as_deref()));
-        }
-      }
+        children.push(render_scan_row(config, shared, id, discovering));
 
-      if powered {
-        children.push(scan_footer_row(config, discovering, id));
+        if inner.devices.is_empty() {
+          children.push(
+            container(
+              column![
+                Icon::new(if discovering {
+                  "view-refresh-symbolic"
+                } else {
+                  "bluetooth-symbolic"
+                })
+                .size(22)
+                .color(theme.subtext),
+                space().height(6),
+                config.text(
+                  if discovering {
+                    "Scanning for devices…"
+                  } else {
+                    "No devices found"
+                  },
+                  &["menu", "text-name", "text-faded"],
+                ),
+              ]
+              .align_x(Alignment::Center),
+            )
+            .padding(16)
+            .align_x(Alignment::Center)
+            .width(Length::Fill)
+            .into(),
+          );
+        } else {
+          let mut has_connected = false;
+          for dev in inner.devices.iter().filter(|d| d.connected) {
+            if !has_connected {
+              children.push(section_header(config, "Connected"));
+              has_connected = true;
+            }
+            let is_connecting = connecting_device.as_deref() == Some(dev.address.as_str());
+            children.push(render_device(
+              config,
+              shared,
+              dev,
+              id,
+              confirming_remove.as_deref(),
+              is_connecting,
+            ));
+          }
+
+          let mut has_paired = false;
+          for dev in inner.devices.iter().filter(|d| !d.connected && d.paired) {
+            if !has_paired {
+              children.push(section_header(config, "Paired Devices"));
+              has_paired = true;
+            }
+            let is_connecting = connecting_device.as_deref() == Some(dev.address.as_str());
+            children.push(render_device(
+              config,
+              shared,
+              dev,
+              id,
+              confirming_remove.as_deref(),
+              is_connecting,
+            ));
+          }
+
+          let mut has_available = false;
+          for dev in inner.devices.iter().filter(|d| !d.connected && !d.paired) {
+            if !has_available {
+              children.push(section_header(config, "Available Devices"));
+              has_available = true;
+            }
+            let is_connecting = connecting_device.as_deref() == Some(dev.address.as_str());
+            children.push(render_device(
+              config,
+              shared,
+              dev,
+              id,
+              confirming_remove.as_deref(),
+              is_connecting,
+            ));
+          }
+        }
       }
     } else {
       children.push(
@@ -167,7 +174,7 @@ impl Renderable for BluetoothRenderable {
 
     let list_style = config.computed(&["menu", "list"]);
     let list_spacing = config.sizing(&["menu", "list"]).gap;
-    let list_width = list_style.length("list-width").unwrap_or(220.0);
+    let list_width = list_style.length("list-width").unwrap_or(280.0);
     let list = column(children)
       .spacing(list_spacing)
       .width(Length::Fixed(list_width));
@@ -190,6 +197,7 @@ impl Renderable for BluetoothRenderable {
 
 fn render_toggle_row<'a>(
   config: &'a Config,
+  shared: &SharedBluetoothState,
   id: IcedId,
   powered: bool,
 ) -> Element<'a, ItemMessage> {
@@ -232,40 +240,104 @@ fn render_toggle_row<'a>(
     .width(Length::Fill),
   );
 
-  clickable(content, move |_, _, _| Some(BtAction::Toggle.message(id)))
+  let cmd_tx = shared.cmd_tx.clone();
+  clickable(content, move |_, _, _| {
+    let _ = cmd_tx.send(BluetoothCmd::TogglePower);
+    Some(ItemMessage::Effect(id, ItemEffect::Redraw))
+  })
 }
 
-fn section_header<'a>(config: &'a Config, title: &'static str) -> Element<'a, ItemMessage> {
-  config
-    .text(title, &["menu", "text-status", "text-faded"])
-    .into()
-}
-
-fn scan_footer_row<'a>(
+fn render_discoverable_row<'a>(
   config: &'a Config,
-  discovering: bool,
+  shared: &SharedBluetoothState,
   id: IcedId,
+  discoverable: bool,
+) -> Element<'a, ItemMessage> {
+  let theme = config.palette();
+
+  let checkbox_size = config
+    .computed(&["menu", "checkbox"])
+    .length("checkbox-size")
+    .unwrap_or(14.0) as u16;
+  let toggle_color = if discoverable {
+    theme.primary
+  } else {
+    theme.text
+  };
+  let toggle = Icon::new(if discoverable {
+    "checkbox-checked-symbolic"
+  } else {
+    "checkbox-symbolic"
+  })
+  .size(checkbox_size)
+  .color(toggle_color);
+
+  let trailing = config.text(
+    if discoverable { "Visible" } else { "Hidden" },
+    &["menu", "text-status", "text-faded"],
+  );
+
+  let row_spacing = config.sizing(&["menu", "row"]).gap;
+
+  let content: Element<'a, ItemMessage> = hover_row(
+    config,
+    &["menu", "row"],
+    container(
+      row![
+        toggle,
+        config.text("Visible to others", &["menu", "text-body"]),
+        Space::new().width(Length::Fill),
+        trailing
+      ]
+      .spacing(row_spacing)
+      .align_y(Alignment::Center),
+    )
+    .padding(config.sizing(&["menu", "row"]).padding())
+    .width(Length::Fill),
+  );
+
+  let cmd_tx = shared.cmd_tx.clone();
+  clickable(content, move |_, _, _| {
+    let _ = cmd_tx.send(BluetoothCmd::ToggleDiscoverable);
+    Some(ItemMessage::Effect(id, ItemEffect::Redraw))
+  })
+}
+
+fn render_scan_row<'a>(
+  config: &'a Config,
+  shared: &SharedBluetoothState,
+  id: IcedId,
+  discovering: bool,
 ) -> Element<'a, ItemMessage> {
   let theme = config.palette();
 
   let icon_size = config
     .computed(&["menu", "icon"])
     .length("icon-size")
-    .unwrap_or(16.0) as u16;
+    .unwrap_or(15.0) as u16;
   let content = row![
     Icon::new("view-refresh-symbolic")
       .size(icon_size)
-      .color(theme.subtext),
+      .color(if discovering {
+        theme.primary
+      } else {
+        theme.subtext
+      }),
     Space::new().width(6),
     config.text(
       if discovering {
-        "Scanning…"
+        "Stop scan"
       } else {
-        "Scan for devices…"
+        "Scan for devices"
       },
       &["menu", "text-name", "text-faded"],
     ),
     Space::new().width(Length::Fill),
+    if discovering {
+      config.text("Scanning…", &["menu", "text-status", "text-faded"])
+    } else {
+      config.text("", &["menu", "text-status"])
+    }
   ]
   .align_y(Alignment::Center);
 
@@ -277,20 +349,30 @@ fn scan_footer_row<'a>(
       .width(Length::Fill),
   );
 
-  if discovering {
-    return wrapped;
-  }
+  let cmd_tx = shared.cmd_tx.clone();
   clickable(wrapped.into(), move |_, _, _| {
-    Some(BtAction::Scan.message(id))
+    if discovering {
+      let _ = cmd_tx.send(BluetoothCmd::StopDiscovery);
+    } else {
+      let _ = cmd_tx.send(BluetoothCmd::StartDiscovery);
+    }
+    Some(ItemMessage::Effect(id, ItemEffect::Redraw))
   })
-  .into()
+}
+
+fn section_header<'a>(config: &'a Config, title: &'static str) -> Element<'a, ItemMessage> {
+  config
+    .text(title, &["menu", "text-status", "text-faded"])
+    .into()
 }
 
 fn render_device<'a>(
   config: &'a Config,
+  shared: &SharedBluetoothState,
   dev: &BluetoothDevice,
   id: IcedId,
   confirming_remove: Option<&str>,
+  connecting: bool,
 ) -> Element<'a, ItemMessage> {
   let theme = config.palette();
 
@@ -300,7 +382,11 @@ fn render_device<'a>(
       "input-mouse-symbolic"
     } else if lower.contains("keyboard") {
       "input-keyboard-symbolic"
-    } else if lower.contains("headset") || lower.contains("headphone") || lower.contains("buds") {
+    } else if lower.contains("headset")
+      || lower.contains("headphone")
+      || lower.contains("buds")
+      || lower.contains("airpod")
+    {
       "audio-headphones-symbolic"
     } else if lower.contains("controller") || lower.contains("gamepad") {
       "input-gaming-symbolic"
@@ -313,135 +399,210 @@ fn render_device<'a>(
 
   let icon_color = if dev.connected {
     theme.primary
+  } else if connecting {
+    theme.yellow
   } else {
     theme.subtext
   };
 
   let dev_icon: Element<'a, ItemMessage> =
-    Icon::new(dev_icon_name).size(14).color(icon_color).into();
+    Icon::new(dev_icon_name).size(15).color(icon_color).into();
 
   let dev_name = config.text(dev.name.clone(), &["menu", "text-name"]);
 
-  let mut right_items: Vec<Element<'a, ItemMessage>> = Vec::new();
-
-  if let Some(bat) = dev.battery {
-    right_items.push(
-      config
-        .text(format!("{bat}%"), &["menu", "text-status", "text-faded"])
-        .into(),
-    );
+  let mut subtitle_parts: Vec<String> = Vec::new();
+  if connecting {
+    subtitle_parts.push("Connecting…".to_string());
+  } else if dev.connected {
+    subtitle_parts.push("Connected".to_string());
+    if let Some(bat) = dev.battery {
+      subtitle_parts.push(format!("{bat}%"));
+    }
+  } else if dev.paired {
+    subtitle_parts.push("Paired".to_string());
+  } else {
+    subtitle_parts.push("Available".to_string());
   }
 
-  let action = if dev.connected {
-    BtAction::Disconnect(dev.address.clone())
+  if dev.trusted {
+    subtitle_parts.push("Trusted".to_string());
+  }
+
+  let subtitle_text = subtitle_parts.join(" • ");
+  let subtitle_elem = config
+    .text(subtitle_text, &["menu", "text-status", "text-faded"])
+    .size(11.0);
+
+  let info_col = column![dev_name, subtitle_elem].spacing(1);
+
+  let cmd_tx = shared.cmd_tx.clone();
+  let addr = dev.address.clone();
+  let connected = dev.connected;
+  let paired = dev.paired;
+
+  let left_area = clickable(
+    row![dev_icon, Space::new().width(8), info_col]
+      .align_y(Alignment::Center)
+      .width(Length::Fill)
+      .into(),
+    move |_, _, _| {
+      if connected {
+        let _ = cmd_tx.send(BluetoothCmd::Disconnect(addr.clone()));
+      } else if paired {
+        let _ = cmd_tx.send(BluetoothCmd::Connect(addr.clone()));
+      } else {
+        let _ = cmd_tx.send(BluetoothCmd::Pair(addr.clone()));
+      }
+      Some(ItemMessage::Effect(id, ItemEffect::Redraw))
+    },
+  );
+
+  let mut right_items: Vec<Element<'a, ItemMessage>> = Vec::new();
+
+  let cmd_tx_connect = shared.cmd_tx.clone();
+  let addr_connect = dev.address.clone();
+  let (action_icon_name, action_color) = if dev.connected {
+    ("media-playback-stop-symbolic", theme.subtext)
   } else {
-    BtAction::Connect(dev.address.clone())
+    ("network-connect-symbolic", theme.primary)
   };
+  let action_btn = clickable(
+    container(Icon::new(action_icon_name).size(13).color(action_color))
+      .padding(4)
+      .into(),
+    move |_, _, _| {
+      if connected {
+        let _ = cmd_tx_connect.send(BluetoothCmd::Disconnect(addr_connect.clone()));
+      } else {
+        let _ = cmd_tx_connect.send(BluetoothCmd::Connect(addr_connect.clone()));
+      }
+      Some(ItemMessage::Effect(id, ItemEffect::Redraw))
+    },
+  );
+  right_items.push(action_btn);
 
-  let action_icon: Element<'a, ItemMessage> = if dev.connected {
-    Icon::new("media-playback-stop-symbolic")
-      .size(12)
-      .color(theme.subtext)
-      .into()
-  } else {
-    Icon::new("network-connect-symbolic")
-      .size(12)
-      .color(theme.primary)
-      .into()
-  };
-
-  right_items.push(clickable(action_icon, move |_, _, _| {
-    Some(action.clone().message(id))
-  }));
-
-  if dev.paired {
-    let is_confirming = confirming_remove == Some(dev.address.as_str());
-    let remove_icon_name = if is_confirming {
-      "edit-delete-symbolic"
+  if dev.paired || dev.connected {
+    let cmd_tx_trust = shared.cmd_tx.clone();
+    let addr_trust = dev.address.clone();
+    let trusted = dev.trusted;
+    let trust_icon_color = if trusted {
+      theme.primary
     } else {
-      "list-remove-symbolic"
+      Color {
+        a: 0.35,
+        ..theme.subtext
+      }
     };
+    let trust_btn = clickable(
+      container(
+        Icon::new("security-high-symbolic")
+          .size(13)
+          .color(trust_icon_color),
+      )
+      .padding(4)
+      .into(),
+      move |_, _, _| {
+        let _ = cmd_tx_trust.send(BluetoothCmd::Trust(addr_trust.clone(), !trusted));
+        Some(ItemMessage::Effect(id, ItemEffect::Redraw))
+      },
+    );
+    right_items.push(trust_btn);
+  }
+
+  let is_confirming = confirming_remove == Some(dev.address.as_str());
+  if dev.paired {
+    let cmd_tx_remove = shared.cmd_tx.clone();
+    let shared_menu = shared.clone();
+    let addr_remove = dev.address.clone();
     let remove_color = if is_confirming {
-      Color::from_rgb(0.9, 0.3, 0.3)
+      theme.red
     } else {
       theme.subtext
     };
-    let remove_icon: Element<'a, ItemMessage> = Icon::new(remove_icon_name)
-      .size(12)
-      .color(remove_color)
-      .into();
-
-    let addr = dev.address.clone();
-    let confirming = is_confirming;
-    right_items.push(clickable(remove_icon, move |_, _, _| {
-      if confirming {
-        Some(BtAction::Remove(addr.clone()).message(id))
-      } else {
-        Some(BtAction::ConfirmRemove(addr.clone()).message(id))
-      }
-    }));
-  } else if dev.connected {
-    // if paired=false, no fucking way it connected
-  } else {
-    let addr = dev.address.clone();
-    let pair_icon: Element<'a, ItemMessage> = Icon::new("bluetooth-symbolic")
-      .size(12)
-      .color(theme.primary)
-      .into();
-    right_items.push(clickable(pair_icon, move |_, _, _| {
-      Some(BtAction::Pair(addr.clone()).message(id))
-    }));
+    let remove_btn = clickable(
+      container(
+        Icon::new(if is_confirming {
+          "edit-delete-symbolic"
+        } else {
+          "list-remove-symbolic"
+        })
+        .size(13)
+        .color(remove_color),
+      )
+      .padding(4)
+      .into(),
+      move |_, _, _| {
+        if is_confirming {
+          let _ = cmd_tx_remove.send(BluetoothCmd::Remove(addr_remove.clone()));
+          let mut menu = shared_menu.menu.lock().unwrap();
+          menu.confirming_remove = None;
+        } else {
+          let mut menu = shared_menu.menu.lock().unwrap();
+          menu.confirming_remove = Some(addr_remove.clone());
+        }
+        Some(ItemMessage::Effect(id, ItemEffect::Redraw))
+      },
+    );
+    right_items.push(remove_btn);
   }
 
-  let action_row = row(right_items).spacing(6).align_y(Alignment::Center);
+  let actions_row = row(right_items).spacing(2).align_y(Alignment::Center);
 
-  let confirm_row = if confirming_remove == Some(dev.address.as_str()) {
-    let addr = dev.address.clone();
-    let confirm_text: Element<'a, ItemMessage> = config
-      .text("Confirm removal?", &["menu", "text-status"])
-      .color(Color::from_rgb(0.9, 0.3, 0.3))
-      .into();
-    Some(clickable(confirm_text, move |_, _, _| {
-      Some(BtAction::Remove(addr.clone()).message(id))
-    }))
+  let confirm_banner: Option<Element<'a, ItemMessage>> = if is_confirming {
+    let cmd_tx_forget = shared.cmd_tx.clone();
+    let shared_menu = shared.clone();
+    let addr_forget = dev.address.clone();
+
+    let forget_btn = clickable(
+      config
+        .text("Forget device", &["menu", "text-status"])
+        .color(theme.red)
+        .size(11.0)
+        .into(),
+      move |_, _, _| {
+        let _ = cmd_tx_forget.send(BluetoothCmd::Remove(addr_forget.clone()));
+        let mut menu = shared_menu.menu.lock().unwrap();
+        menu.confirming_remove = None;
+        Some(ItemMessage::Effect(id, ItemEffect::Redraw))
+      },
+    );
+
+    let shared_cancel = shared.clone();
+    let cancel_btn = clickable(
+      config
+        .text("Cancel", &["menu", "text-status", "text-faded"])
+        .size(11.0)
+        .into(),
+      move |_, _, _| {
+        let mut menu = shared_cancel.menu.lock().unwrap();
+        menu.confirming_remove = None;
+        Some(ItemMessage::Effect(id, ItemEffect::Redraw))
+      },
+    );
+
+    Some(
+      row![forget_btn, Space::new().width(8), cancel_btn]
+        .align_y(Alignment::Center)
+        .into(),
+    )
   } else {
     None
   };
 
-  let full_row: Element<'a, ItemMessage> = if let Some(confirm_row) = confirm_row {
-    column![
-      row![
-        dev_icon,
-        Space::new().width(6),
-        dev_name,
-        Space::new().width(Length::Fill),
-        action_row,
-      ]
-      .align_y(Alignment::Center),
-      row![
-        Space::new().width(0),
-        confirm_row,
-        Space::new().width(Length::Fill),
-      ],
-    ]
-    .spacing(2)
-    .into()
-  } else {
-    row![
-      dev_icon,
-      Space::new().width(6),
-      dev_name,
-      Space::new().width(Length::Fill),
-      action_row,
-    ]
+  let main_row = row![left_area, actions_row]
     .align_y(Alignment::Center)
-    .into()
+    .width(Length::Fill);
+
+  let row_content: Element<'a, ItemMessage> = if let Some(banner) = confirm_banner {
+    column![main_row, space().height(2), banner].into()
+  } else {
+    main_row.into()
   };
 
   hover_row(
     config,
     &["menu", "row"],
-    container(full_row)
+    container(row_content)
       .padding(config.sizing(&["menu", "row"]).padding())
       .width(Length::Fill),
   )
