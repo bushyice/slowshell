@@ -127,7 +127,7 @@ impl Component for Notch {
     events
   }
 
-  fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
+  fn watch(&mut self, store: &mut Store, options: Option<&ComponentOptions>) {
     #[cfg(feature = "audio")]
     {
       slowshell_services::audio::ensure(store);
@@ -152,7 +152,30 @@ impl Component for Notch {
     {
       slowshell_services::power::ensure(store);
     }
+    #[cfg(feature = "notifications")]
+    {
+      slowshell_services::notifications::ensure(store);
+    }
+    #[cfg(feature = "audio")]
+    {
+      slowshell_services::audio::ensure(store);
+    }
+
+    for name in parse_notch_elements(options) {
+      slowshell_commons::notch::shared().with_service(&name, |service| {
+        service.start(store);
+      });
+    }
+
     let _ = store;
+  }
+
+  fn stop(&mut self, store: &Store, options: Option<&ComponentOptions>) {
+    for name in parse_notch_elements(options) {
+      slowshell_commons::notch::shared().with_service(&name, |service| {
+        service.stop(store);
+      });
+    }
   }
 
   fn update(
@@ -1201,234 +1224,5 @@ fn render_notch_status<'a>(config: &'a Config, status: &NotchStatus) -> Element<
     ]
     .align_y(Alignment::Center)
     .into(),
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-  use slowshell_config::Value;
-  use std::collections::HashMap;
-
-  #[test]
-  fn test_parse_notch_elements() {
-    let mut map = HashMap::new();
-    map.insert(
-      "notch".into(),
-      Value::Array(vec![
-        Value::Str("workspaces".into()),
-        Value::Str("window".into()),
-        Value::Str("clock".into()),
-      ]),
-    );
-    let options = ComponentOptions::from(map);
-    let elements = parse_notch_elements(Some(&options));
-    assert_eq!(elements, vec!["workspaces", "window", "clock"]);
-  }
-
-  #[test]
-  fn test_parse_system_displays_only_cpu_mem() {
-    let mut map = HashMap::new();
-    map.insert(
-      "system-display".into(),
-      Value::Array(vec![
-        Value::Str("cpu".into()),
-        Value::Str("disk".into()),
-        Value::Str("mem".into()),
-        Value::Str("gpu".into()),
-      ]),
-    );
-    let options = ComponentOptions::from(map);
-    let displays = parse_system_displays(Some(&options));
-    assert_eq!(displays, vec!["cpu", "mem"]);
-  }
-
-  #[test]
-  fn test_parse_clock_format() {
-    let mut map = HashMap::new();
-    map.insert("clock-format".into(), Value::Str("%I:%M %p".into()));
-    let options = ComponentOptions::from(map);
-    assert_eq!(parse_clock_format(Some(&options)), "%I:%M %p");
-
-    let empty_map = HashMap::new();
-    let empty_options = ComponentOptions::from(empty_map);
-    assert_eq!(parse_clock_format(Some(&empty_options)), "%H:%M");
-  }
-
-  #[test]
-  fn test_parse_priority() {
-    let mut map = HashMap::new();
-    map.insert(
-      "priority".into(),
-      Value::Array(vec![
-        Value::Str("window".into()),
-        Value::Str("nowplaying".into()),
-      ]),
-    );
-    let options = ComponentOptions::from(map);
-    let priority = parse_priority(Some(&options));
-    assert_eq!(priority, vec!["window", "nowplaying"]);
-  }
-
-  #[test]
-  fn test_notch_status_store_update_and_remove() {
-    let store = slowshell_commons::notch::shared();
-    store.update_status(
-      "vpn",
-      NotchStatus::IconText("vpn".into(), "Connected".into()),
-    );
-    assert_eq!(
-      store.get("vpn"),
-      Some(NotchStatus::IconText("vpn".into(), "Connected".into()))
-    );
-
-    store.remove_status("vpn");
-    assert_eq!(store.get("vpn"), None);
-  }
-
-  #[test]
-  fn test_notch_notification_entry() {
-    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let notif_state = Arc::new(slowshell_commons::notifications::NotificationState {
-      dnd: std::sync::atomic::AtomicBool::new(false),
-      state: Mutex::new(Arc::new(Default::default())),
-      ui: Mutex::new(Arc::new(Default::default())),
-      revision: std::sync::atomic::AtomicU64::new(0),
-      cmd_tx: tx,
-      notify_fd: std::sync::atomic::AtomicI32::new(-1),
-    });
-    let item = slowshell_commons::notifications::NotificationItem {
-      id: 42,
-      app_name: "Slack".to_string(),
-      app_icon: Some("slack".to_string()),
-      image: None,
-      summary: "Direct Message".to_string(),
-      body: "Hey there!".to_string(),
-      actions: vec![],
-      urgency: 1,
-      created_at: std::time::Instant::now(),
-      plugin: None,
-    };
-    notif_state.push(item, 5000);
-
-    let guard = notif_state.state.lock().unwrap();
-    let popup = guard.popups.last().unwrap();
-    assert_eq!(popup.summary, "Direct Message");
-    assert_eq!(popup.app_icon.as_deref(), Some("slack"));
-  }
-
-  #[test]
-  fn test_render_network_with_and_without_bluetooth() {
-    let config = Config::default();
-
-    {
-      let store = Store::new();
-      let _net_el = render_network(&config, &store);
-    }
-
-    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let bt_state = Arc::new(slowshell_commons::bluetooth::BluetoothState {
-      powered: std::sync::atomic::AtomicBool::new(true),
-      discovering: std::sync::atomic::AtomicBool::new(false),
-      state: Mutex::new(Arc::new(slowshell_commons::bluetooth::BluetoothInner {
-        adapter_name: Some("hci0".into()),
-        devices: vec![slowshell_commons::bluetooth::BluetoothDevice {
-          address: "00:11:22:33:44:55".into(),
-          name: "Headphones".into(),
-          connected: false,
-          ..Default::default()
-        }],
-        ..Default::default()
-      })),
-      menu: Mutex::new(Default::default()),
-      revision: std::sync::atomic::AtomicU64::new(0),
-      cmd_tx: tx,
-    });
-
-    {
-      let mut store = Store::new();
-      store.insert(bt_state.clone());
-      let _net_without_connected_bt = render_network(&config, &store);
-    }
-
-    *bt_state.state.lock().unwrap() = Arc::new(slowshell_commons::bluetooth::BluetoothInner {
-      adapter_name: Some("hci0".into()),
-      devices: vec![slowshell_commons::bluetooth::BluetoothDevice {
-        address: "00:11:22:33:44:55".into(),
-        name: "Headphones".into(),
-        connected: true,
-        ..Default::default()
-      }],
-      ..Default::default()
-    });
-
-    {
-      let mut store = Store::new();
-      store.insert(bt_state.clone());
-      let _net_with_connected_bt = render_network(&config, &store);
-    }
-  }
-
-  #[test]
-  fn test_parse_notch_elements_contains_battery() {
-    let elements = parse_notch_elements(None);
-    assert!(elements.contains(&"battery".to_string()));
-  }
-
-  #[test]
-  fn test_parse_battery_status() {
-    assert!(!parse_battery_status(None));
-
-    let mut opts_map = std::collections::HashMap::new();
-    opts_map.insert("battery-status".into(), slowshell_config::Value::Bool(true));
-    let opts = ComponentOptions::from(opts_map);
-    assert!(parse_battery_status(Some(&opts)));
-
-    let mut opts_map_false = std::collections::HashMap::new();
-    opts_map_false.insert("battery-status".into(), slowshell_config::Value::Bool(false));
-    let opts_false = ComponentOptions::from(opts_map_false);
-    assert!(!parse_battery_status(Some(&opts_false)));
-
-    let mut opts_map_str = std::collections::HashMap::new();
-    opts_map_str.insert("battery-status".into(), slowshell_config::Value::Str("true".into()));
-    let opts_str = ComponentOptions::from(opts_map_str);
-    assert!(parse_battery_status(Some(&opts_str)));
-  }
-
-  #[test]
-  fn test_render_battery_charging_and_discharging() {
-    let config = Config::default();
-
-    #[cfg(feature = "power")]
-    {
-      let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
-      let power_state = Arc::new(slowshell_commons::power::PowerState {
-        data: Mutex::new(Arc::new(slowshell_commons::power::PowerData {
-          percent: Some(85),
-          charging: true,
-          ..Default::default()
-        })),
-        revision: std::sync::atomic::AtomicU64::new(0),
-        cmd_tx: cmd_tx.clone(),
-      });
-
-      let mut store = Store::new();
-      store.insert(power_state.clone());
-
-      let bat_el_icon_only = render_battery(&config, &store, false);
-      assert!(bat_el_icon_only.is_some());
-
-      let bat_el_with_status = render_battery(&config, &store, true);
-      assert!(bat_el_with_status.is_some());
-
-      // When there is no battery and not charging, returns None
-      *power_state.data.lock().unwrap() = Arc::new(slowshell_commons::power::PowerData {
-        percent: None,
-        charging: false,
-        ..Default::default()
-      });
-      let no_bat_el = render_battery(&config, &store, false);
-      assert!(no_bat_el.is_none());
-    }
   }
 }

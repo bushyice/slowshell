@@ -12,6 +12,7 @@ pub enum NotchStatus {
   Icon(RString),
   Text(RString),
   IconText(RString, RString),
+  Service(RString, RString),
 }
 
 #[repr(C)]

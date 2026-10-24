@@ -3,6 +3,8 @@ use std::{
   sync::{Arc, Mutex, OnceLock},
 };
 
+use slowshell_core::Store;
+
 pub const NOTCH_STATUS_CHANGED: &str = "notch/status.changed";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -12,15 +14,30 @@ pub enum NotchStatus {
   IconText(String, String),
 }
 
-#[derive(Debug, Default, Clone)]
+pub trait NotchServiceStarter: Send {
+  fn start(&mut self, store: &mut Store);
+  fn stop(&self, store: &Store) {
+    let _ = store;
+  }
+}
+
+#[derive(Default, Clone)]
 pub struct NotchStatusStore {
   pub items: Arc<Mutex<HashMap<String, NotchStatus>>>,
+  pub services: Arc<Mutex<HashMap<String, Box<dyn NotchServiceStarter>>>>,
 }
 
 impl NotchStatusStore {
   pub fn new() -> Self {
     Self {
       items: Arc::new(Mutex::new(HashMap::new())),
+      services: Arc::new(Mutex::new(HashMap::new())),
+    }
+  }
+
+  pub fn service<T: NotchServiceStarter + 'static>(&self, name: &str, starter: T) {
+    if let Ok(mut services) = self.services.lock() {
+      services.insert(name.into(), Box::new(starter));
     }
   }
 
@@ -42,6 +59,42 @@ impl NotchStatusStore {
 
   pub fn all(&self) -> HashMap<String, NotchStatus> {
     self.items.lock().map(|m| m.clone()).unwrap_or_default()
+  }
+
+  pub fn with_service<R>(
+    &self,
+    name: &str,
+    start: impl FnOnce(&mut (dyn NotchServiceStarter + 'static)) -> R,
+  ) -> Option<R> {
+    let mut guard = self.services.lock().ok()?;
+    let mut service = guard.remove(name)?;
+    drop(guard);
+    let result = start(&mut *service);
+
+    if let Ok(mut services) = self.services.lock() {
+      services.entry(name.to_owned()).or_insert(service);
+    }
+    Some(result)
+  }
+
+  pub fn with_services(
+    &self,
+    mut start: impl FnMut(&str, &mut (dyn NotchServiceStarter + 'static)),
+  ) {
+    let Ok(mut services) = self.services.lock() else {
+      return;
+    };
+    let mut taken: Vec<(String, Box<dyn NotchServiceStarter + 'static>)> =
+      services.drain().collect();
+    drop(services);
+
+    for (name, service) in taken.iter_mut() {
+      start(name, &mut **service);
+    }
+
+    if let Ok(mut services) = self.services.lock() {
+      services.extend(taken);
+    }
   }
 }
 
