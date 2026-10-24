@@ -156,10 +156,6 @@ impl Component for Notch {
     {
       slowshell_services::notifications::ensure(store);
     }
-    #[cfg(feature = "audio")]
-    {
-      slowshell_services::audio::ensure(store);
-    }
 
     for name in parse_notch_elements(options) {
       slowshell_commons::notch::shared().with_service(&name, |service| {
