@@ -66,8 +66,8 @@ pub trait Component: Send {
   }
 
   fn check_view(&self, store: &Store, options: Option<&ComponentOptions>) -> bool {
-    let _ = (store, options);
-    true
+    let _ = store;
+    options.is_none_or(|o| !o.bool("hide").unwrap_or(false))
   }
 
   fn view<'a>(
