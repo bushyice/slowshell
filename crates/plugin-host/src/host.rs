@@ -622,6 +622,13 @@ impl Host for HostImpl {
           slowshell_plugin_abi::NotchStatus::IconText(icon, text) => {
             slowshell_commons::notch::NotchStatus::IconText(icon.to_string(), text.to_string())
           }
+          slowshell_plugin_abi::NotchStatus::Service(name, service) => {
+            slowshell_commons::notch::shared().service(
+              name.as_str(),
+              crate::service::PluginNotchServiceStarter(name.clone(), service),
+            );
+            return;
+          }
         };
         slowshell_commons::notch::shared().update_status(name.to_string(), status);
       }

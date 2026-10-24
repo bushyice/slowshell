@@ -15,7 +15,7 @@ use slowshell_core::{
   listeners::{FdHandle, ListenerAction},
   types::{PayloadBuilderRegistry, Ustr},
 };
-use slowshell_plugin_abi::{Context, ServiceContext, ServiceFactoryBox, ServiceObjectBox};
+use slowshell_plugin_abi::{Context, RString, ServiceContext, ServiceFactoryBox, ServiceObjectBox};
 
 use crate::state::{PluginScope, ScopedConfig, record_plugin_error, store_scope_mut};
 
@@ -47,6 +47,7 @@ fn entries() -> &'static Mutex<HashMap<String, Entry>> {
 struct Running {
   stop: Arc<AtomicBool>,
   tx: std::sync::mpsc::Sender<String>,
+  exited: Arc<AtomicBool>,
 }
 
 fn running() -> &'static Mutex<HashMap<String, Running>> {
@@ -114,6 +115,10 @@ pub(crate) fn start(name: &str) -> bool {
     return true;
   }
 
+  if !await_exit(name, EXIT_GRACE) {
+    return false;
+  }
+
   let (plugin_id, factory) = {
     let map = entries().lock().unwrap();
     match map.get(name) {
@@ -123,6 +128,7 @@ pub(crate) fn start(name: &str) -> bool {
   };
 
   let stop = Arc::new(AtomicBool::new(false));
+  let exited = Arc::new(AtomicBool::new(false));
   let (tx, rx) = std::sync::mpsc::channel::<String>();
 
   let (wake, dispatcher, builders) = {
@@ -147,6 +153,7 @@ pub(crate) fn start(name: &str) -> bool {
     Running {
       stop: stop.clone(),
       tx,
+      exited: exited.clone(),
     },
   );
 
@@ -180,6 +187,8 @@ pub(crate) fn start(name: &str) -> bool {
       {
         map.remove(&thread_name);
       }
+      drop(map);
+      exited.store(true, Ordering::SeqCst);
     });
 
   if spawn.is_err() {
@@ -194,6 +203,31 @@ pub(crate) fn start(name: &str) -> bool {
   }
 
   true
+}
+
+const EXIT_GRACE: Duration = Duration::from_millis(500);
+
+fn await_exit(name: &str, timeout: Duration) -> bool {
+  let deadline = Instant::now() + timeout;
+  loop {
+    let exited = {
+      let map = running().lock().unwrap();
+      match map.get(name) {
+        Some(entry) => entry.exited.clone(),
+        None => return true,
+      }
+    };
+
+    if exited.load(Ordering::SeqCst) {
+      return true;
+    }
+
+    let now = Instant::now();
+    if now >= deadline {
+      return false;
+    }
+    std::thread::sleep((deadline - now).min(Duration::from_millis(2)));
+  }
 }
 
 fn watch_wake(name: &str, store: Option<&Store>) -> Option<OwnedFd> {
@@ -391,6 +425,19 @@ fn builtin_running(name: &str) -> bool {
     #[cfg(feature = "service-notifications")]
     "notifications" => slowshell_services::notifications::running(),
     _ => false,
+  }
+}
+
+pub struct PluginNotchServiceStarter(pub RString, pub RString);
+
+impl slowshell_commons::notch::NotchServiceStarter for PluginNotchServiceStarter {
+  fn start(&mut self, _store: &mut Store) {
+    crate::service::start(&self.1);
+  }
+
+  fn stop(&self, _store: &Store) {
+    slowshell_commons::notch::shared().remove_status(&self.0);
+    crate::service::stop(&self.1);
   }
 }
 
