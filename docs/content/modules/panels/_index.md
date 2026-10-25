@@ -6,7 +6,7 @@ description = "The bars where our statuses reside."
 Ah yes, panels. The quintessential part of every desktop. 
 I wouldn't bore you explaining what panels are; But to describe 
 panels in [[Slowshell|slowshell]], I'd say a bar with custom
-components that display a some status.
+components that display some status.
 
 What makes a panel important is what's inside, the statuses. Because,
 without those, a panel is just- a bar. Nothing to show, sad and empty inside.

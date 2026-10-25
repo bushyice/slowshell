@@ -5,7 +5,7 @@ description = "Popups for menus."
 
 In [[Slowshell]], popups are where overlay content is displayed, such as menus and alike.
 
-> **Also**:  The popup is just a generic module, it has no direct if you're intending to
+> **Also**:  The popup is just a generic module, it has no direct interaction if you're intending to
 > just normally use slowshell.
 
 ## IPC
@@ -34,7 +34,7 @@ slowshell ipc popup.close
 
   `edge=` snaps the popup to a panel edge: `left` or `right`.
   
-- **And Where**: `content` is a [[Architecture#Renderables|renderable widget]] is displayed within the popup (same as [[Panels#Groups|`menu "<renderable>"`]]).
+- **And Where**: `content` is a [[Architecture#Renderables|renderable widget]] to be displayed within the popup (same as [[Panels#Groups|`menu "<renderable>"`]]).
   You can view all possible values with:
   ```sh
   slowshell list renderables

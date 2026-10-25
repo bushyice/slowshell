@@ -3,7 +3,7 @@ title = "Quick settings"
 description = "A general menu."
 +++
 
-Basically, just a general menu to be rendered on a [[Popup|popup]]. The
+Basically, just a general menu to be rendered on a [[Popups|popup]]. The
 thing about it is that it allows extensibility and serves as the hub
 for some controls.
 
