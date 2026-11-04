@@ -187,7 +187,6 @@ impl Renderable for QuickSettingsRenderable {
       .spacing(list_spacing)
       .width(Length::Fixed(list_width));
 
-
     let inner_padding = config.sizing(&["menu", "inner"]).padding();
     let popup_style = config.container_cached(&["menu"]);
 
@@ -205,7 +204,6 @@ impl Renderable for QuickSettingsRenderable {
 }
 
 pub fn render_user_header<'a>(config: &'a Config) -> Element<'a, ItemMessage> {
-
   let faded = config.palette().subtext;
   let avatar = config.computed(&["menu", "qs", "avatar"]);
   let avatar_size = avatar.length("size").unwrap_or(42.0);
@@ -283,7 +281,6 @@ pub fn render_tile_grid<'a>(
   slots: &Arc<Mutex<std::collections::HashMap<usize, String>>>,
   settings: Option<&PopupSettings>,
 ) -> Element<'a, ItemMessage> {
-
   let mut rows: Vec<Element<'a, ItemMessage>> = Vec::new();
   let mut current: Vec<Element<'a, ItemMessage>> = Vec::new();
 
@@ -461,7 +458,6 @@ pub fn host_name() -> &'static str {
 }
 
 pub fn user_picture() -> Option<&'static iced::widget::image::Handle> {
-
   static PICTURE: std::sync::OnceLock<Option<iced::widget::image::Handle>> =
     std::sync::OnceLock::new();
 

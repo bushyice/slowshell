@@ -1,5 +1,5 @@
 use std::sync::{
-  Arc, OnceLock,
+  OnceLock,
   atomic::{AtomicU32, Ordering},
 };
 
@@ -12,7 +12,6 @@ use slowshell_config::style::new_default_style;
 use slowshell_core::{
   ErasedEntry, StoreKey,
   listeners::{CompositorEvent, ListenerAction},
-  types::PayloadBuilderRegistry,
 };
 use slowshell_plugin_abi::{
   AudioState, BluetoothState, Color, ComponentFactoryBox, CompositorFactoryBox, CompositorState,
@@ -264,31 +263,6 @@ impl Host for HostImpl {
     dispatcher.dispatch(command.as_str())
   }
 
-  fn dispatch_with_string(&self, name: RStr<'_>, payload: RStr<'_>) -> bool {
-    let Some(store) = current_store() else {
-      let Some(dispatcher) = crate::service::current_dispatcher() else {
-        return false;
-      };
-      let Some(builders) = crate::service::current_builders() else {
-        return false;
-      };
-      let Some(args) = slowshell_core::types::split_args(payload.as_str()) else {
-        return false;
-      };
-      return dispatcher.dispatch_with_args(name.as_str(), &args, &builders);
-    };
-    let Some(dispatcher) = store.borrow::<slowshell_core::ActionDispatcher>() else {
-      return false;
-    };
-    let Some(builders) = store.borrow::<Arc<PayloadBuilderRegistry>>() else {
-      return false;
-    };
-    let Some(args) = slowshell_core::types::split_args(payload.as_str()) else {
-      return false;
-    };
-    dispatcher.dispatch_with_args(name.as_str(), &args, builders)
-  }
-
   fn persistence_get(&self, key: RStr<'_>) -> ROption<RString> {
     let plugin_id = plugin_id();
     let value = crate::state::with_plugin_persistence(&plugin_id, |map| map.get(&*key).cloned());
@@ -521,6 +495,19 @@ impl Host for HostImpl {
         name: name.to_string(),
         factory,
         autostart,
+      });
+    });
+  }
+
+  fn register_foreground_service(
+    &self,
+    name: RString,
+    factory: slowshell_plugin_abi::ForegroundServiceFactoryBox,
+  ) {
+    crate::state::PENDING.with(|pending| {
+      pending.borrow_mut().push(Pending::ForegroundService {
+        name: name.to_string(),
+        factory,
       });
     });
   }

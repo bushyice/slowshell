@@ -4,15 +4,13 @@ use iced::{
   Element, Event, mouse,
   widget::{container, row},
 };
-use slowshell_commons::notifications::{
-  NOTIF_CHANGED, NotificationCmd, NotificationPayload, SharedNotificationState,
-};
+use slowshell_commons::notifications::{NOTIF_CHANGED, SharedNotificationState};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
-  types::{OptionalPayloadBox, ToUstr},
+  types::ToUstr,
 };
 use slowshell_services::util::drain_signal_fd;
 use slowshell_widgets::{EventWrapper, Icon};
@@ -45,20 +43,17 @@ impl Default for Notifications {
 
 impl Component for Notifications {
   fn events(&self) -> Vec<EventFilter> {
-    vec![
-      EventFilter::Named(NOTIF_CHANGED.into()),
-      EventFilter::Payload("notifications.toggle_dnd".into()),
-      EventFilter::Payload("notifications.clear_all".into()),
-      EventFilter::Payload("notifications.dismiss".into()),
-      EventFilter::Payload("notifications.invoke".into()),
-      EventFilter::Payload("notifications.reply".into()),
-      EventFilter::Payload("notifications.set_reply".into()),
-    ]
+    vec![EventFilter::Named(NOTIF_CHANGED.into())]
+  }
+
+  fn foreground_services(&self) -> Vec<String> {
+    vec!["notifications".into()]
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
     self.shared = slowshell_services::notifications::ensure(store);
     self.shared_in_store = true;
+    slowshell_services::start_foreground(store, "notifications");
   }
 
   fn update(
@@ -93,71 +88,6 @@ impl Component for Notifications {
         } else {
           Ok(ItemEffect::None)
         }
-      }
-
-      ListenerAction::Payload { name, .. } if &**name == "notifications.toggle_dnd" => {
-        let _ = self.shared.cmd_tx.send(NotificationCmd::ToggleDnd);
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, .. } if &**name == "notifications.clear_all" => {
-        let _ = self.shared.cmd_tx.send(NotificationCmd::ClearAll);
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "notifications.dismiss" => {
-        if let Some(payload) = payload.transform::<NotificationPayload>() {
-          let _ = self
-            .shared
-            .cmd_tx
-            .send(NotificationCmd::DismissHistory(payload.id));
-          let mut ui = self.shared.ui.lock().unwrap();
-          std::sync::Arc::make_mut(&mut ui)
-            .replies
-            .remove(&payload.id);
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "notifications.invoke" => {
-        if let Some((id, key)) = payload
-          .transform::<NotificationPayload>()
-          .and_then(|p| Some((p.id, p.key.clone()?)))
-        {
-          let _ = self
-            .shared
-            .cmd_tx
-            .send(NotificationCmd::InvokeAction(id, key));
-          let mut ui = self.shared.ui.lock().unwrap();
-          std::sync::Arc::make_mut(&mut ui).replies.remove(&id);
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "notifications.reply" => {
-        if let Some((id, key, text)) = payload
-          .transform::<NotificationPayload>()
-          .and_then(|p| Some((p.id, p.key.clone()?, p.text.clone()?)))
-        {
-          let _ = self
-            .shared
-            .cmd_tx
-            .send(NotificationCmd::InvokeActionWithText(id, key, text));
-          let mut ui = self.shared.ui.lock().unwrap();
-          std::sync::Arc::make_mut(&mut ui).replies.remove(&id);
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "notifications.set_reply" => {
-        if let Some((id, text)) = payload
-          .transform::<NotificationPayload>()
-          .and_then(|p| Some((p.id, p.text.clone()?)))
-        {
-          let mut ui = self.shared.ui.lock().unwrap();
-          std::sync::Arc::make_mut(&mut ui).replies.insert(id, text);
-        }
-        Ok(ItemEffect::Redraw)
       }
 
       _ => Ok(ItemEffect::None),

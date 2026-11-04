@@ -4,15 +4,13 @@ use iced::{
   Alignment, Element, Event, mouse,
   widget::{container, row},
 };
-use slowshell_commons::power::{
-  POWER_CHANGED, PowerCmd, SharedPowerState, battery_icon, brightness_icon,
-};
+use slowshell_commons::power::{POWER_CHANGED, SharedPowerState, battery_icon, brightness_icon};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
-  types::{OptionalPayloadBox, PayloadBox, ToUstr, Ustr},
+  types::{PayloadBox, ToUstr},
 };
 use slowshell_services::util::drain_signal_fd;
 use slowshell_widgets::{EventWrapper, Icon};
@@ -53,17 +51,17 @@ impl Default for Power {
 
 impl Component for Power {
   fn events(&self) -> Vec<EventFilter> {
-    vec![
-      EventFilter::Named(POWER_CHANGED.into()),
-      EventFilter::Payload("power.set_brightness".into()),
-      EventFilter::Payload("power.step_brightness".into()),
-      EventFilter::Payload("power.set_profile".into()),
-    ]
+    vec![EventFilter::Named(POWER_CHANGED.into())]
+  }
+
+  fn foreground_services(&self) -> Vec<String> {
+    vec!["power".into()]
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
     self.shared = slowshell_services::power::ensure(store);
     self.shared_in_store = true;
+    slowshell_services::start_foreground(store, "power");
   }
 
   fn update(
@@ -102,28 +100,6 @@ impl Component for Power {
         } else {
           Ok(ItemEffect::None)
         }
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "power.set_brightness" => {
-        if let Some(pct) = payload.transform::<u8>() {
-          let _ = self.shared.cmd_tx.send(PowerCmd::SetBrightness(*pct));
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "power.step_brightness" => {
-        if let Some(delta) = payload.transform::<i32>() {
-          let _ = self.shared.cmd_tx.send(PowerCmd::StepBrightness(*delta));
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "power.set_profile" => {
-        if let Some(prof_str) = payload.transform::<Ustr>() {
-          let prof = slowshell_commons::power::PowerProfile::from_str(&**prof_str);
-          let _ = self.shared.cmd_tx.send(PowerCmd::SetProfile(prof));
-        }
-        Ok(ItemEffect::Redraw)
       }
 
       _ => Ok(ItemEffect::None),

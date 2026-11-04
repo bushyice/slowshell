@@ -14,6 +14,7 @@ use slowshell_commons::{
   desktop::DesktopEntries,
   network::NET_CHANGED,
   notifications::{NOTIF_CHANGED, SharedNotificationState},
+  panels::PanelPositions,
   popups::{PopupPosition, PopupSettings},
   power::POWER_CHANGED,
   quicksettings::QuickSettingsRegistry,
@@ -89,10 +90,41 @@ impl Renderable for ShadeRenderable {
 
     let shade_computed = config.computed(&["menu", "shade", "popup"]);
     let width = shade_computed.length("width").unwrap_or(440.0);
-    let height = shade_computed.length("height").unwrap_or(620.0);
     let pad_v = shade_computed.length("padding-v").unwrap_or(10.0);
     let pad_h = shade_computed.length("padding-h").unwrap_or(14.0);
     let gap = shade_computed.length("gap").unwrap_or(10.0);
+
+    let monitor_height = data
+      .monitor
+      .as_deref()
+      .and_then(slowshell_core::monitors::size)
+      .map(|(_, h)| h as f32)
+      .or_else(|| {
+        store
+          .borrow::<CompositorStore>()
+          .and_then(|cs| cs.state().ok())
+          .and_then(|state| {
+            data
+              .monitor
+              .as_deref()
+              .and_then(|m| state.monitors.get(m))
+              .or_else(|| state.monitors.values().next())
+              .map(|m| m.height as f32)
+          })
+      })
+      .unwrap_or(1080.0);
+
+    let (top_inset, _right, bottom_inset, _left) = store
+      .borrow::<PanelPositions>()
+      .map(|p| p.insets(data.monitor.as_deref()))
+      .unwrap_or((0, 0, 0, 0));
+
+    let available_height = (monitor_height - (top_inset + bottom_inset) as f32).max(100.0);
+    let max_height = available_height * 0.9;
+    let height = shade_computed
+      .length("height")
+      .map(|h| h.min(max_height))
+      .unwrap_or(max_height);
 
     let shade_style = config.container_style(&["menu", "shade", "popup"]);
 
@@ -133,13 +165,11 @@ impl Renderable for ShadeRenderable {
 
     let content_col = column(children).spacing(gap).width(Length::Fill);
 
-    let scroll = scrollable(content_col)
-      .height(Length::Fill)
-      .width(Length::Fill);
+    let scroll = scrollable(content_col).width(Length::Fill);
 
     let main_container = container(scroll)
       .width(Length::Fixed(width))
-      .height(Length::Fixed(height))
+      .max_height(height)
       .padding([pad_v, pad_h])
       .style(move |_| shade_style);
 

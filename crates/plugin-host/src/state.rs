@@ -14,8 +14,8 @@ use slowshell_core::Store;
 use slowshell_core::listeners::Listeners;
 use slowshell_plugin_abi::{
   ComponentFactoryBox, CompositorFactoryBox, ConfigParserBox, DeployableDesktopItemFactoryBox,
-  DesktopItemFactoryBox, PayloadFactoryBox, PayloadParserBox, QuickSettingsFactoryBox,
-  RenderableFactoryBox, ServiceFactoryBox, SpotlightFactoryBox,
+  DesktopItemFactoryBox, ForegroundServiceFactoryBox, PayloadFactoryBox, PayloadParserBox,
+  QuickSettingsFactoryBox, RenderableFactoryBox, ServiceFactoryBox, SpotlightFactoryBox,
 };
 
 #[cfg(feature = "panels")]
@@ -50,6 +50,7 @@ pub struct PluginContributions {
   pub desktop_item_deployers: Vec<String>,
   pub config_parsers: Vec<String>,
   pub services: Vec<String>,
+  pub foreground_services: Vec<String>,
   pub spotlights: Vec<String>,
   pub commands: Vec<String>,
   pub styles: Vec<String>,
@@ -203,6 +204,10 @@ pub(crate) enum Pending {
     name: String,
     factory: ServiceFactoryBox,
     autostart: bool,
+  },
+  ForegroundService {
+    name: String,
+    factory: ForegroundServiceFactoryBox,
   },
   PayloadParser {
     commands: Vec<String>,

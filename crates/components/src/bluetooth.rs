@@ -1,15 +1,12 @@
 use std::sync::atomic::Ordering;
 
 use iced::{Element, widget::container};
-use slowshell_commons::bluetooth::{
-  BT_CHANGED, BluetoothCmd, SharedBluetoothState, bluetooth_icon,
-};
+use slowshell_commons::bluetooth::{BT_CHANGED, SharedBluetoothState, bluetooth_icon};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
-  types::{OptionalPayloadBox, Ustr},
 };
 use slowshell_services::util::drain_signal_fd;
 use slowshell_widgets::Icon;
@@ -40,22 +37,17 @@ impl Default for Bluetooth {
 
 impl Component for Bluetooth {
   fn events(&self) -> Vec<EventFilter> {
-    vec![
-      EventFilter::Named(BT_CHANGED.into()),
-      EventFilter::Payload("bluetooth.toggle".into()),
-      EventFilter::Payload("bluetooth.scan".into()),
-      EventFilter::Payload("bluetooth.connect".into()),
-      EventFilter::Payload("bluetooth.disconnect".into()),
-      EventFilter::Payload("bluetooth.pair".into()),
-      EventFilter::Payload("bluetooth.remove".into()),
-      EventFilter::Payload("bluetooth.confirm_remove".into()),
-      EventFilter::Payload("bluetooth.trust".into()),
-    ]
+    vec![EventFilter::Named(BT_CHANGED.into())]
+  }
+
+  fn foreground_services(&self) -> Vec<String> {
+    vec!["bluetooth".into()]
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
     self.shared = slowshell_services::bluetooth::ensure(store);
     self.shared_in_store = true;
+    slowshell_services::start_foreground(store, "bluetooth");
   }
 
   fn update(
@@ -90,88 +82,6 @@ impl Component for Bluetooth {
         } else {
           Ok(ItemEffect::None)
         }
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "bluetooth.toggle" => {
-        let _ = self.shared.cmd_tx.send(BluetoothCmd::TogglePower);
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, .. } if &**name == "bluetooth.scan" => {
-        let discovering = self.shared.discovering.load(Ordering::Relaxed);
-        if discovering {
-          let _ = self.shared.cmd_tx.send(BluetoothCmd::StopDiscovery);
-        } else {
-          let _ = self.shared.cmd_tx.send(BluetoothCmd::StartDiscovery);
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "bluetooth.connect" => {
-        if let Some(addr) = payload.transform::<Ustr>() {
-          let _ = self
-            .shared
-            .cmd_tx
-            .send(BluetoothCmd::Connect(addr.to_string()));
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "bluetooth.disconnect" => {
-        if let Some(addr) = payload.transform::<Ustr>() {
-          let _ = self
-            .shared
-            .cmd_tx
-            .send(BluetoothCmd::Disconnect(addr.to_string()));
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "bluetooth.pair" => {
-        if let Some(addr) = payload.transform::<Ustr>() {
-          let _ = self
-            .shared
-            .cmd_tx
-            .send(BluetoothCmd::Pair(addr.to_string()));
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "bluetooth.remove" => {
-        if let Some(addr) = payload.transform::<Ustr>() {
-          let _ = self
-            .shared
-            .cmd_tx
-            .send(BluetoothCmd::Remove(addr.to_string()));
-        }
-        let mut menu = self.shared.menu.lock().unwrap();
-        menu.confirming_remove = None;
-        drop(menu);
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "bluetooth.confirm_remove" => {
-        let mut menu = self.shared.menu.lock().unwrap();
-        if let Some(addr) = payload.transform::<Ustr>() {
-          let addr = addr.to_string();
-          menu.confirming_remove = if menu.confirming_remove.as_deref() == Some(&addr) {
-            None
-          } else {
-            Some(addr)
-          };
-        }
-        drop(menu);
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "bluetooth.trust" => {
-        if let Some((addr, trust)) = payload.transform::<(Ustr, bool)>() {
-          let _ = self
-            .shared
-            .cmd_tx
-            .send(BluetoothCmd::Trust(addr.to_string(), *trust));
-        }
-        Ok(ItemEffect::Redraw)
       }
 
       _ => Ok(ItemEffect::None),

@@ -4,13 +4,13 @@ use iced::{
   Color, Element, Length,
   widget::{Row, container, image},
 };
-use slowshell_commons::tray::{SharedTrayState, TrayCmd, TrayItem, TrayPayload};
+use slowshell_commons::tray::{SharedTrayState, TrayCmd, TrayItem};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
-  types::{OptionalPayloadBox, ToUstr},
+  types::ToUstr,
 };
 use slowshell_services::{tray::TRAY_TICK, util::drain_signal_fd};
 use slowshell_widgets::{Icon, clickable};
@@ -49,14 +49,16 @@ impl Default for SystemTray {
 
 impl Component for SystemTray {
   fn events(&self) -> Vec<EventFilter> {
-    vec![
-      EventFilter::Named(TRAY_TICK.into()),
-      EventFilter::Payload("tray.activate".into()),
-    ]
+    vec![EventFilter::Named(TRAY_TICK.into())]
+  }
+
+  fn foreground_services(&self) -> Vec<String> {
+    vec!["tray".into()]
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
     slowshell_services::tray::ensure(store);
+    slowshell_services::start_foreground(store, "tray");
   }
 
   fn update(
@@ -75,20 +77,6 @@ impl Component for SystemTray {
       ListenerAction::Signal { name, fd } if &**name == TRAY_TICK => {
         drain_signal_fd(*fd);
         Ok(self.redraw_if_changed())
-      }
-      ListenerAction::Payload { name, payload } if name.as_ref() == "tray.activate" => {
-        if let Some(payload) = payload.transform::<TrayPayload>() {
-          if let Some(menu_path) = payload.menu_path.clone() {
-            let _ = slowshell_services::tray::shared()
-              .cmd_tx
-              .send(TrayCmd::Activate {
-                address: payload.address.to_string(),
-                menu_path: menu_path.to_string(),
-                submenu_id: payload.submenu_id,
-              });
-          }
-        }
-        Ok(ItemEffect::None)
       }
       _ => Ok(ItemEffect::None),
     }

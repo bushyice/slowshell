@@ -1,16 +1,13 @@
 use std::sync::atomic::Ordering;
 
 use iced::{Element, widget::container};
-use slowshell_commons::network::{
-  NET_CHANGED, NetCmd, NetworkPayload, SharedNetworkState, signal_icon,
-};
+use slowshell_commons::network::{NET_CHANGED, SharedNetworkState, signal_icon};
 use slowshell_commons::panels::PanelOrientation;
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
-  types::OptionalPayloadBox,
 };
 use slowshell_services::util::drain_signal_fd;
 use slowshell_widgets::Icon;
@@ -41,35 +38,19 @@ impl Default for Network {
   }
 }
 
-impl Network {
-  fn clear_menu(&self) {
-    let mut menu = self.shared.menu.lock().unwrap();
-    menu.selected_ssid = None;
-    menu.password.clear();
-    menu.info_ssid = None;
-  }
-}
-
 impl Component for Network {
   fn events(&self) -> Vec<EventFilter> {
-    vec![
-      EventFilter::Named(NET_CHANGED.into()),
-      EventFilter::Payload("network.connect".into()),
-      EventFilter::Payload("network.disconnect".into()),
-      EventFilter::Payload("network.wired".into()),
-      EventFilter::Payload("network.toggle".into()),
-      EventFilter::Payload("network.scan".into()),
-      EventFilter::Payload("network.select".into()),
-      EventFilter::Payload("network.password".into()),
-      EventFilter::Payload("network.info".into()),
-      EventFilter::Payload("network.info.back".into()),
-      EventFilter::Payload("network.edit".into()),
-    ]
+    vec![EventFilter::Named(NET_CHANGED.into())]
+  }
+
+  fn foreground_services(&self) -> Vec<String> {
+    vec!["network".into()]
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
     self.shared = slowshell_services::network::ensure(store);
     self.shared_in_store = true;
+    slowshell_services::start_foreground(store, "network");
   }
 
   fn update(
@@ -94,69 +75,13 @@ impl Component for Network {
         }
         Ok(ItemEffect::None)
       }
-      ListenerAction::Payload { name, payload } if name.as_ref() == "network.connect" => {
-        if let Some(payload) = payload.transform::<NetworkPayload>() {
-          let _ = self.shared.cmd_tx.send(NetCmd::Connect {
-            ssid: payload.ssid.clone(),
-            password: payload.password.clone(),
-          });
+      ListenerAction::Named(name) if &**name == NET_CHANGED => {
+        let revision = self.shared.revision.load(Ordering::Relaxed);
+        if revision != self.last_revision {
+          self.last_revision = revision;
+          return Ok(ItemEffect::Redraw);
         }
-        Ok(ItemEffect::Redraw)
-      }
-      ListenerAction::Payload { name, .. } if name.as_ref() == "network.disconnect" => {
-        let _ = self.shared.cmd_tx.send(NetCmd::DisconnectWifi);
-        self.clear_menu();
-        Ok(ItemEffect::Redraw)
-      }
-      ListenerAction::Payload { name, .. } if name.as_ref() == "network.wired" => {
-        let _ = self.shared.cmd_tx.send(NetCmd::WiredConnect);
-        self.clear_menu();
-        Ok(ItemEffect::Redraw)
-      }
-      ListenerAction::Payload { name, .. } if name.as_ref() == "network.toggle" => {
-        let _ = self.shared.cmd_tx.send(NetCmd::ToggleWifi);
-        Ok(ItemEffect::Redraw)
-      }
-      ListenerAction::Payload { name, .. } if name.as_ref() == "network.scan" => {
-        let _ = self.shared.cmd_tx.send(NetCmd::Scan);
-        Ok(ItemEffect::Redraw)
-      }
-      ListenerAction::Payload { name, payload } if name.as_ref() == "network.info" => {
-        if let Some(payload) = payload.transform::<NetworkPayload>() {
-          let mut menu = self.shared.menu.lock().unwrap();
-          menu.info_ssid = Some(payload.ssid.clone());
-          menu.selected_ssid = None;
-          menu.password.clear();
-        }
-        Ok(ItemEffect::Redraw)
-      }
-      ListenerAction::Payload { name, .. } if name.as_ref() == "network.info.back" => {
-        self.shared.menu.lock().unwrap().info_ssid = None;
-        Ok(ItemEffect::Redraw)
-      }
-      ListenerAction::Payload { name, .. } if name.as_ref() == "network.edit" => {
-        match std::process::Command::new("nm-connection-editor").spawn() {
-          Ok(_) => {}
-          Err(e) => eprintln!("[network] failed to launch nm-connection-editor: {e}"),
-        }
-        Ok(ItemEffect::Redraw)
-      }
-      ListenerAction::Payload { name, payload } if name.as_ref() == "network.select" => {
-        if let Some(payload) = payload.transform::<NetworkPayload>() {
-          let mut menu = self.shared.menu.lock().unwrap();
-          menu.selected_ssid = Some(payload.ssid.clone());
-          menu.password.clear();
-        }
-        Ok(ItemEffect::Redraw)
-      }
-      ListenerAction::Payload { name, payload } if name.as_ref() == "network.password" => {
-        if let Some(payload) = payload
-          .transform::<NetworkPayload>()
-          .and_then(|x| x.value.clone())
-        {
-          self.shared.menu.lock().unwrap().password = payload;
-        }
-        Ok(ItemEffect::Redraw)
+        Ok(ItemEffect::None)
       }
       _ => Ok(ItemEffect::None),
     }

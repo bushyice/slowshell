@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::task::{Context, Poll};
 
@@ -22,6 +23,7 @@ use slowshell_ipc::IpcListener;
 use slowshell_panels::{PanelDeloyer, PanelPositions};
 #[cfg(any(feature = "panels", feature = "popups"))]
 use slowshell_popups::Popup;
+use slowshell_services::{ForegroundServices, ForegroundServicesHandle};
 use slowshell_widgets::Renderables;
 
 static EPOLL_RX: OnceLock<Mutex<Option<UnboundedReceiver<Message>>>> = OnceLock::new();
@@ -36,6 +38,23 @@ pub(crate) fn register_plugin_components(
       && let Ok(registration) = registration.downcast::<ComponentRegistration>()
     {
       components.insert(registration.name.clone(), registration.factory);
+    }
+  }
+}
+
+#[cfg(feature = "plugins")]
+pub(crate) fn register_plugin_foreground_services(
+  registry: &mut GlobalRegistry,
+  foreground_services: &mut ForegroundServices,
+) {
+  for resource in registry.inside("foreground_services") {
+    if let ResourceRegistration::Unknown(registration) = resource
+      && let Ok(registration) =
+        registration.downcast::<slowshell_plugin_host::PluginForegroundServiceRegistration>()
+    {
+      let name = registration.name.clone();
+      let reg = *registration;
+      foreground_services.register_factory(name, Box::new(move || reg.create_service()));
     }
   }
 }
@@ -69,6 +88,7 @@ pub struct App {
   config: Box<Config>, // box: maybe?
   store: Store,
   items: DesktopItems,
+  foreground_services: Arc<Mutex<ForegroundServices>>,
   _tx: UnboundedSender<Message>,
   config_watcher_fd: Option<i32>,
 }
@@ -187,12 +207,51 @@ impl App {
       }
     }
 
+    let mut foreground_services = ForegroundServices::new();
+
+    #[cfg(feature = "plugins")]
+    register_plugin_foreground_services(registry, &mut foreground_services);
+
+    if let Some(fg_config) = config.typed::<slowshell_config::ForegroundServicesConfig>() {
+      for svc in &fg_config.services {
+        foreground_services.start(svc);
+      }
+    }
+
+    #[cfg(feature = "panels")]
+    if let Some(panel_configs) = config.typed::<slowshell_panels::PanelConfigs>() {
+      for conf in panel_configs.values() {
+        if let Some(components) = &conf.components {
+          for section_items in components.values() {
+            for item in section_items {
+              for svc in item.foreground_services() {
+                foreground_services.start(&svc);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    let foreground_services = Arc::new(Mutex::new(foreground_services));
+    store.insert(ForegroundServicesHandle::new(foreground_services.clone()));
+
     for resource in registry.inside("app") {
       // TODO: handle err
       match resource.create(&config, &mut store, &mut items, registry) {
         Ok(Some(task)) => tasks.push(task),
         Err(e) => eprintln!("{e}"),
         _ => {}
+      }
+    }
+
+    if let Some(svc_config) = config.typed::<slowshell_config::ServicesConfig>() {
+      for svc in &svc_config.services {
+        let started = slowshell_services::start_background(&mut store, svc);
+        #[cfg(feature = "plugins")]
+        if !started {
+          slowshell_plugin_host::start_service(svc);
+        }
       }
     }
 
@@ -214,6 +273,7 @@ impl App {
       App {
         store,
         items,
+        foreground_services,
         config,
         _tx: tx,
         config_watcher_fd,
@@ -355,6 +415,11 @@ impl App {
       }
     };
 
+    self
+      .foreground_services
+      .lock()
+      .unwrap()
+      .update(&mut self.store, &action);
     tasks.push(
       self
         .items
@@ -408,6 +473,11 @@ impl App {
   }
 
   fn update_items(&mut self, action: &ListenerAction) -> Task<Message> {
+    self
+      .foreground_services
+      .lock()
+      .unwrap()
+      .update(&mut self.store, action);
     let mut tasks = vec![
       self
         .items

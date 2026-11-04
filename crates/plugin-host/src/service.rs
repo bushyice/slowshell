@@ -60,6 +60,7 @@ struct ThreadState {
   wake: Option<OwnedFd>,
   rx: std::sync::mpsc::Receiver<String>,
   dispatcher: Option<ActionDispatcher>,
+  #[allow(dead_code)]
   builders: Option<Arc<PayloadBuilderRegistry>>,
 }
 
@@ -106,7 +107,7 @@ pub(crate) fn register(plugin_id: &str, name: String, factory: ServiceFactoryBox
   });
 }
 
-pub(crate) fn start(name: &str) -> bool {
+pub fn start(name: &str) -> bool {
   if start_builtin(name) {
     return true;
   }
@@ -343,6 +344,7 @@ pub(crate) fn current_dispatcher() -> Option<ActionDispatcher> {
   })
 }
 
+#[allow(dead_code)]
 pub(crate) fn current_builders() -> Option<Arc<PayloadBuilderRegistry>> {
   CURRENT.with(|cell| {
     cell

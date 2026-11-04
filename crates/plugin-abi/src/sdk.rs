@@ -15,7 +15,8 @@ use crate::{
   payload::{PayloadBox, PayloadParser, PayloadParserBox},
   surfaces::{
     Component, Compositor, ConfigParser, ConfigParserBox, DeployableDesktopItem, DesktopItem,
-    Payload, QuickSettings, Renderable, Service, Spotlight, service_factory,
+    ForegroundService, Payload, QuickSettings, Renderable, Service, Spotlight,
+    foreground_service_factory, service_factory,
   },
 };
 
@@ -138,6 +139,7 @@ pub trait HostExt {
   );
   fn service<T: Service>(&self, name: &str);
   fn service_autostart<T: Service>(&self, name: &str);
+  fn foreground_service<T: ForegroundService>(&self, name: &str);
   fn payload_parser<T: Clone + Send + Sync + 'static>(
     &self,
     commands: &[&str],
@@ -235,6 +237,10 @@ impl HostExt for Host_TO<RBox<()>> {
 
   fn service_autostart<T: Service>(&self, name: &str) {
     Host::register_service(self, RString::from(name), service_factory::<T>(), true);
+  }
+
+  fn foreground_service<T: ForegroundService>(&self, name: &str) {
+    Host::register_foreground_service(self, RString::from(name), foreground_service_factory::<T>());
   }
 
   fn payload_parser<T: Clone + Send + Sync + 'static>(

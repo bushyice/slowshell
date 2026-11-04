@@ -54,6 +54,16 @@ impl Component for PluginComponent {
     filters_to_core(&self.inner.events(), &self.event_name)
   }
 
+  fn foreground_services(&self) -> Vec<String> {
+    let _plugin_scope = PluginScope::enter(&self.plugin_id);
+    self
+      .inner
+      .foreground_services()
+      .into_iter()
+      .map(|s| s.into_string())
+      .collect()
+  }
+
   fn check_view(&self, store: &Store, options: Option<&ComponentOptions>) -> bool {
     let _plugin_scope = PluginScope::enter(&self.plugin_id);
     let _compositor_scope = compositor_scope(store);
@@ -77,6 +87,10 @@ impl Component for PluginComponent {
       self.inner.watch(&ctx);
     });
     self.apply_calls(store, calls);
+
+    for svc in self.foreground_services() {
+      slowshell_services::start_foreground(store, &svc);
+    }
   }
 
   fn stop(&mut self, store: &Store, options: Option<&ComponentOptions>) {
