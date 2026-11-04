@@ -14,7 +14,7 @@ light_theme = "slowshell-light"
 dark_theme = "slowshell-dark"
 
 [extra]
-version = "0.1.6-alpha"
+version = "0.1.7-alpha"
 repo_url = "https://tangled.org/bushyice.com/slowshell"
 screenshot_url = "https://github.com/bushyice/slowshell/blob/main/assets/screenshot.png?raw=true"
 icon_url = "https://raw.githubusercontent.com/bushyice/slowshell/refs/heads/main/assets/icon-shell.svg"

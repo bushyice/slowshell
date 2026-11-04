@@ -132,6 +132,39 @@ impl PanelConfigComponent {
       _ => None,
     }
   }
+
+  pub fn foreground_services(&self) -> Vec<String> {
+    let mut services = Vec::new();
+    match self {
+      PanelConfigComponent::Named(name) => {
+        services.extend(
+          slowshell_components::component_to_foreground_services(name)
+            .into_iter()
+            .map(str::to_string),
+        );
+      }
+      PanelConfigComponent::Component(PanelConfigComponentItem { component, .. }) => {
+        services.extend(
+          slowshell_components::component_to_foreground_services(component)
+            .into_iter()
+            .map(str::to_string),
+        );
+      }
+      PanelConfigComponent::Group { items, prefix, .. } => {
+        if let Some(p) = prefix {
+          services.extend(
+            slowshell_components::component_to_foreground_services(&p.component)
+              .into_iter()
+              .map(str::to_string),
+          );
+        }
+        for item in items {
+          services.extend(item.foreground_services());
+        }
+      }
+    }
+    services
+  }
 }
 
 #[derive(Clone, PartialEq, Debug)]

@@ -40,6 +40,15 @@ impl Component for NowPlaying {
     vec![EventFilter::Named(AUDIO_CHANGED.into())]
   }
 
+  fn foreground_services(&self) -> Vec<String> {
+    vec!["audio".into()]
+  }
+
+  fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
+    slowshell_services::audio::ensure(store);
+    slowshell_services::start_foreground(store, "audio");
+  }
+
   fn update(
     &mut self,
     _config: &Config,

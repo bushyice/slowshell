@@ -20,6 +20,9 @@ pub trait Component: Send + 'static {
   fn events(&self) -> RVec<EventFilter> {
     RVec::new()
   }
+  fn foreground_services(&self) -> RVec<RString> {
+    RVec::new()
+  }
   fn watch(&mut self, _ctx: &Context<'_>) {}
   fn update(&mut self, _ctx: &Context<'_>, _event: &Event) -> ItemEffect {
     ItemEffect::None
@@ -37,6 +40,7 @@ pub trait Component: Send + 'static {
 #[sabi_trait]
 pub trait ComponentObject: Send + 'static {
   fn events(&self) -> RVec<EventFilter>;
+  fn foreground_services(&self) -> RVec<RString>;
   fn watch(&mut self, ctx: &Context<'_>);
   fn update(&mut self, ctx: &Context<'_>, event: &Event) -> ItemEffect;
   fn check_view(&self, ctx: &Context<'_>) -> bool;
@@ -59,6 +63,10 @@ struct ComponentAdapter<T>(T);
 impl<T: Component> ComponentObject for ComponentAdapter<T> {
   fn events(&self) -> RVec<EventFilter> {
     self.0.events()
+  }
+
+  fn foreground_services(&self) -> RVec<RString> {
+    self.0.foreground_services()
   }
 
   fn watch(&mut self, ctx: &Context<'_>) {
@@ -616,4 +624,43 @@ impl<T: Service> ServiceFactory for ServiceFactoryImpl<T> {
 
 pub fn service_factory<T: Service>() -> ServiceFactoryBox {
   ServiceFactoryBox::from_value(ServiceFactoryImpl::<T>(PhantomData), TD_Opaque)
+}
+
+pub trait ForegroundService: Send + 'static {
+  fn new(ctx: &Context<'_>) -> Self;
+  fn update(&mut self, ctx: &Context<'_>, event: &Event) -> bool;
+}
+
+#[sabi_trait]
+pub trait ForegroundServiceObject: Send + 'static {
+  fn update(&mut self, ctx: &Context<'_>, event: &Event) -> bool;
+}
+
+pub type ForegroundServiceObjectBox = ForegroundServiceObject_TO<RBox<()>>;
+
+#[sabi_trait]
+pub trait ForegroundServiceFactory: Send + Sync + 'static {
+  fn create(&self, ctx: &Context<'_>) -> ForegroundServiceObjectBox;
+}
+
+pub type ForegroundServiceFactoryBox = ForegroundServiceFactory_TO<RBox<()>>;
+
+struct ForegroundServiceAdapter<T>(T);
+
+impl<T: ForegroundService> ForegroundServiceObject for ForegroundServiceAdapter<T> {
+  fn update(&mut self, ctx: &Context<'_>, event: &Event) -> bool {
+    self.0.update(ctx, event)
+  }
+}
+
+struct ForegroundServiceFactoryImpl<T>(PhantomData<fn() -> T>);
+
+impl<T: ForegroundService> ForegroundServiceFactory for ForegroundServiceFactoryImpl<T> {
+  fn create(&self, ctx: &Context<'_>) -> ForegroundServiceObjectBox {
+    ForegroundServiceObjectBox::from_value(ForegroundServiceAdapter(T::new(ctx)), TD_Opaque)
+  }
+}
+
+pub fn foreground_service_factory<T: ForegroundService>() -> ForegroundServiceFactoryBox {
+  ForegroundServiceFactoryBox::from_value(ForegroundServiceFactoryImpl::<T>(PhantomData), TD_Opaque)
 }

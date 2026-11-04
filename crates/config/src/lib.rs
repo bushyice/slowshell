@@ -1080,6 +1080,77 @@ pub struct AnimationsConfig {
   pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForegroundServicesConfig {
+  pub services: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServicesConfig {
+  pub services: Vec<String>,
+}
+
+pub fn parse_service_names_from_node(node: &KdlNode) -> Vec<String> {
+  let mut result = Vec::new();
+
+  let mut add_item = |raw: &str| {
+    for part in raw.split(',') {
+      let trimmed = part.trim().trim_matches('"').trim();
+      if !trimmed.is_empty() && !result.iter().any(|r: &String| r == trimmed) {
+        result.push(trimmed.to_string());
+      }
+    }
+  };
+
+  for entry in node.entries() {
+    if let Some(s) = entry.value().as_string() {
+      add_item(s);
+    }
+  }
+
+  for child in node_children(node) {
+    let name = node_name(child);
+    add_item(name);
+    for entry in child.entries() {
+      if let Some(s) = entry.value().as_string() {
+        add_item(s);
+      }
+    }
+  }
+
+  result
+}
+
+pub fn foreground_services_parser() -> ConfigParser {
+  ConfigParser {
+    type_id: TypeId::of::<ForegroundServicesConfig>(),
+    de: |nodes| {
+      let Some(node) = find_node(nodes, "foreground-services") else {
+        return Ok(None);
+      };
+
+      Ok(Some(Box::new(ForegroundServicesConfig {
+        services: parse_service_names_from_node(node),
+      })))
+    },
+  }
+}
+
+pub fn services_parser() -> ConfigParser {
+  ConfigParser {
+    type_id: TypeId::of::<ServicesConfig>(),
+    de: |nodes| {
+      let Some(node) = find_node(nodes, "services") else {
+        return Ok(None);
+      };
+
+      Ok(Some(Box::new(ServicesConfig {
+        services: parse_service_names_from_node(node),
+      })))
+    },
+  }
+}
+
 #[derive(Clone, Copy)]
 pub struct ConfigParser {
   pub type_id: TypeId,

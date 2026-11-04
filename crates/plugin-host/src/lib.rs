@@ -6,6 +6,8 @@ mod services;
 mod state;
 mod store;
 
+pub use service::start as start_service;
+
 mod compositor;
 mod desktop;
 mod payload;
@@ -711,6 +713,19 @@ fn drain_pending(registry: &mut GlobalRegistry, plugin_id: &str) {
       } => {
         service::register(plugin_id, name, factory, autostart);
       }
+      Pending::ForegroundService { name, factory } => {
+        contribute(plugin_id, |contributions| {
+          contributions.foreground_services.push(name.clone());
+        });
+        registry.include_in(
+          "foreground_services",
+          ResourceRegistration::Unknown(Box::new(PluginForegroundServiceRegistration {
+            name,
+            plugin_id: plugin_id.to_owned(),
+            factory: std::sync::Arc::new(factory),
+          })),
+        );
+      }
       Pending::Spotlight { name, factory } => {
         #[cfg(feature = "spotlight")]
         {
@@ -973,4 +988,57 @@ fn plugin_dispatcher_item(
   _store: &Store,
 ) -> miette::Result<Vec<Box<dyn DesktopItem + Send>>> {
   Ok(vec![Box::new(payload::PluginDispatcher)])
+}
+
+pub struct PluginForegroundService {
+  pub name: String,
+  pub plugin_id: String,
+  pub inner: std::sync::Mutex<slowshell_plugin_abi::ForegroundServiceObjectBox>,
+}
+
+impl PluginForegroundService {
+  pub fn new(
+    name: String,
+    plugin_id: String,
+    inner: slowshell_plugin_abi::ForegroundServiceObjectBox,
+  ) -> Self {
+    Self {
+      name,
+      plugin_id,
+      inner: std::sync::Mutex::new(inner),
+    }
+  }
+}
+
+impl slowshell_services::ForegroundService for PluginForegroundService {
+  fn update(
+    &mut self,
+    _store: &mut slowshell_core::Store,
+    action: &slowshell_core::listeners::ListenerAction,
+  ) -> bool {
+    let _scope = crate::state::PluginScope::enter(&self.plugin_id);
+    let event = crate::events::event_from_action(action);
+    let ctx = slowshell_plugin_abi::Context::new(crate::host::host());
+    self.inner.lock().unwrap().update(&ctx, &event)
+  }
+}
+
+#[derive(Clone)]
+pub struct PluginForegroundServiceRegistration {
+  pub name: String,
+  pub plugin_id: String,
+  pub factory: std::sync::Arc<slowshell_plugin_abi::ForegroundServiceFactoryBox>,
+}
+
+impl PluginForegroundServiceRegistration {
+  pub fn create_service(&self) -> Box<dyn slowshell_services::ForegroundService> {
+    let _scope = crate::state::PluginScope::enter(&self.plugin_id);
+    let ctx = slowshell_plugin_abi::Context::new(crate::host::host());
+    let inner = self.factory.create(&ctx);
+    Box::new(PluginForegroundService::new(
+      self.name.clone(),
+      self.plugin_id.clone(),
+      inner,
+    ))
+  }
 }

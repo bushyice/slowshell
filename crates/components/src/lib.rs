@@ -46,6 +46,10 @@ pub trait Component: Send {
     Vec::new()
   }
 
+  fn foreground_services(&self) -> Vec<String> {
+    Vec::new()
+  }
+
   fn watch(&mut self, store: &mut Store, options: Option<&ComponentOptions>) {
     let _ = (store, options);
   }
@@ -274,6 +278,21 @@ impl ComponentRegistration {
       name: name.into(),
       factory,
     }
+  }
+}
+
+pub fn component_to_foreground_services(name: &str) -> Vec<&'static str> {
+  match name {
+    "core/audio" | "audio" | "core/sound" | "sound" | "core/nowplaying" | "nowplaying" => {
+      vec!["audio"]
+    }
+    "core/power" | "power" => vec!["power"],
+    "core/bluetooth" | "bluetooth" => vec!["bluetooth"],
+    "core/network" | "network" => vec!["network"],
+    "core/notifications" | "notifications" => vec!["notifications"],
+    "core/tray" | "tray" => vec!["tray"],
+    "core/notch" | "notch" => vec!["audio", "power", "bluetooth", "network", "tray"],
+    _ => Vec::new(),
   }
 }
 

@@ -38,8 +38,8 @@ pub mod prelude {
   pub use crate::sdk::HostExt;
   pub use crate::store::{Store, StoreBorrow};
   pub use crate::surfaces::{
-    Component, Compositor, DeployResult, DeployableDesktopItem, DeployedItem, DesktopItem, Payload,
-    QuickSettings, Renderable, Service, Spotlight,
+    Component, Compositor, DeployResult, DeployableDesktopItem, DeployedItem, DesktopItem,
+    ForegroundService, Payload, QuickSettings, Renderable, Service, Spotlight,
   };
   pub use crate::types::*;
   pub use abi_stable::std_types::{RBox, ROption, RResult, RSlice, RStr, RString, RVec};

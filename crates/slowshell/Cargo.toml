@@ -9,6 +9,7 @@ default = [
   "base",
   "compositors",
   "components",
+  "services",
   "animations"
 ]
 
@@ -51,8 +52,7 @@ plugins = ["dep:slowshell-plugin-host"]
 spotlight = ["dep:slowshell-spotlight", "slowshell-plugin-host?/spotlight"]
 notifications = [
   "dep:slowshell-notifications",
-  "dep:slowshell-services",
-  "slowshell-services/notifications",
+  "services-notifications",
 ]
 
 compositor-niri = ["slowshell-compositor/niri"]
@@ -60,12 +60,28 @@ compositor-sway = ["slowshell-compositor/sway"]
 compositor-hyprland = ["slowshell-compositor/hyprland"]
 compositor-fallback = ["slowshell-compositor/fallback"]
 
-components-audio = ["slowshell-components?/audio", "slowshell-background?/audio", "slowshell-plugin-host?/service-audio"]
-components-bluetooth = ["slowshell-components?/bluetooth", "slowshell-plugin-host?/service-bluetooth"]
-components-network = ["slowshell-components?/network", "slowshell-plugin-host?/service-network"]
-components-notifications = ["slowshell-components?/notifications", "slowshell-plugin-host?/service-notifications"]
-components-power = ["slowshell-components?/power", "slowshell-plugin-host?/service-power"]
-components-tray = ["slowshell-components?/tray", "slowshell-plugin-host?/service-tray"]
+services = [
+  "services-audio",
+  "services-bluetooth",
+  "services-network",
+  "services-notifications",
+  "services-power",
+  "services-tray",
+]
+
+services-audio = ["slowshell-services/audio"]
+services-bluetooth = ["slowshell-services/bluetooth"]
+services-network = ["slowshell-services/network"]
+services-notifications = ["slowshell-services/notifications"]
+services-power = ["slowshell-services/power"]
+services-tray = ["slowshell-services/tray"]
+
+components-audio = ["slowshell-components?/audio", "slowshell-background?/audio", "slowshell-plugin-host?/service-audio", "services-audio"]
+components-bluetooth = ["slowshell-components?/bluetooth", "slowshell-plugin-host?/service-bluetooth", "services-bluetooth"]
+components-network = ["slowshell-components?/network", "slowshell-plugin-host?/service-network", "services-network"]
+components-notifications = ["slowshell-components?/notifications", "slowshell-plugin-host?/service-notifications", "services-notifications"]
+components-power = ["slowshell-components?/power", "slowshell-plugin-host?/service-power", "services-power"]
+components-tray = ["slowshell-components?/tray", "slowshell-plugin-host?/service-tray", "services-tray"]
 components-notch = ["slowshell-components?/notch"]
 
 animations = []
@@ -84,7 +100,7 @@ slowshell-widgets = { path = "../widgets" }
 slowshell-components = { path = "../components", optional = true, default-features = false }
 slowshell-menus = { path = "../menus" }
 slowshell-popups = { path = "../popups", optional = true }
-slowshell-services = { path = "../services", default-features = false, optional = true }
+slowshell-services = { path = "../services", default-features = false }
 slowshell-background = { path = "../background", optional = true }
 slowshell-plugin-host = { path = "../plugin-host", optional = true, default-features = false }
 

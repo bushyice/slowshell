@@ -10,8 +10,8 @@ use crate::{
   store::{ErasedRef, ErasedValue, Store, StoreCallbackBox, TypeKey},
   surfaces::{
     ComponentFactoryBox, CompositorFactoryBox, ConfigParserBox, DeployableDesktopItemFactoryBox,
-    DesktopItemFactoryBox, PayloadFactoryBox, QuickSettingsFactoryBox, RenderableFactoryBox,
-    ServiceFactoryBox, SpotlightFactoryBox,
+    DesktopItemFactoryBox, ForegroundServiceFactoryBox, PayloadFactoryBox, QuickSettingsFactoryBox,
+    RenderableFactoryBox, ServiceFactoryBox, SpotlightFactoryBox,
   },
   types::{
     AudioState, BluetoothState, CanvasRef, Color, CompositorState, Length, NetworkState, Node,
@@ -56,7 +56,6 @@ pub trait Host: Send + Sync + 'static {
   fn register_style(&self, css: RStr<'_>) -> i32;
 
   fn dispatch(&self, command: RStr<'_>) -> bool;
-  fn dispatch_with_string(&self, name: RStr<'_>, payload: RStr<'_>) -> bool;
 
   fn persistence_get(&self, key: RStr<'_>) -> ROption<RString>;
   fn persistence_set(&self, key: RStr<'_>, value: RStr<'_>) -> bool;
@@ -90,6 +89,7 @@ pub trait Host: Send + Sync + 'static {
   fn store_touch(&self, key: TypeKey) -> bool;
 
   fn register_service(&self, name: RString, factory: ServiceFactoryBox, autostart: bool);
+  fn register_foreground_service(&self, name: RString, factory: ForegroundServiceFactoryBox);
   fn service_start(&self, name: RStr<'_>) -> bool;
   fn service_stop(&self, name: RStr<'_>) -> bool;
   fn service_running(&self, name: RStr<'_>) -> bool;
@@ -145,7 +145,9 @@ impl<'a> Context<'a> {
   }
 
   pub fn update_status(&self, name: impl Into<RString>, status: NotchStatus) {
-    self.host.notch_set_status(name.into(), ROption::RSome(status));
+    self
+      .host
+      .notch_set_status(name.into(), ROption::RSome(status));
   }
 
   pub fn remove_status(&self, name: impl Into<RString>) {
@@ -211,9 +213,8 @@ impl<'a> Context<'a> {
   }
 
   pub fn dispatch_with_string(&self, name: &str, payload: &str) -> bool {
-    self
-      .host
-      .dispatch_with_string(RStr::from_str(name), RStr::from_str(payload))
+    let command = format!("{name} {payload}");
+    self.dispatch(&command)
   }
 
   pub fn dispatch_payload(&self, name: &str, payload: PayloadBox) -> bool {
@@ -473,9 +474,8 @@ impl<'a> ServiceContext<'a> {
   }
 
   pub fn dispatch_with_string(&self, name: &str, payload: &str) -> bool {
-    self
-      .host
-      .dispatch_with_string(RStr::from_str(name), RStr::from_str(payload))
+    let command = format!("{name} {payload}");
+    self.dispatch(&command)
   }
 
   pub fn config_str(&self, key: &str) -> Option<RString> {

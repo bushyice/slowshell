@@ -4,18 +4,15 @@ use iced::{
   Element, Event, mouse,
   widget::{container, row},
 };
-use slowshell_commons::audio::{
-  AUDIO_CHANGED, AudioCmd, MprisSelection, SharedAudioState, volume_icon,
-};
+use slowshell_commons::audio::{AUDIO_CHANGED, SharedAudioState, volume_icon};
 use slowshell_config::Config;
 use slowshell_core::{
   Store,
   listeners::ListenerAction,
   message::{EventFilter, ItemEffect, ItemMessage},
-  persistence,
-  types::{OptionalPayloadBox, PayloadBox, ToUstr},
+  types::{PayloadBox, ToUstr},
 };
-use slowshell_services::{audio::PRIMARY_PLAYER_FILE, util::drain_signal_fd};
+use slowshell_services::util::drain_signal_fd;
 use slowshell_widgets::{EventWrapper, Icon};
 
 use crate::{
@@ -46,22 +43,17 @@ impl Default for Audio {
 
 impl Component for Audio {
   fn events(&self) -> Vec<EventFilter> {
-    vec![
-      EventFilter::Named(AUDIO_CHANGED.into()),
-      EventFilter::Payload("audio.step".into()),
-      EventFilter::Payload("audio.toggle_mute".into()),
-      EventFilter::Payload("audio.set_volume".into()),
-      EventFilter::Payload("audio.set_sink".into()),
-      EventFilter::Payload("audio.play_pause".into()),
-      EventFilter::Payload("audio.next".into()),
-      EventFilter::Payload("audio.previous".into()),
-      EventFilter::Payload("audio.select_player".into()),
-    ]
+    vec![EventFilter::Named(AUDIO_CHANGED.into())]
+  }
+
+  fn foreground_services(&self) -> Vec<String> {
+    vec!["audio".into()]
   }
 
   fn watch(&mut self, store: &mut Store, _options: Option<&ComponentOptions>) {
     self.shared = slowshell_services::audio::ensure(store);
     self.shared_in_store = true;
+    slowshell_services::start_foreground(store, "audio");
   }
 
   fn update(
@@ -96,65 +88,6 @@ impl Component for Audio {
         } else {
           Ok(ItemEffect::None)
         }
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "audio.step" => {
-        if let Some(delta) = payload.transform::<f32>() {
-          let _ = self.shared.cmd_tx.send(AudioCmd::StepVolume(*delta));
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, .. } if &**name == "audio.toggle_mute" => {
-        let _ = self.shared.cmd_tx.send(AudioCmd::ToggleMute);
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "audio.set_volume" => {
-        if let Some(vol) = payload.transform::<f32>() {
-          let _ = self.shared.cmd_tx.send(AudioCmd::SetVolume(*vol));
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "audio.set_sink" => {
-        if let Some(id) = payload.transform::<u32>() {
-          let _ = self.shared.cmd_tx.send(AudioCmd::SetDefaultSink(*id));
-        }
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, .. } if &**name == "audio.play_pause" => {
-        let _ = self.shared.cmd_tx.send(AudioCmd::PlayPause);
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, .. } if &**name == "audio.next" => {
-        let _ = self.shared.cmd_tx.send(AudioCmd::Next);
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, .. } if &**name == "audio.previous" => {
-        let _ = self.shared.cmd_tx.send(AudioCmd::Previous);
-        Ok(ItemEffect::Redraw)
-      }
-
-      ListenerAction::Payload { name, payload } if &**name == "audio.select_player" => {
-        if let Some(selection) = payload.transform::<MprisSelection>() {
-          let selection = selection.clone();
-          let _ = self
-            .shared
-            .cmd_tx
-            .send(AudioCmd::SelectPlayer(selection.clone()));
-
-          if let Err(e) = persistence::save(
-            PRIMARY_PLAYER_FILE,
-            &(selection.bus_name, selection.identity),
-          ) {
-            eprintln!("[audio] failed to persist the primary player: {e}");
-          }
-        }
-        Ok(ItemEffect::Redraw)
       }
 
       _ => Ok(ItemEffect::None),

@@ -68,6 +68,8 @@ pub fn load() -> Loaded {
     })
     .collect();
   config_parsers.push(slowshell_config::animations_parser());
+  config_parsers.push(slowshell_config::foreground_services_parser());
+  config_parsers.push(slowshell_config::services_parser());
 
   let config = Config::from_path_or_default(None::<&str>, config_parsers);
 

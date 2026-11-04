@@ -9,11 +9,11 @@ use iced::{
 };
 use slowshell_commons::power::POWER_CHANGED;
 #[cfg(feature = "power")]
-use slowshell_commons::power::{SharedPowerState, battery_icon};
+use slowshell_commons::power::{SharedPowerState, battery_icon, brightness_icon};
 #[cfg(feature = "tray")]
-use slowshell_commons::tray::{SharedTrayState, TrayCmd, TrayItem, TrayPayload};
+use slowshell_commons::tray::{SharedTrayState, TrayCmd, TrayItem};
 use slowshell_commons::{
-  audio::{AUDIO_CHANGED, SharedAudioState},
+  audio::{AUDIO_CHANGED, SharedAudioState, volume_icon},
   bluetooth::{BT_CHANGED, SharedBluetoothState},
   desktop::DesktopEntries,
   network::{NET_CHANGED, SharedNetworkState, signal_icon},
@@ -25,8 +25,6 @@ use slowshell_commons::{
 };
 use slowshell_compositor::CompositorStore;
 use slowshell_config::Config;
-#[cfg(feature = "tray")]
-use slowshell_core::types::OptionalPayloadBox;
 use slowshell_core::{
   Store,
   listeners::{CompositorEvent, ListenerAction},
@@ -44,12 +42,23 @@ use crate::{Component, ComponentContext};
 #[cfg(feature = "tray")]
 use crate::{MenuConfig, popup_open_action};
 
+const NOTCH_PASSIVE_DISMISS: &str = "component/notch.passive_dismiss";
+const PASSIVE_DURATION: std::time::Duration = std::time::Duration::from_millis(2500);
+
 pub struct Notch {
   hovered: Arc<AtomicBool>,
   tray_bounds: Arc<Mutex<Option<iced::Rectangle>>>,
   #[cfg(feature = "tray")]
   last_tray_revision: u64,
   last_notif_revision: AtomicU64,
+  #[cfg(feature = "audio")]
+  last_audio_state: Arc<Mutex<Option<(f32, bool)>>>,
+  #[cfg(feature = "audio")]
+  sound_passive_until: Arc<Mutex<Option<std::time::Instant>>>,
+  #[cfg(feature = "power")]
+  last_brightness: Arc<Mutex<Option<u8>>>,
+  #[cfg(feature = "power")]
+  brightness_passive_until: Arc<Mutex<Option<std::time::Instant>>>,
 }
 
 impl Default for Notch {
@@ -66,6 +75,14 @@ impl Notch {
       #[cfg(feature = "tray")]
       last_tray_revision: 0,
       last_notif_revision: AtomicU64::new(0),
+      #[cfg(feature = "audio")]
+      last_audio_state: Arc::new(Mutex::new(None)),
+      #[cfg(feature = "audio")]
+      sound_passive_until: Arc::new(Mutex::new(None)),
+      #[cfg(feature = "power")]
+      last_brightness: Arc::new(Mutex::new(None)),
+      #[cfg(feature = "power")]
+      brightness_passive_until: Arc::new(Mutex::new(None)),
     }
   }
 
@@ -92,6 +109,102 @@ impl Notch {
     }
     ItemEffect::None
   }
+
+  #[cfg(feature = "audio")]
+  fn check_audio_change(&self, store: &Store) -> ItemEffect {
+    let Some(shared) = store.borrow::<SharedAudioState>() else {
+      return ItemEffect::None;
+    };
+    let Ok(state) = shared.state.lock() else {
+      return ItemEffect::None;
+    };
+    let cur_vol = state.volume;
+    let cur_muted = state.muted;
+    let mut last_guard = self.last_audio_state.lock().unwrap();
+    let changed = match *last_guard {
+      Some((old_vol, old_muted)) => (cur_vol - old_vol).abs() > 0.001 || cur_muted != old_muted,
+      None => false,
+    };
+    *last_guard = Some((cur_vol, cur_muted));
+
+    if changed {
+      *self.sound_passive_until.lock().unwrap() =
+        Some(std::time::Instant::now() + PASSIVE_DURATION);
+      if let Some(handle) = store.borrow::<slowshell_core::listeners::FdHandle>() {
+        let _ = handle.set_named_timer(PASSIVE_DURATION, NOTCH_PASSIVE_DISMISS);
+      }
+    }
+
+    ItemEffect::Redraw
+  }
+
+  #[cfg(not(feature = "audio"))]
+  fn check_audio_change(&self, _store: &Store) -> ItemEffect {
+    ItemEffect::Redraw
+  }
+
+  #[cfg(feature = "power")]
+  fn check_power_change(&self, store: &Store) -> ItemEffect {
+    let shared = store
+      .borrow::<SharedPowerState>()
+      .cloned()
+      .unwrap_or_else(slowshell_services::power::shared);
+    let Ok(data) = shared.data.lock() else {
+      return ItemEffect::None;
+    };
+    let cur_brightness = data.brightness_percent;
+    let mut last_guard = self.last_brightness.lock().unwrap();
+    let changed = match *last_guard {
+      Some(old_b) => cur_brightness != old_b,
+      None => false,
+    };
+    *last_guard = Some(cur_brightness);
+
+    if changed {
+      *self.brightness_passive_until.lock().unwrap() =
+        Some(std::time::Instant::now() + PASSIVE_DURATION);
+      if let Some(handle) = store.borrow::<slowshell_core::listeners::FdHandle>() {
+        let _ = handle.set_named_timer(PASSIVE_DURATION, NOTCH_PASSIVE_DISMISS);
+      }
+    }
+
+    ItemEffect::Redraw
+  }
+
+  #[cfg(not(feature = "power"))]
+  fn check_power_change(&self, _store: &Store) -> ItemEffect {
+    ItemEffect::Redraw
+  }
+
+  fn dismiss_passive(&self) -> ItemEffect {
+    let now = std::time::Instant::now();
+    let mut redraw = false;
+    #[cfg(feature = "audio")]
+    {
+      let mut until = self.sound_passive_until.lock().unwrap();
+      if let Some(t) = *until {
+        if now >= t {
+          *until = None;
+          redraw = true;
+        }
+      }
+    }
+    #[cfg(feature = "power")]
+    {
+      let mut until = self.brightness_passive_until.lock().unwrap();
+      if let Some(t) = *until {
+        if now >= t {
+          *until = None;
+          redraw = true;
+        }
+      }
+    }
+    if redraw {
+      ItemEffect::Redraw
+    } else {
+      ItemEffect::None
+    }
+  }
 }
 
 impl Component for Notch {
@@ -110,6 +223,7 @@ impl Component for Notch {
       EventFilter::Named(BT_CHANGED.into()),
       EventFilter::Named(NOTCH_STATUS_CHANGED.into()),
       EventFilter::Named(NOTIF_CHANGED.into()),
+      EventFilter::Named(NOTCH_PASSIVE_DISMISS.into()),
       EventFilter::Named("config.reload".into()),
       EventFilter::Tick,
     ];
@@ -122,27 +236,48 @@ impl Component for Notch {
     #[cfg(feature = "tray")]
     {
       events.push(EventFilter::Named(TRAY_TICK.into()));
-      events.push(EventFilter::Payload("tray.activate".into()));
     }
     events
+  }
+
+  fn foreground_services(&self) -> Vec<String> {
+    vec![
+      #[cfg(feature = "audio")]
+      "audio".into(),
+      #[cfg(feature = "power")]
+      "power".into(),
+      #[cfg(feature = "bluetooth")]
+      "bluetooth".into(),
+      #[cfg(feature = "network")]
+      "network".into(),
+      #[cfg(feature = "tray")]
+      "tray".into(),
+    ]
   }
 
   fn watch(&mut self, store: &mut Store, options: Option<&ComponentOptions>) {
     #[cfg(feature = "audio")]
     {
-      slowshell_services::audio::ensure(store);
+      let shared = slowshell_services::audio::ensure(store);
+      if let Ok(state) = shared.state.lock() {
+        *self.last_audio_state.lock().unwrap() = Some((state.volume, state.muted));
+      }
+      slowshell_services::start_foreground(store, "audio");
     }
     #[cfg(feature = "network")]
     {
       slowshell_services::network::ensure(store);
+      slowshell_services::start_foreground(store, "network");
     }
     #[cfg(feature = "bluetooth")]
     {
       slowshell_services::bluetooth::ensure(store);
+      slowshell_services::start_foreground(store, "bluetooth");
     }
     #[cfg(feature = "tray")]
     {
       slowshell_services::tray::ensure(store);
+      slowshell_services::start_foreground(store, "tray");
     }
     #[cfg(feature = "notifications")]
     {
@@ -150,11 +285,11 @@ impl Component for Notch {
     }
     #[cfg(feature = "power")]
     {
-      slowshell_services::power::ensure(store);
-    }
-    #[cfg(feature = "notifications")]
-    {
-      slowshell_services::notifications::ensure(store);
+      let shared = slowshell_services::power::ensure(store);
+      if let Ok(data) = shared.data.lock() {
+        *self.last_brightness.lock().unwrap() = Some(data.brightness_percent);
+      }
+      slowshell_services::start_foreground(store, "power");
     }
 
     for name in parse_notch_elements(options) {
@@ -190,17 +325,28 @@ impl Component for Notch {
         return Ok(self.redraw_notif_if_changed(store));
       }
       ListenerAction::Signal { name, fd }
-        if &**name == AUDIO_CHANGED
+        if &**name == NOTCH_PASSIVE_DISMISS
+          || &**name == AUDIO_CHANGED
           || &**name == NET_CHANGED
           || &**name == BT_CHANGED
           || &**name == NOTCH_STATUS_CHANGED
           || &**name == POWER_CHANGED =>
       {
         drain_signal_fd(*fd);
+        if &**name == NOTCH_PASSIVE_DISMISS {
+          return Ok(self.dismiss_passive());
+        }
+        if &**name == AUDIO_CHANGED {
+          return Ok(self.check_audio_change(store));
+        }
+        if &**name == POWER_CHANGED {
+          return Ok(self.check_power_change(store));
+        }
         return Ok(ItemEffect::Redraw);
       }
       ListenerAction::Named(n)
-        if &**n == AUDIO_CHANGED
+        if &**n == NOTCH_PASSIVE_DISMISS
+          || &**n == AUDIO_CHANGED
           || &**n == NET_CHANGED
           || &**n == BT_CHANGED
           || &**n == NOTCH_STATUS_CHANGED
@@ -208,7 +354,20 @@ impl Component for Notch {
           || &**n == "compositor.focus"
           || &**n == "config.reload" =>
       {
+        if &**n == NOTCH_PASSIVE_DISMISS {
+          return Ok(self.dismiss_passive());
+        }
+        if &**n == AUDIO_CHANGED {
+          return Ok(self.check_audio_change(store));
+        }
+        if &**n == POWER_CHANGED {
+          return Ok(self.check_power_change(store));
+        }
         return Ok(ItemEffect::Redraw);
+      }
+      ListenerAction::Timer { name, fd } if &**name == NOTCH_PASSIVE_DISMISS => {
+        drain_signal_fd(*fd);
+        return Ok(self.dismiss_passive());
       }
       ListenerAction::UpdateCompositor(_) => return Ok(ItemEffect::Redraw),
       _ => {}
@@ -224,20 +383,6 @@ impl Component for Notch {
         ListenerAction::Signal { name, fd } if &**name == TRAY_TICK => {
           drain_signal_fd(*fd);
           return Ok(self.redraw_tray_if_changed());
-        }
-        ListenerAction::Payload { name, payload } if name.as_ref() == "tray.activate" => {
-          if let Some(payload) = payload.transform::<TrayPayload>() {
-            if let Some(menu_path) = payload.menu_path.clone() {
-              let _ = slowshell_services::tray::shared()
-                .cmd_tx
-                .send(TrayCmd::Activate {
-                  address: payload.address.to_string(),
-                  menu_path: menu_path.to_string(),
-                  submenu_id: payload.submenu_id,
-                });
-            }
-          }
-          return Ok(ItemEffect::None);
         }
         _ => {}
       }
@@ -264,6 +409,47 @@ impl Component for Notch {
       .and_then(|o| o.bool("shade-on-hover"))
       .unwrap_or(false);
     let battery_status = parse_battery_status(options);
+    let sound_status = parse_sound_status(options);
+    let brightness_status = parse_brightness_status(options);
+
+    let explicit_sound = element_names.iter().any(|e| e == "sound");
+    let explicit_brightness = element_names.iter().any(|e| e == "brightness");
+
+    let is_sound_passive = if !explicit_sound {
+      #[cfg(feature = "audio")]
+      {
+        self
+          .sound_passive_until
+          .lock()
+          .ok()
+          .and_then(|g| *g)
+          .map_or(false, |until| std::time::Instant::now() < until)
+      }
+      #[cfg(not(feature = "audio"))]
+      {
+        false
+      }
+    } else {
+      false
+    };
+
+    let is_brightness_passive = if !explicit_brightness {
+      #[cfg(feature = "power")]
+      {
+        self
+          .brightness_passive_until
+          .lock()
+          .ok()
+          .and_then(|g| *g)
+          .map_or(false, |until| std::time::Instant::now() < until)
+      }
+      #[cfg(not(feature = "power"))]
+      {
+        false
+      }
+    } else {
+      false
+    };
 
     let sep_height = config
       .computed(&["notch", "separator"])
@@ -320,6 +506,9 @@ impl Component for Notch {
           .into(),
       );
     } else {
+      let mut passive_sound_rendered = false;
+      let mut passive_bright_rendered = false;
+
       for elem_name in &element_names {
         match elem_name.as_str() {
           "workspaces" => {
@@ -389,8 +578,49 @@ impl Component for Notch {
             if let Some(battery_elem) = render_battery(config, store, battery_status) {
               rendered_elements.push(battery_elem);
             }
+            if is_sound_passive && !passive_sound_rendered {
+              #[cfg(feature = "audio")]
+              if let Some(elem) = render_sound(config, store, true) {
+                rendered_elements.push(elem);
+                passive_sound_rendered = true;
+              }
+            }
+            if is_brightness_passive && !passive_bright_rendered {
+              #[cfg(feature = "power")]
+              if let Some(elem) = render_brightness(config, store, true) {
+                rendered_elements.push(elem);
+                passive_bright_rendered = true;
+              }
+            }
+          }
+          "sound" =>
+          {
+            #[cfg(feature = "audio")]
+            if let Some(sound_elem) = render_sound(config, store, sound_status) {
+              rendered_elements.push(sound_elem);
+            }
+          }
+          "brightness" => {
+            #[cfg(feature = "power")]
+            if let Some(bright_elem) = render_brightness(config, store, brightness_status) {
+              rendered_elements.push(bright_elem);
+            }
           }
           "clock" => {
+            if is_sound_passive && !passive_sound_rendered {
+              #[cfg(feature = "audio")]
+              if let Some(elem) = render_sound(config, store, true) {
+                rendered_elements.push(elem);
+                passive_sound_rendered = true;
+              }
+            }
+            if is_brightness_passive && !passive_bright_rendered {
+              #[cfg(feature = "power")]
+              if let Some(elem) = render_brightness(config, store, true) {
+                rendered_elements.push(elem);
+                passive_bright_rendered = true;
+              }
+            }
             rendered_elements.push(render_clock(config, clock_format));
           }
           "tray" => {
@@ -404,6 +634,19 @@ impl Component for Notch {
               rendered_elements.push(render_notch_status(config, &status));
             }
           }
+        }
+      }
+
+      if is_sound_passive && !passive_sound_rendered {
+        #[cfg(feature = "audio")]
+        if let Some(elem) = render_sound(config, store, true) {
+          rendered_elements.push(elem);
+        }
+      }
+      if is_brightness_passive && !passive_bright_rendered {
+        #[cfg(feature = "power")]
+        if let Some(elem) = render_brightness(config, store, true) {
+          rendered_elements.push(elem);
         }
       }
     }
@@ -616,6 +859,28 @@ pub fn parse_battery_status(options: Option<&ComponentOptions>) -> bool {
       })
     })
     .unwrap_or(false)
+}
+
+pub fn parse_sound_status(options: Option<&ComponentOptions>) -> bool {
+  options
+    .and_then(|o| {
+      o.bool("sound-status").or_else(|| {
+        o.str("sound-status")
+          .map(|s| s.eq_ignore_ascii_case("true") || s == "1")
+      })
+    })
+    .unwrap_or(true)
+}
+
+pub fn parse_brightness_status(options: Option<&ComponentOptions>) -> bool {
+  options
+    .and_then(|o| {
+      o.bool("brightness-status").or_else(|| {
+        o.str("brightness-status")
+          .map(|s| s.eq_ignore_ascii_case("true") || s == "1")
+      })
+    })
+    .unwrap_or(true)
 }
 
 fn query_nowplaying(store: &Store) -> (Option<(String, String)>, bool) {
@@ -1036,7 +1301,9 @@ fn render_battery<'a>(
 
   let icon_elem = Icon::new(icon_name).size(icon_size).color(icon_color);
 
-  let elem: Element<'a, ItemMessage> = if battery_status {
+  let show_percentage = battery_status || percent.map_or(false, |p| p < 20);
+
+  let elem: Element<'a, ItemMessage> = if show_percentage {
     let status_str = match (percent, charging) {
       (Some(p), _) => Some(format!("{p}%")),
       (None, true) => Some("AC".to_string()),
@@ -1062,6 +1329,107 @@ fn render_battery<'a>(
   _config: &'a Config,
   _store: &'a Store,
   _battery_status: bool,
+) -> Option<Element<'a, ItemMessage>> {
+  None
+}
+
+#[cfg(feature = "audio")]
+fn render_sound<'a>(
+  config: &'a Config,
+  store: &'a Store,
+  show_percent: bool,
+) -> Option<Element<'a, ItemMessage>> {
+  let shared = store.borrow::<SharedAudioState>()?;
+  let state = shared.state.lock().ok()?;
+  let vol = state.volume;
+  let muted = state.muted;
+
+  let palette = config.palette();
+  let sound_computed = config.computed(&["notch", "sound"]);
+  let icon_size = sound_computed.length("icon-size").unwrap_or(13.0) as u16;
+  let icon_color = if muted {
+    sound_computed
+      .color("color-faded")
+      .map(|c| c.to_iced())
+      .unwrap_or(palette.subtext)
+  } else {
+    sound_computed
+      .color("color")
+      .map(|c| c.to_iced())
+      .unwrap_or(palette.text)
+  };
+
+  let icon_name = volume_icon(vol, muted);
+  let icon_elem = Icon::new(icon_name).size(icon_size).color(icon_color);
+
+  let elem: Element<'a, ItemMessage> = if show_percent {
+    let pct = (vol * 100.0).round() as u32;
+    let label_text = if muted {
+      "muted".to_string()
+    } else {
+      format!("{pct}%")
+    };
+    let label = config.text(label_text, &["notch", "sound"]);
+    row![icon_elem, Space::new().width(4), label]
+      .align_y(Alignment::Center)
+      .into()
+  } else {
+    icon_elem.into()
+  };
+
+  Some(elem)
+}
+
+#[cfg(not(feature = "audio"))]
+fn render_sound<'a>(
+  _config: &'a Config,
+  _store: &'a Store,
+  _show_percent: bool,
+) -> Option<Element<'a, ItemMessage>> {
+  None
+}
+
+#[cfg(feature = "power")]
+fn render_brightness<'a>(
+  config: &'a Config,
+  store: &'a Store,
+  show_percent: bool,
+) -> Option<Element<'a, ItemMessage>> {
+  let shared = store
+    .borrow::<SharedPowerState>()
+    .cloned()
+    .unwrap_or_else(slowshell_services::power::shared);
+  let data = shared.data.lock().ok()?;
+  let brightness = data.brightness_percent;
+
+  let palette = config.palette();
+  let bright_computed = config.computed(&["notch", "brightness"]);
+  let icon_size = bright_computed.length("icon-size").unwrap_or(13.0) as u16;
+  let icon_color = bright_computed
+    .color("color")
+    .map(|c| c.to_iced())
+    .unwrap_or(palette.subtext);
+
+  let icon_name = brightness_icon(brightness);
+  let icon_elem = Icon::new(icon_name).size(icon_size).color(icon_color);
+
+  let elem: Element<'a, ItemMessage> = if show_percent {
+    let label = config.text(format!("{brightness}%"), &["notch", "brightness"]);
+    row![icon_elem, Space::new().width(4), label]
+      .align_y(Alignment::Center)
+      .into()
+  } else {
+    icon_elem.into()
+  };
+
+  Some(elem)
+}
+
+#[cfg(not(feature = "power"))]
+fn render_brightness<'a>(
+  _config: &'a Config,
+  _store: &'a Store,
+  _show_percent: bool,
 ) -> Option<Element<'a, ItemMessage>> {
   None
 }
